@@ -1,0 +1,109 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "random-loop-request.schema.json",
+  "title": "Random-loop Flight Search Harness request v2",
+  "type": "object",
+  "required": ["request_version", "journey_shape", "intent"],
+  "properties": {
+    "request_version": {"const": "2.0"},
+    "request_id": {"type": "string", "minLength": 1},
+    "journey_shape": {"const": "random_loop"},
+    "intent": {
+      "type": "object",
+      "required": [
+        "base_currency",
+        "traveler_count",
+        "baggage_policy",
+        "overnight_allowed",
+        "self_transfer_policy",
+        "fx_to_base",
+        "departure_airports",
+        "return_airports",
+        "first_departure_window",
+        "min_legs",
+        "max_legs",
+        "connection_buffer_minutes",
+        "max_connection_wait_minutes",
+        "maximum_total_duration_minutes",
+        "quality_gate"
+      ],
+      "properties": {
+        "base_currency": {"$ref": "common-defs.schema.json#/$defs/currency_code"},
+        "traveler_count": {"type": "integer", "minimum": 1},
+        "baggage_policy": {
+          "allOf": [
+            {"$ref": "common-defs.schema.json#/$defs/baggage_policy"},
+            {
+              "type": "object",
+              "properties": {
+                "paid_baggage_allowed": {
+                  "const": true,
+                  "description": "The current Product Kernel requires permission to price mandatory baggage."
+                }
+              }
+            }
+          ]
+        },
+        "overnight_allowed": {
+          "const": true,
+          "description": "The current independently ticketed Product Kernel requires overnight permission."
+        },
+        "self_transfer_policy": {
+          "const": "allow",
+          "description": "The current independently ticketed Product Kernel requires self-transfer permission."
+        },
+        "fx_to_base": {"$ref": "common-defs.schema.json#/$defs/fx_to_base"},
+        "fx_snapshot": {"$ref": "common-defs.schema.json#/$defs/fx_snapshot"},
+        "departure_airports": {"$ref": "#/$defs/airport_pool"},
+        "return_airports": {"$ref": "#/$defs/airport_pool"},
+        "first_departure_window": {"$ref": "common-defs.schema.json#/$defs/offset_datetime_window"},
+        "min_legs": {"type": "integer", "minimum": 1},
+        "max_legs": {"type": "integer", "minimum": 1},
+        "connection_buffer_minutes": {"type": "integer", "minimum": 0},
+        "max_connection_wait_minutes": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Must be strictly greater than connection_buffer_minutes."
+        },
+        "maximum_total_duration_minutes": {"type": "integer", "minimum": 1},
+        "maximum_provider_queries": {"type": ["integer", "null"], "minimum": 1},
+        "airport_transit": {
+          "type": "object",
+          "properties": {
+            "unknown_policy": {"enum": ["allow_with_warning", "reject"]},
+            "airside_only": {"type": "boolean"}
+          },
+          "additionalProperties": false
+        },
+        "first_leg_earliest_local_time": {
+          "type": "object",
+          "additionalProperties": {"type": "string", "pattern": "^(?:[01][0-9]|2[0-3]):[0-5][0-9]$"}
+        },
+        "quality_gate": {
+          "type": "object",
+          "required": ["minimum_complete_loop_efficiency_km_per_base_currency_unit"],
+          "properties": {
+            "minimum_leg_efficiency_km_per_base_currency_unit": {"type": ["number", "null"], "exclusiveMinimum": 0},
+            "minimum_complete_loop_efficiency_km_per_base_currency_unit": {"type": "number", "exclusiveMinimum": 0},
+            "target_complete_loop_efficiency_km_per_base_currency_unit": {"type": "number", "exclusiveMinimum": 0},
+            "maximum_leg_price_in_base_currency": {"type": ["number", "null"], "exclusiveMinimum": 0}
+          },
+          "additionalProperties": false
+        },
+        "airport_catalog_ref": {"type": "string", "minLength": 1},
+        "airport_transit_catalog_ref": {"type": "string", "minLength": 1}
+      },
+      "additionalProperties": false
+    },
+    "metadata": {"type": "object"}
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "airport_pool": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {"type": "string", "pattern": "^[A-Z]{3}$"}
+    }
+  }
+}

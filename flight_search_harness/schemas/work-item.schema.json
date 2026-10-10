@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/flight-search-harness/protocol-3/work-item.schema.json",
+  "title": "Compact Worker Work Attempt v3",
+  "type": "object",
+  "required": ["item_version", "item_id", "kind", "full_item_ref", "full_item_hash", "full_item_bytes", "payload", "attempt_number"],
+  "properties": {
+    "item_version": {"const": "3.0"},
+    "item_id": {"type": "string", "minLength": 1},
+    "kind": {"enum": ["semantic_judgment", "browser_research", "choice"]},
+    "full_item_ref": {"type": "string"},
+    "full_item_hash": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "full_item_bytes": {"type": "integer", "minimum": 1},
+    "payload": {"type": "object"},
+    "attempt_number": {"type": "integer", "minimum": 1},
+    "last_error": {"type": "string"}
+  },
+  "additionalProperties": false
+}

@@ -1,0 +1,203 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/flight-search-harness/product/one-way/schemas/region-pool.schema.json",
+  "title": "Direction-neutral regional travel pool catalog",
+  "type": "object",
+  "required": ["pools", "scenarios"],
+  "properties": {
+    "pools": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"$ref": "#/$defs/region_pool"}
+    },
+    "scenarios": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/scenario"}
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "region_pool": {
+      "type": "object",
+      "required": [
+        "pool_id",
+        "label",
+        "policy",
+        "seed_nodes",
+        "max_access_time_minutes",
+        "max_egress_time_minutes",
+        "max_cost",
+        "allowed_modes",
+        "expansion_by_provider"
+      ],
+      "properties": {
+        "pool_id": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9._-]*$"
+        },
+        "label": {"type": "string", "minLength": 1},
+        "policy": {
+          "enum": ["exact", "city_region", "extended_region"]
+        },
+        "seed_nodes": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {"type": "string", "minLength": 1}
+        },
+        "region_hint": {
+          "type": "object",
+          "properties": {
+            "region_id": {"type": "string", "minLength": 1},
+            "label": {"type": "string", "minLength": 1}
+          },
+          "additionalProperties": false
+        },
+        "max_access_time_minutes": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Maximum ground time from the user's start point to an accepted origin node."
+        },
+        "max_egress_time_minutes": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Maximum ground time from an accepted destination node to the user's final point."
+        },
+        "max_cost": {
+          "oneOf": [
+            {"type": "null"},
+            {"$ref": "#/$defs/money"}
+          ],
+          "description": "Maximum access or egress cost, or null when unbounded."
+        },
+        "allowed_modes": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {"$ref": "#/$defs/transport_mode"}
+        },
+        "expansion_by_provider": {
+          "$ref": "#/$defs/provider_expansion"
+        },
+        "notes": {
+          "type": "array",
+          "items": {"type": "string"},
+          "default": []
+        }
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"policy": {"const": "exact"}}},
+          "then": {
+            "properties": {
+              "expansion_by_provider": {
+                "properties": {
+                  "enabled": {"const": false},
+                  "result_scope": {"const": "exact_seed_nodes"}
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {"properties": {"policy": {"const": "city_region"}}},
+          "then": {
+            "required": ["region_hint"],
+            "properties": {
+              "expansion_by_provider": {
+                "properties": {
+                  "result_scope": {"const": "within_named_region"}
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {"properties": {"policy": {"const": "extended_region"}}},
+          "then": {
+            "properties": {
+              "expansion_by_provider": {
+                "properties": {
+                  "enabled": {"const": true},
+                  "result_scope": {"const": "within_constraints"}
+                }
+              }
+            }
+          }
+        }
+      ],
+      "additionalProperties": false
+    },
+    "provider_expansion": {
+      "type": "object",
+      "required": [
+        "enabled",
+        "provider_kinds",
+        "result_scope",
+        "require_observed_evidence"
+      ],
+      "properties": {
+        "enabled": {"type": "boolean"},
+        "provider_kinds": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "browser_search",
+              "region_catalog",
+              "scheduled_transport",
+              "road_routing"
+            ]
+          }
+        },
+        "result_scope": {
+          "enum": [
+            "exact_seed_nodes",
+            "within_named_region",
+            "within_constraints"
+          ]
+        },
+        "require_observed_evidence": {"type": "boolean"},
+        "max_discovered_nodes": {"type": "integer", "minimum": 1}
+      },
+      "additionalProperties": false
+    },
+    "scenario": {
+      "type": "object",
+      "required": ["scenario_id", "origin_pool_id", "destination_pool_id"],
+      "properties": {
+        "scenario_id": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9._-]*$"
+        },
+        "label": {"type": "string", "minLength": 1},
+        "origin_pool_id": {"type": "string", "minLength": 1},
+        "destination_pool_id": {"type": "string", "minLength": 1},
+        "notes": {"type": "array", "items": {"type": "string"}}
+      },
+      "additionalProperties": false
+    },
+    "money": {
+      "type": "object",
+      "required": ["amount", "currency"],
+      "properties": {
+        "amount": {"type": "number", "minimum": 0},
+        "currency": {"type": "string", "pattern": "^[A-Z]{3}$"}
+      },
+      "additionalProperties": false
+    },
+    "transport_mode": {
+      "enum": [
+        "flight",
+        "rail",
+        "bus",
+        "coach",
+        "ferry",
+        "local_transit",
+        "walk",
+        "rideshare",
+        "car"
+      ]
+    }
+  }
+}

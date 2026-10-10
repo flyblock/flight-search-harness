@@ -1,0 +1,179 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/flight-search-harness/product/random-loop/airport-transit.schema.json",
+  "title": "Airport operating topology catalog",
+  "description": "Airport terminal, zone, connection, opening-hour, overnight and lounge facts. It does not model passenger eligibility.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["catalog_version", "airports"],
+  "properties": {
+    "catalog_version": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"
+    },
+    "synthetic": {
+      "type": "boolean"
+    },
+    "airports": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/airport" }
+    }
+  },
+  "$defs": {
+    "day": {
+      "enum": ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
+    },
+    "clock": {
+      "type": "string",
+      "pattern": "^(?:(?:[01][0-9]|2[0-3]):[0-5][0-9]|24:00)$"
+    },
+    "openInterval": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["days", "start", "end"],
+      "properties": {
+        "days": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/day" }
+        },
+        "start": { "$ref": "#/$defs/clock" },
+        "end": { "$ref": "#/$defs/clock" }
+      }
+    },
+    "location": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["terminal_id", "zone_id"],
+      "properties": {
+        "terminal_id": { "type": "string", "minLength": 1 },
+        "zone_id": { "type": "string", "minLength": 1 }
+      }
+    },
+    "zone": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "zone_id",
+        "zone_type",
+        "open_intervals",
+        "airside_overnight_allowed"
+      ],
+      "properties": {
+        "zone_id": { "type": "string", "minLength": 1 },
+        "zone_type": {
+          "enum": ["domestic", "schengen", "non_schengen", "international"]
+        },
+        "open_intervals": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/openInterval" }
+        },
+        "airside_overnight_allowed": { "type": "boolean" },
+        "notes": { "type": "string" }
+      }
+    },
+    "terminal": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["terminal_id", "open_intervals", "zones"],
+      "properties": {
+        "terminal_id": { "type": "string", "minLength": 1 },
+        "open_intervals": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/openInterval" }
+        },
+        "zones": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/zone" }
+        },
+        "notes": { "type": "string" }
+      }
+    },
+    "connection": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "connection_id",
+        "from",
+        "to",
+        "airside_connection",
+        "requires_border_control",
+        "requires_landside_exit",
+        "requires_security_recheck",
+        "minimum_transfer_minutes",
+        "open_intervals"
+      ],
+      "properties": {
+        "connection_id": { "type": "string", "minLength": 1 },
+        "from": { "$ref": "#/$defs/location" },
+        "to": { "$ref": "#/$defs/location" },
+        "airside_connection": { "type": "boolean" },
+        "requires_border_control": { "type": "boolean" },
+        "requires_landside_exit": { "type": "boolean" },
+        "requires_security_recheck": { "type": "boolean" },
+        "minimum_transfer_minutes": { "type": "integer", "minimum": 0 },
+        "open_intervals": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/openInterval" }
+        },
+        "notes": { "type": "string" }
+      }
+    },
+    "lounge": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "lounge_id",
+        "location",
+        "open_intervals",
+        "maximum_stay_minutes"
+      ],
+      "properties": {
+        "lounge_id": { "type": "string", "minLength": 1 },
+        "location": { "$ref": "#/$defs/location" },
+        "open_intervals": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/openInterval" }
+        },
+        "maximum_stay_minutes": { "type": "integer", "minimum": 1 },
+        "notes": { "type": "string" }
+      }
+    },
+    "airport": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "airport_id",
+        "timezone",
+        "terminals",
+        "connections",
+        "lounges"
+      ],
+      "properties": {
+        "airport_id": { "type": "string", "minLength": 1 },
+        "timezone": { "type": "string", "minLength": 1 },
+        "terminals": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/terminal" }
+        },
+        "connections": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/connection" }
+        },
+        "lounges": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/lounge" }
+        },
+        "notes": { "type": "string" }
+      }
+    }
+  }
+}

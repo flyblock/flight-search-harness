@@ -1,0 +1,196 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/flight-search-harness/product/one-way/schemas/user-profile.schema.json",
+  "title": "One-way travel Profile v0.7.1",
+  "type": "object",
+  "required": [
+    "profile_id",
+    "trip_mode",
+    "origin_region",
+    "destination_region",
+    "date_window",
+    "currency",
+    "traveler_count",
+    "baggage",
+    "overnight_allowed",
+    "self_transfer_policy"
+  ],
+  "allOf": [
+    {
+      "anyOf": [
+        {"required": ["origin_pool"]},
+        {"required": ["origin_start_nodes", "origin_airport_nodes"]}
+      ]
+    },
+    {
+      "anyOf": [
+        {"required": ["destination_pool"]},
+        {"required": ["destination_end_nodes", "destination_airport_nodes"]}
+      ]
+    }
+  ],
+  "properties": {
+    "profile_version": {"type": "string", "const": "0.7.1", "default": "0.7.1"},
+    "profile_id": {"type": "string", "minLength": 1},
+    "profile_name": {"type": "string", "minLength": 1},
+    "status": {"enum": ["draft", "confirmed"], "default": "draft"},
+    "trip_mode": {"const": "fixed_destination"},
+    "origin_region": {"$ref": "#/$defs/region"},
+    "destination_region": {"$ref": "#/$defs/region"},
+    "origin_pool": {
+      "$ref": "region-pool.schema.json#/$defs/region_pool",
+      "description": "Direction-neutral region pool applied to origin access."
+    },
+    "destination_pool": {
+      "$ref": "region-pool.schema.json#/$defs/region_pool",
+      "description": "Direction-neutral region pool applied to destination egress."
+    },
+    "origin_start_nodes": {"$ref": "#/$defs/node_ids"},
+    "destination_end_nodes": {"$ref": "#/$defs/node_ids"},
+    "origin_airport_nodes": {"$ref": "#/$defs/node_ids"},
+    "destination_airport_nodes": {"$ref": "#/$defs/node_ids"},
+    "allowed_modes": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {"$ref": "#/$defs/transport_mode"},
+      "default": ["flight", "rail", "bus", "coach", "ferry", "local_transit", "walk", "rideshare", "car"]
+    },
+    "date_window": {
+      "type": "object",
+      "required": ["start", "end"],
+      "properties": {
+        "start": {"type": "string", "format": "date-time"},
+        "end": {"type": "string", "format": "date-time"}
+      },
+      "additionalProperties": false
+    },
+    "date_flexibility": {
+      "type": "object",
+      "required": ["mode"],
+      "properties": {
+        "mode": {
+          "enum": ["exact_dates", "bounded_window", "fully_flexible"],
+          "default": "bounded_window"
+        },
+        "exact_departure_dates": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {"type": "string", "format": "date"}
+        }
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"mode": {"const": "exact_dates"}}},
+          "then": {"required": ["exact_departure_dates"]}
+        }
+      ],
+      "additionalProperties": false,
+      "default": {"mode": "bounded_window"}
+    },
+    "budget": {
+      "oneOf": [
+        {"type": "null"},
+        {"$ref": "#/$defs/money"}
+      ],
+      "description": "Optional hard total budget. Null or omission means unbounded."
+    },
+    "currency": {"type": "string", "pattern": "^[A-Z]{3}$"},
+    "traveler_count": {"type": "integer", "minimum": 1},
+    "baggage": {
+      "type": "object",
+      "required": ["mode", "paid_baggage"],
+      "properties": {
+        "mode": {"type": "string", "minLength": 1},
+        "paid_baggage": {"type": "boolean"},
+        "customized": {"type": "boolean"}
+      },
+      "additionalProperties": true
+    },
+    "transport_entitlements": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/transport_entitlement"},
+      "default": []
+    },
+    "overnight_allowed": {"type": "boolean"},
+    "accommodation_cost_policy": {
+      "enum": ["include_required", "exclude_from_optimization"],
+      "default": "include_required",
+      "description": "Whether explicitly observed required accommodation participates in optimization. Exclusion never removes the observed amount from route audit output."
+    },
+    "self_transfer_policy": {
+      "enum": ["allow", "avoid", "never"]
+    },
+    "scoring_preferences": {
+      "type": "object",
+      "properties": {
+        "primary_strategy": {
+          "enum": ["lowest_price", "shortest_time", "convenience", "balanced", "extreme_savings"],
+          "default": "balanced"
+        },
+        "price_weight": {"type": "number", "minimum": 0},
+        "time_weight": {"type": "number", "minimum": 0},
+        "transfer_weight": {"type": "number", "minimum": 0}
+      },
+      "additionalProperties": true,
+      "default": {"primary_strategy": "balanced"}
+    },
+    "notes": {"type": "array", "items": {"type": "string"}, "default": []}
+  },
+  "additionalProperties": true,
+  "$defs": {
+    "money": {
+      "type": "object",
+      "required": ["amount", "currency"],
+      "properties": {
+        "amount": {"type": "number", "minimum": 0},
+        "currency": {"type": "string", "pattern": "^[A-Z]{3}$"}
+      },
+      "additionalProperties": false
+    },
+    "region": {
+      "type": "object",
+      "required": ["label"],
+      "properties": {
+        "label": {"type": "string", "minLength": 1},
+        "region_id": {"type": "string", "minLength": 1}
+      },
+      "additionalProperties": true
+    },
+    "node_ids": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"type": "string", "minLength": 1},
+      "uniqueItems": true
+    },
+    "transport_mode": {
+      "enum": ["flight", "rail", "bus", "coach", "ferry", "local_transit", "walk", "rideshare", "car"]
+    },
+    "transport_entitlement": {
+      "type": "object",
+      "required": ["entitlement_id", "covered_modes", "coverage_tags", "cost_override"],
+      "properties": {
+        "entitlement_id": {"type": "string", "minLength": 1},
+        "label": {"type": "string"},
+        "covered_modes": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/transport_mode"},
+          "uniqueItems": true
+        },
+        "coverage_tags": {
+          "type": "array",
+          "items": {"type": "string", "minLength": 1},
+          "uniqueItems": true
+        },
+        "cost_override": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Effective edge cost in the configured base currency when mode and coverage tag match."
+        },
+        "notes": {"type": "array", "items": {"type": "string"}}
+      },
+      "additionalProperties": true
+    }
+  }
+}

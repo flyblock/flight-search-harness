@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/flight-search-harness/protocol-3/mission-receipt.schema.json",
+  "title": "Search Mission Receipt v2",
+  "type": "object",
+  "required": ["receipt_version", "item_id", "attempt_number", "status", "payload"],
+  "properties": {
+    "receipt_version": {"const": "2.0"},
+    "receipt_id": {"type": "string", "pattern": "^receipt-[a-f0-9]{32}$", "readOnly": true},
+    "item_id": {"type": "string", "minLength": 1},
+    "attempt_number": {"type": "integer", "minimum": 1},
+    "status": {"enum": ["complete", "blocked"]},
+    "payload": {"type": ["object", "null"]},
+    "reason": {"type": "string", "minLength": 1}
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"status": {"const": "complete"}}, "required": ["status"]},
+      "then": {"properties": {"payload": {"type": "object"}}}
+    },
+    {
+      "if": {"properties": {"status": {"const": "blocked"}}, "required": ["status"]},
+      "then": {"required": ["reason"]}
+    }
+  ],
+  "additionalProperties": false
+}

@@ -1,0 +1,456 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/flight-search-harness/product/one-way/schemas/browser-task-brief.schema.json",
+  "title": "AI browser task brief set v0.7.1",
+  "description": "Deterministic rendering of AI-actionable candidate and script-recommended tasks. The renderer itself does not operate a browser or choose the next action.",
+  "type": "object",
+  "required": [
+    "brief_set_version",
+    "session_id",
+    "trip_scope",
+    "actionable_task_count",
+    "pending_task_count",
+    "candidate_task_count",
+    "ordered_hypothesis_tree",
+    "briefs"
+  ],
+  "properties": {
+    "brief_set_version": {"const": "0.7.1"},
+    "session_id": {"type": ["string", "null"]},
+    "trip_scope": {"type": ["string", "null"]},
+    "actionable_task_count": {"type": "integer", "minimum": 0},
+    "pending_task_count": {"type": "integer", "minimum": 0},
+    "candidate_task_count": {"type": "integer", "minimum": 0},
+    "ordered_hypothesis_tree": {"$ref": "#/$defs/hypothesis_tree"},
+    "briefs": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/brief"}
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "hypothesis_tree": {
+      "type": "object",
+      "required": [
+        "tree_version",
+        "root_hypothesis_id",
+        "nodes",
+        "active_path",
+        "next_candidate_id",
+        "backtrack_count",
+        "backtrack_history",
+        "ordering_rule"
+      ],
+      "properties": {
+        "tree_version": {"const": "1.0"},
+        "root_hypothesis_id": {"type": "string", "minLength": 1},
+        "nodes": {"type": "object", "additionalProperties": {"type": "object"}},
+        "active_path": {"type": "array", "items": {"type": "string", "minLength": 1}},
+        "next_candidate_id": {"type": ["string", "null"]},
+        "backtrack_count": {"type": "integer", "minimum": 0},
+        "backtrack_history": {"type": "array", "items": {"type": "object"}},
+        "ordering_rule": {"type": "string", "minLength": 1}
+      },
+      "additionalProperties": false
+    },
+    "known_node": {
+      "type": "object",
+      "required": ["node_id"],
+      "properties": {
+        "node_id": {"type": "string", "minLength": 1},
+        "node_type": {"type": "string", "minLength": 1},
+        "location": {"type": "string", "minLength": 1},
+        "country_or_region": {"type": "string", "minLength": 1},
+        "country_code": {"type": "string", "pattern": "^[A-Z]{2}$"}
+      },
+      "additionalProperties": false
+    },
+    "region": {
+      "type": "object",
+      "required": ["region_id", "label"],
+      "properties": {
+        "region_id": {"type": "string", "minLength": 1},
+        "label": {"type": "string", "minLength": 1}
+      },
+      "additionalProperties": false
+    },
+    "endpoint_scope": {
+      "type": "object",
+      "required": [
+        "policy",
+        "node_ids",
+        "known_nodes",
+        "region",
+        "allows_sourced_node_discovery"
+      ],
+      "properties": {
+        "policy": {
+          "enum": [
+            "exact_node",
+            "node_pool",
+            "provider_authorized_anywhere"
+          ]
+        },
+        "node_ids": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {"type": "string", "minLength": 1}
+        },
+        "known_nodes": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/known_node"}
+        },
+        "region": {
+          "oneOf": [
+            {"$ref": "#/$defs/region"},
+            {"type": "null"}
+          ]
+        },
+        "allows_sourced_node_discovery": {"type": "boolean"}
+      },
+      "additionalProperties": false
+    },
+    "capture_field": {
+      "type": "object",
+      "required": ["field", "required_when", "rule"],
+      "properties": {
+        "field": {"type": "string", "minLength": 1},
+        "required_when": {"type": "string", "minLength": 1},
+        "rule": {"type": "string", "minLength": 1}
+      },
+      "additionalProperties": false
+    },
+    "conditional_requirement": {
+      "type": "object",
+      "required": ["when", "rule"],
+      "properties": {
+        "when": {"type": "string", "minLength": 1},
+        "at_least_one": {
+          "type": "array",
+          "minItems": 2,
+          "uniqueItems": true,
+          "items": {"type": "string", "minLength": 1}
+        },
+        "exactly_one": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 2,
+          "uniqueItems": true,
+          "items": {"type": "string", "minLength": 1}
+        },
+        "unknown_reason_codes": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "not_disclosed_by_source",
+              "not_visible_in_search_result",
+              "provider_omitted"
+            ]
+          }
+        },
+        "rule": {"type": "string", "minLength": 1}
+      },
+      "oneOf": [
+        {"required": ["at_least_one"]},
+        {"required": ["exactly_one", "unknown_reason_codes"]}
+      ],
+      "additionalProperties": false
+    },
+    "price_improvement": {
+      "type": "object",
+      "required": [
+        "available",
+        "remaining_amount",
+        "currency",
+        "incumbent_total_cost",
+        "known_prefix_cost",
+        "known_suffix_cost",
+        "ceiling_source",
+        "application"
+      ],
+      "properties": {
+        "available": {"type": "boolean"},
+        "remaining_amount": {"type": ["number", "null"], "minimum": 0},
+        "currency": {
+          "type": ["string", "null"],
+          "pattern": "^[A-Z]{3}$"
+        },
+        "incumbent_total_cost": {"type": ["number", "null"], "minimum": 0},
+        "known_prefix_cost": {"type": ["number", "null"], "minimum": 0},
+        "known_suffix_cost": {"type": ["number", "null"], "minimum": 0},
+        "ceiling_source": {"type": ["string", "null"]},
+        "application": {
+          "enum": [
+            "reference_context_only",
+            "candidate_mandatory_cost_must_not_exceed_remaining_amount_to_improve_price",
+            "no_price_improvement_ceiling_was_issued"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "brief": {
+      "type": "object",
+      "required": [
+        "brief_version",
+        "task_id",
+        "task_sequence",
+        "task_status",
+        "hypothesis",
+        "decision_context",
+        "request_type",
+        "task_family",
+        "task_purpose",
+        "search_scope",
+        "query_scope_ladder",
+        "frontier_context",
+        "time_window",
+        "date_search",
+        "corridor_context",
+        "candidate_modes",
+        "traveler_requirements",
+        "price_improvement",
+        "assigned_source",
+        "source_suggestions",
+        "suggested_source_categories",
+        "provider_kinds",
+        "must_capture",
+        "conditional_requirements",
+        "offer_collection_policy",
+        "no_result",
+        "browser_boundary"
+      ],
+      "properties": {
+        "brief_version": {"const": "0.7.1"},
+        "task_id": {"type": "string", "minLength": 1},
+        "task_sequence": {"type": "integer", "minimum": 1},
+        "task_status": {"enum": ["candidate", "pending"]},
+        "hypothesis": {
+          "type": "object",
+          "required": ["hypothesis_id", "hypothesis_kind", "parent_hypothesis_id", "sibling_order", "tree_status", "next_task_id", "route_shape", "geographic_cell", "anchor_edge_ids"],
+          "properties": {
+            "hypothesis_id": {"type": ["string", "null"]},
+            "hypothesis_kind": {"type": ["string", "null"]},
+            "parent_hypothesis_id": {"type": ["string", "null"]},
+            "sibling_order": {"type": ["integer", "null"], "minimum": 1},
+            "tree_status": {"type": ["string", "null"]},
+            "next_task_id": {"type": ["string", "null"]},
+            "route_shape": {"type": ["string", "null"]},
+            "geographic_cell": {"type": ["string", "null"]},
+            "anchor_edge_ids": {"type": "array", "items": {"type": "string"}}
+          },
+          "additionalProperties": false
+        },
+        "decision_context": {
+          "type": "object",
+          "required": ["script_recommended", "selection_advice", "ai_authority"],
+          "properties": {
+            "script_recommended": {"type": "boolean"},
+            "selection_advice": {
+              "oneOf": [
+                {"type": "object", "additionalProperties": true},
+                {"type": "null"}
+              ]
+            },
+            "ai_authority": {"type": "string", "minLength": 1}
+          },
+          "additionalProperties": false
+        },
+        "request_type": {"type": "string", "minLength": 1},
+        "task_family": {
+          "enum": [
+            "baseline",
+            "market",
+            "corridor_calendar",
+            "reverse",
+            "budgeted_predecessor",
+            "bridge",
+            "refresh"
+          ]
+        },
+        "task_purpose": {"type": "string", "minLength": 1},
+        "search_scope": {
+          "type": "object",
+          "required": ["from", "to"],
+          "properties": {
+            "from": {"$ref": "#/$defs/endpoint_scope"},
+            "to": {"$ref": "#/$defs/endpoint_scope"}
+          },
+          "additionalProperties": false
+        },
+        "query_scope_ladder": {
+          "type": "object",
+          "required": ["query_shape_version", "task_id", "decision_owner", "scope_ladder", "instruction"],
+          "properties": {
+            "query_shape_version": {"const": "1.0"},
+            "task_id": {"type": ["string", "null"]},
+            "decision_owner": {"const": "ai"},
+            "scope_ladder": {"type": "array", "items": {"type": "object"}},
+            "instruction": {"type": "string", "minLength": 1}
+          },
+          "additionalProperties": false
+        },
+        "frontier_context": {
+          "oneOf": [
+            {"type": "object", "additionalProperties": true},
+            {"type": "null"}
+          ]
+        },
+        "time_window": {
+          "type": "object",
+          "required": ["earliest_departure", "latest_arrival", "rule"],
+          "properties": {
+            "earliest_departure": {"type": "string", "format": "date-time"},
+            "latest_arrival": {"type": "string", "format": "date-time"},
+            "rule": {"type": "string", "minLength": 1}
+          },
+          "additionalProperties": false
+        },
+        "date_search": {
+          "type": "object",
+          "required": ["mode", "execution_rule"],
+          "properties": {
+            "mode": {"enum": ["exact_dates", "bounded_window", "fully_flexible"]},
+            "exact_departure_dates": {
+              "type": "array",
+              "minItems": 1,
+              "uniqueItems": true,
+              "items": {"type": "string", "format": "date"}
+            },
+            "retain_candidate_dates": {"type": "integer", "minimum": 1},
+            "calendar_strategy": {"type": "string", "minLength": 1},
+            "execution_rule": {"type": "string", "minLength": 1}
+          },
+          "additionalProperties": true
+        },
+        "corridor_context": {
+          "oneOf": [
+            {"type": "object", "additionalProperties": true},
+            {"type": "null"}
+          ]
+        },
+        "candidate_modes": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {"type": "string", "minLength": 1}
+        },
+        "traveler_requirements": {
+          "type": "object",
+          "required": ["traveler_count", "baggage", "overnight_allowed", "self_transfer_policy"],
+          "properties": {
+            "traveler_count": {"type": "integer", "minimum": 1},
+            "baggage": {
+              "type": "object",
+              "required": ["mode", "paid_baggage"],
+              "properties": {
+                "mode": {"type": "string", "minLength": 1},
+                "paid_baggage": {"type": "boolean"}
+              },
+              "additionalProperties": true
+            },
+            "overnight_allowed": {"type": "boolean"},
+            "self_transfer_policy": {"enum": ["allow", "avoid", "never"]}
+          },
+          "additionalProperties": false
+        },
+        "price_improvement": {"$ref": "#/$defs/price_improvement"},
+        "assigned_source": {
+          "oneOf": [
+            {
+              "type": "object",
+              "required": ["source_id", "name", "url", "source_type", "execution_kind", "admission_policy", "fulfillment_rule"],
+              "properties": {
+                "source_id": {"type": "string", "minLength": 1},
+                "name": {"type": "string", "minLength": 1},
+                "url": {"type": "string", "format": "uri", "pattern": "^https?://"},
+                "source_type": {"type": "string", "minLength": 1},
+                "execution_kind": {"type": "string", "minLength": 1},
+                "admission_policy": {"type": "string", "minLength": 1},
+                "fulfillment_rule": {"type": "string", "minLength": 1}
+              },
+              "additionalProperties": false
+            },
+            {"type": "null"}
+          ]
+        },
+        "source_suggestions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["source_id", "name", "url", "execution_kind", "admission_policy"],
+            "properties": {
+              "source_id": {"type": "string", "minLength": 1},
+              "name": {"type": "string", "minLength": 1},
+              "url": {"type": "string", "format": "uri", "pattern": "^https?://"},
+              "source_type": {"type": "string"},
+              "registry_priority": {"type": "integer"},
+              "execution_kind": {"type": "string", "minLength": 1},
+              "admission_policy": {"type": "string", "minLength": 1},
+              "registry_last_verified": {"type": ["string", "null"]},
+              "capabilities": {"type": "object"}
+            },
+            "additionalProperties": true
+          }
+        },
+        "suggested_source_categories": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {"type": "string", "minLength": 1}
+        },
+        "provider_kinds": {
+          "type": "array",
+          "items": {"type": "string", "minLength": 1}
+        },
+        "must_capture": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"$ref": "#/$defs/capture_field"}
+        },
+        "conditional_requirements": {
+          "type": "array",
+          "minItems": 2,
+          "items": {"$ref": "#/$defs/conditional_requirement"}
+        },
+        "offer_collection_policy": {
+          "type": "object",
+          "required": ["multi_platform", "provider_offer_id", "research_to_seller", "assigned_source"],
+          "properties": {
+            "multi_platform": {"type": "string", "minLength": 1},
+            "provider_offer_id": {"type": "string", "minLength": 1},
+            "research_to_seller": {"type": "string", "minLength": 1},
+            "assigned_source": {"type": "string", "minLength": 1}
+          },
+          "additionalProperties": false
+        },
+        "no_result": {
+          "type": "object",
+          "required": [
+            "evidence_status",
+            "meaning",
+            "does_not_mean",
+            "required_fields",
+            "reason_rule"
+          ],
+          "properties": {
+            "evidence_status": {"const": "no_result"},
+            "meaning": {"type": "string", "minLength": 1},
+            "does_not_mean": {"type": "string", "minLength": 1},
+            "required_fields": {
+              "type": "array",
+              "minItems": 4,
+              "uniqueItems": true,
+              "items": {"type": "string", "minLength": 1}
+            },
+            "reason_rule": {"type": "string", "minLength": 1}
+          },
+          "additionalProperties": false
+        },
+        "browser_boundary": {"type": "string", "minLength": 1}
+      },
+      "additionalProperties": false
+    }
+  }
+}

@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/flight-search-harness/protocol-3/pending-effect.schema.json",
+  "title": "Flight Search Harness pending Product Kernel effect v1",
+  "type": "object",
+  "required": ["pending_effect_version", "run_id", "mission_revision", "effect"],
+  "properties": {
+    "pending_effect_version": {"const": "1.0"},
+    "run_id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,95}$"},
+    "mission_revision": {"type": "integer", "minimum": 0},
+    "effect": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["kind"],
+          "properties": {"kind": {"type": "string", "minLength": 1}},
+          "additionalProperties": true
+        },
+        {"type": "null"}
+      ]
+    }
+  },
+  "additionalProperties": false
+}

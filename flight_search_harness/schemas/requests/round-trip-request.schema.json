@@ -1,0 +1,62 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "round-trip-request.schema.json",
+  "title": "Round-trip Flight Search Harness request v2",
+  "type": "object",
+  "required": ["request_version", "journey_shape", "intent"],
+  "properties": {
+    "request_version": {"const": "2.0"},
+    "request_id": {"type": "string", "minLength": 1},
+    "journey_shape": {"const": "round_trip"},
+    "intent": {
+      "type": "object",
+      "required": [
+        "base_currency",
+        "traveler_count",
+        "baggage_policy",
+        "overnight_allowed",
+        "self_transfer_policy",
+        "fx_to_base",
+        "origin",
+        "destination",
+        "outbound_departure_window",
+        "return_departure_window"
+      ],
+      "properties": {
+        "base_currency": {"$ref": "common-defs.schema.json#/$defs/currency_code"},
+        "traveler_count": {"type": "integer", "minimum": 1},
+        "baggage_policy": {"$ref": "common-defs.schema.json#/$defs/baggage_policy"},
+        "overnight_allowed": {"type": "boolean"},
+        "self_transfer_policy": {"$ref": "common-defs.schema.json#/$defs/self_transfer_policy"},
+        "fx_to_base": {"$ref": "common-defs.schema.json#/$defs/fx_to_base"},
+        "fx_snapshot": {"$ref": "common-defs.schema.json#/$defs/fx_snapshot"},
+        "origin": {"$ref": "common-defs.schema.json#/$defs/fixed_region_side"},
+        "destination": {"$ref": "common-defs.schema.json#/$defs/fixed_region_side"},
+        "outbound_departure_window": {
+          "$ref": "common-defs.schema.json#/$defs/date_or_datetime_window",
+          "description": "Date-only boundaries require utc_offset on every origin anchor node."
+        },
+        "return_departure_window": {
+          "$ref": "common-defs.schema.json#/$defs/date_or_datetime_window",
+          "description": "Date-only boundaries require utc_offset on every destination anchor node."
+        },
+        "outbound_date_flexibility": {"$ref": "common-defs.schema.json#/$defs/date_flexibility"},
+        "return_date_flexibility": {"$ref": "common-defs.schema.json#/$defs/date_flexibility"},
+        "minimum_stay_nights": {"type": "integer", "minimum": 0},
+        "maximum_stay_nights": {"type": "integer", "minimum": 0},
+        "budget": {
+          "oneOf": [
+            {"$ref": "common-defs.schema.json#/$defs/money"},
+            {"type": "null"}
+          ]
+        },
+        "allowed_modes": {"$ref": "common-defs.schema.json#/$defs/allowed_modes"},
+        "maximum_total_duration_minutes": {"type": "integer", "minimum": 1},
+        "airport_transit_unknown_policy": {"enum": ["allow_with_warning", "reject"]}
+      },
+      "additionalProperties": false
+    },
+    "metadata": {"type": "object"}
+  },
+  "additionalProperties": false
+}

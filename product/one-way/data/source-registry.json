@@ -1,0 +1,571 @@
+{
+  "registry_schema_version": "0.1.0",
+  "last_verified": "2026-08-12",
+  "purpose": "Browser-first navigation hints for an AI discovering observed fares, schedules, operators, and transport topology.",
+  "not_a_whitelist": true,
+  "capability_value_domain": [true, false, "unknown"],
+  "sources": [
+    {
+      "source_id": "google-flights",
+      "name": "Google Flights",
+      "url": "https://www.google.com/travel/flights",
+      "source_type": "flight_metasearch",
+      "modes": ["flight"],
+      "regions": ["global_where_available"],
+      "capabilities": {
+        "flexible_destinations": true,
+        "reverse_search": "unknown",
+        "date_flexibility": true,
+        "direct_booking": false,
+        "route_topology": false
+      },
+    "browser_notes": [
+      "Use the map, Dates, Price graph, Airports, Best, and Cheapest views when visible.",
+      "Results use more than 300 partners but may not include every offer.",
+      "A result may be admitted directly when Google Flights visibly supplies the exact dated itinerary, flight identity, mandatory price, baggage terms, seller or booking option, URL, and observation time.",
+      "Follow the booking handoff only when a required field is missing, the price is conditional or conflicting, or the user requests another verification."
+    ],
+      "priority": 100,
+      "fallback": ["ita-matrix", "skyscanner", "kayak", "carrier_official_site"],
+      "last_verified": "2026-08-11",
+      "evidence_url": "https://support.google.com/travel/answer/2475306?hl=en"
+    },
+    {
+      "source_id": "ita-matrix",
+      "name": "ITA Matrix",
+      "url": "https://matrix.itasoftware.com/",
+      "source_type": "scheduled_airfare_and_fare_rule_research",
+      "modes": ["flight"],
+      "regions": ["global_where_participating_inventory_is_available"],
+      "capabilities": {
+        "flexible_destinations": false,
+        "reverse_search": false,
+        "date_flexibility": true,
+        "direct_booking": false,
+        "route_topology": false,
+        "multi_airport": true,
+        "advanced_routing_controls": true,
+        "fare_rule_detail": true,
+        "ota_exclusive_discount_coverage": false,
+        "low_cost_carrier_coverage_complete": false
+      },
+      "browser_notes": [
+        "Use for scheduled full-service-carrier pricing, multi-airport searches, lowest-fare calendars, advanced routing codes, fare construction, and fare-rule research.",
+        "Prefer after the temporal corridor scheduler identifies a conventional or interline corridor that needs deeper routing or fare-rule confirmation; do not use it as the only market source.",
+        "Matrix does not sell tickets. Treat its displayed itinerary and fare as research evidence, then verify a current bookable total with the airline or a named travel seller.",
+        "Do not infer absence from Matrix alone: OTA-only discounts, platform coupons, private or eligibility-gated fares, and some low-cost-carrier inventory may be missing.",
+        "Keep Matrix fare-rule evidence separate from a cheaper seller quote for the same itinerary; never transfer ticket conditions from one offer to another without direct evidence."
+      ],
+      "priority": 97,
+      "fallback": ["google-flights", "skyscanner", "kayak", "carrier_official_site"],
+      "last_verified": "2026-08-12",
+      "evidence_url": "https://support.google.com/faqs/answer/2736585?hl=en"
+    },
+    {
+      "source_id": "skyscanner",
+      "name": "Skyscanner",
+      "url": "https://www.skyscanner.com/",
+      "source_type": "flight_metasearch",
+      "modes": ["flight"],
+      "regions": ["global_where_available"],
+      "capabilities": {
+        "flexible_destinations": true,
+        "reverse_search": "unknown",
+        "date_flexibility": true,
+        "direct_booking": false,
+        "route_topology": false
+      },
+      "browser_notes": [
+        "Use Everywhere, nearby airports, and Flexible dates or whole-month views when available.",
+        "Calendar prices may be indicative; open a date to refresh the offer.",
+        "Booking completes on an airline or travel-provider site."
+      ],
+      "priority": 95,
+      "fallback": ["google-flights", "kayak", "carrier_official_site"],
+      "last_verified": "2026-08-11",
+      "evidence_url": "https://help.skyscanner.net/hc/en-gb/articles/201150942-How-do-I-find-the-best-prices"
+    },
+    {
+      "source_id": "kayak",
+      "name": "KAYAK",
+      "url": "https://www.kayak.com/flights",
+      "source_type": "flight_metasearch",
+      "modes": ["flight"],
+      "regions": ["global_where_available", "united_states"],
+      "capabilities": {
+        "flexible_destinations": true,
+        "reverse_search": "unknown",
+        "date_flexibility": true,
+        "direct_booking": "unknown",
+        "route_topology": false
+      },
+      "browser_notes": [
+        "Use Explore for flexible destinations and plus-or-minus days or month search for flexible dates.",
+        "Confirm the final seller and current total before recording an observed offer."
+      ],
+      "priority": 90,
+      "fallback": ["google-flights", "skyscanner", "carrier_official_site"],
+      "last_verified": "2026-08-11",
+      "evidence_url": "https://www.kayak.com/news/flexible-dates/"
+    },
+    {
+      "source_id": "kiwi-com",
+      "name": "Kiwi.com",
+      "url": "https://www.kiwi.com/",
+      "source_type": "flight_metasearch_and_ticket_seller",
+      "modes": ["flight"],
+      "regions": ["global_where_available"],
+      "capabilities": {
+        "flexible_destinations": true,
+        "reverse_search": "unknown",
+        "date_flexibility": true,
+        "direct_booking": true,
+        "route_topology": false,
+        "multi_airport": true,
+        "independent_airline_combination": true
+      },
+      "browser_notes": [
+        "Use for flexible dates, multiple airports, low-cost-carrier inventory, and independently ticketed virtual-interline combinations.",
+        "Capture every segment, self-transfer condition, baggage allowance, seller total, and mandatory extra shown for the exact itinerary.",
+        "Do not treat a Kiwi search result as market-complete; compare it with other metasearch, OTA, and airline-direct sources."
+      ],
+      "priority": 96,
+      "fallback": ["google-flights", "skyscanner", "kayak", "carrier_official_site"],
+      "last_verified": "2026-08-12",
+      "evidence_url": "https://www.kiwi.com/"
+    },
+    {
+      "source_id": "trip-com",
+      "name": "Trip.com / Ctrip",
+      "url": "https://www.trip.com/flights/",
+      "source_type": "flight_ota_and_ticket_seller",
+      "modes": ["flight"],
+      "regions": ["global_where_available", "china", "asia_pacific"],
+      "capabilities": {
+        "flexible_destinations": true,
+        "reverse_search": "unknown",
+        "date_flexibility": true,
+        "direct_booking": true,
+        "route_topology": false,
+        "multi_airport": true,
+        "eligibility_gated_fares": true
+      },
+      "browser_notes": [
+        "Use current dated results and price calendars for exact seller offers, including platform-specific public or eligibility-gated fares when the user explicitly requests them.",
+        "Keep coupons, membership, student, or other eligibility conditions attached only to the exact observed offer; never transfer them to another seller's quote.",
+        "Capture displayed baggage, ticket conditions, mandatory fees, and the final payable total before admission."
+      ],
+      "priority": 93,
+      "fallback": ["google-flights", "skyscanner", "kayak", "carrier_official_site"],
+      "last_verified": "2026-08-12",
+      "evidence_url": "https://www.trip.com/flights/"
+    },
+    {
+      "source_id": "flightconnections",
+      "name": "FlightConnections",
+      "url": "https://www.flightconnections.com/",
+      "source_type": "flight_route_topology",
+      "modes": ["flight"],
+      "regions": ["global"],
+      "capabilities": {
+        "flexible_destinations": true,
+        "reverse_search": true,
+        "date_flexibility": true,
+        "direct_booking": false,
+        "route_topology": true
+      },
+      "browser_notes": [
+        "Use for route, airport, airline, direct-flight, stopover, and arrive-here/depart-from-here discovery.",
+        "Verify any fare through a fare source or carrier."
+      ],
+      "priority": 70,
+      "fallback": ["carrier_official_site", "google-flights"],
+      "last_verified": "2026-08-11",
+      "evidence_url": "https://www.flightconnections.com/"
+    },
+    {
+      "source_id": "southwest",
+      "name": "Southwest Airlines",
+      "url": "https://www.southwest.com/",
+      "source_type": "airline_direct",
+      "modes": ["flight"],
+      "regions": ["united_states", "north_america", "central_america", "caribbean"],
+      "capabilities": {
+        "flexible_destinations": false,
+        "reverse_search": false,
+        "date_flexibility": true,
+        "direct_booking": true,
+        "route_topology": true
+      },
+      "browser_notes": [
+        "Use the Low Fare Calendar for a known route and the route map for carrier coverage.",
+        "Use after the candidate geography indicates Southwest may operate the leg."
+      ],
+      "priority": 85,
+      "fallback": ["google-flights", "kayak", "carrier_official_site"],
+      "last_verified": "2026-08-11",
+      "evidence_url": "https://www.southwest.com/html/travel-tools/index.html"
+    },
+    {
+      "source_id": "frontier",
+      "name": "Frontier Airlines",
+      "url": "https://www.flyfrontier.com/",
+      "source_type": "airline_direct_low_cost",
+      "modes": ["flight"],
+      "regions": ["united_states", "mexico", "caribbean"],
+      "capabilities": {
+        "flexible_destinations": "unknown",
+        "reverse_search": false,
+        "date_flexibility": "unknown",
+        "direct_booking": true,
+        "route_topology": true
+      },
+      "browser_notes": [
+        "Use direct search and the route map after Frontier is identified as a candidate operator.",
+        "Record the fare basis and mandatory extras separately."
+      ],
+      "priority": 80,
+      "fallback": ["google-flights", "kayak", "carrier_official_site"],
+      "last_verified": "2026-08-11",
+      "evidence_url": "https://www.flyfrontier.com/plan-and-book/route-map/"
+    },
+    {
+      "source_id": "ryanair",
+      "name": "Ryanair",
+      "url": "https://www.ryanair.com/",
+      "source_type": "airline_direct_low_cost",
+      "modes": ["flight"],
+      "regions": ["europe", "north_africa", "middle_east_where_served"],
+      "capabilities": {
+        "flexible_destinations": "unknown",
+        "reverse_search": false,
+        "date_flexibility": "unknown",
+        "direct_booking": true,
+        "route_topology": true
+      },
+      "browser_notes": [
+        "Use Fare Finder and direct search after Ryanair is identified as a candidate operator.",
+        "Record the fare bundle and mandatory extras separately."
+      ],
+      "priority": 80,
+      "fallback": ["google-flights", "skyscanner", "carrier_official_site"],
+      "last_verified": "2026-08-11",
+      "evidence_url": "https://www.ryanair.com/flights/ie/en"
+    },
+    {
+      "source_id": "airasia",
+      "name": "AirAsia",
+      "url": "https://www.airasia.com/flights/",
+      "source_type": "airline_direct_low_cost",
+      "modes": ["flight"],
+      "regions": ["asia_pacific", "selected_long_haul_routes"],
+      "capabilities": {
+        "flexible_destinations": false,
+        "reverse_search": false,
+        "date_flexibility": "unknown",
+        "direct_booking": true,
+        "route_topology": true
+      },
+      "browser_notes": [
+        "Use AirAsia Flights Only when confirming an AirAsia-operated candidate.",
+        "MOVE may show other airlines; preserve actual operator and seller."
+      ],
+      "priority": 80,
+      "fallback": ["google-flights", "skyscanner", "carrier_official_site"],
+      "last_verified": "2026-08-11",
+      "evidence_url": "https://www.airasia.com/flights/"
+    },
+    {
+      "source_id": "rome2rio",
+      "name": "Rome2Rio",
+      "url": "https://www.rome2rio.com/",
+      "source_type": "multimodal_discovery",
+      "modes": ["flight", "rail", "bus", "ferry", "public_transit", "automobile", "walking"],
+      "regions": ["global_where_available"],
+      "capabilities": {
+        "flexible_destinations": false,
+        "reverse_search": false,
+        "date_flexibility": "unknown",
+        "direct_booking": "unknown",
+        "route_topology": true
+      },
+      "browser_notes": [
+        "Use early to discover plausible door-to-door mode chains and candidate operators.",
+        "Prices may be estimates; follow through to an operator or booking source before creating an observed fare edge."
+      ],
+      "priority": 88,
+      "fallback": ["busbud", "trainline", "ferryhopper", "operator_official_site", "open_transit_data"],
+      "last_verified": "2026-08-11",
+      "evidence_url": "https://help.rome2rio.com/en/support/solutions/articles/22000281002-how-to-search-with-rome2rio"
+    },
+    {
+      "source_id": "busbud",
+      "name": "Busbud",
+      "url": "https://www.busbud.com/",
+      "source_type": "bus_and_rail_aggregator",
+      "modes": ["bus", "rail"],
+      "regions": ["global_where_available", "united_states", "canada", "mexico", "south_america", "africa"],
+      "capabilities": {
+        "flexible_destinations": false,
+        "reverse_search": false,
+        "date_flexibility": "unknown",
+        "direct_booking": true,
+        "route_topology": true
+      },
+      "browser_notes": [
+        "Use for intercity bus and supported rail comparisons, especially when local operators are hard to discover.",
+        "Coverage is broad but not universal; verify stop identity and operator."
+      ],
+      "priority": 82,
+      "fallback": ["operator_official_site", "rome2rio", "open_transit_data"],
+      "last_verified": "2026-08-11",
+      "evidence_url": "https://www.busbud.com/en/about"
+    },
+    {
+      "source_id": "trainline",
+      "name": "Trainline",
+      "url": "https://www.thetrainline.com/",
+      "source_type": "rail_and_coach_aggregator",
+      "modes": ["rail", "bus"],
+      "regions": ["europe", "united_kingdom", "other_contracted_inventory"],
+      "capabilities": {
+        "flexible_destinations": false,
+        "reverse_search": false,
+        "date_flexibility": "unknown",
+        "direct_booking": true,
+        "route_topology": true
+      },
+      "browser_notes": [
+        "Use for supported European rail and coach schedules, fares, and tickets.",
+        "Inventory is contracted operator coverage, not every public transport service."
+      ],
+      "priority": 82,
+      "fallback": ["operator_official_site", "rome2rio", "open_transit_data"],
+      "last_verified": "2026-08-11",
+      "evidence_url": "https://www.thetrainline.com/about-us"
+    },
+    {
+      "source_id": "ferryhopper",
+      "name": "Ferryhopper",
+      "url": "https://www.ferryhopper.com/",
+      "source_type": "ferry_aggregator",
+      "modes": ["ferry"],
+      "regions": ["mediterranean", "europe", "north_africa", "selected_global_ferry_markets"],
+      "capabilities": {
+        "flexible_destinations": true,
+        "reverse_search": false,
+        "date_flexibility": true,
+        "direct_booking": true,
+        "route_topology": true
+      },
+      "browser_notes": [
+        "Use route map, nearby-area ports, alternative dates, direct and indirect connection suggestions.",
+        "Schedules can be released only weeks or months ahead; absence may mean not released."
+      ],
+      "priority": 82,
+      "fallback": ["operator_official_site", "rome2rio", "open_transit_data"],
+      "last_verified": "2026-08-11",
+      "evidence_url": "https://www.ferryhopper.com/en/faq-amp/reservation-booking-info"
+    },
+    {
+      "source_id": "amtrak",
+      "name": "Amtrak",
+      "url": "https://www.amtrak.com/",
+      "source_type": "rail_operator_direct",
+      "modes": ["rail", "connecting_bus"],
+      "regions": ["united_states", "selected_canada_connections"],
+      "capabilities": {
+        "flexible_destinations": false,
+        "reverse_search": false,
+        "date_flexibility": true,
+        "direct_booking": true,
+        "route_topology": true
+      },
+      "browser_notes": [
+        "Use station-pair and date-range timetable search for current train, connecting-bus, or combined options.",
+        "Use the official booking flow to confirm fare and availability."
+      ],
+      "priority": 85,
+      "fallback": ["rome2rio", "open_transit_data", "operator_official_site"],
+      "last_verified": "2026-08-11",
+      "evidence_url": "https://www.amtrak.com/train-schedules-timetables"
+    },
+    {
+      "source_id": "greyhound",
+      "name": "Greyhound",
+      "url": "https://www.greyhound.com/",
+      "source_type": "bus_operator_direct",
+      "modes": ["bus"],
+      "regions": ["united_states", "canada", "mexico"],
+      "capabilities": {
+        "flexible_destinations": false,
+        "reverse_search": false,
+        "date_flexibility": "unknown",
+        "direct_booking": true,
+        "route_topology": true
+      },
+      "browser_notes": [
+        "Use direct schedule and fare search for Greyhound and displayed FlixBus options in North America.",
+        "Confirm the exact stop and operating brand."
+      ],
+      "priority": 85,
+      "fallback": ["busbud", "rome2rio", "operator_official_site"],
+      "last_verified": "2026-08-11",
+      "evidence_url": "https://www.greyhound.com/"
+    },
+    {
+      "source_id": "transitland",
+      "name": "Transitland",
+      "url": "https://www.transit.land/",
+      "source_type": "open_feed_registry_and_api",
+      "modes": ["public_transit", "rail", "bus", "ferry"],
+      "regions": ["global_as_feeds_exist", "united_states"],
+      "capabilities": {
+        "flexible_destinations": false,
+        "reverse_search": "unknown",
+        "date_flexibility": true,
+        "direct_booking": false,
+        "route_topology": true
+      },
+      "browser_notes": [
+        "Use to discover GTFS, GTFS Realtime, and related feeds and to inspect feed license and freshness.",
+        "API keys, rate limits, plan limits, and feed licenses apply; coverage depends on published feeds.",
+        "The nationwide United States routing API is documented as beta and paid, not a global fare engine."
+      ],
+      "priority": 65,
+      "fallback": ["gtfs", "operator_official_site", "opentripplanner", "motis"],
+      "last_verified": "2026-08-11",
+      "evidence_url": "https://www.transit.land/documentation"
+    },
+    {
+      "source_id": "gtfs",
+      "name": "General Transit Feed Specification",
+      "url": "https://gtfs.org/documentation/schedule/reference/",
+      "source_type": "open_data_standard",
+      "modes": ["public_transit", "rail", "bus", "ferry"],
+      "regions": ["global_as_feeds_exist"],
+      "capabilities": {
+        "flexible_destinations": false,
+        "reverse_search": false,
+        "date_flexibility": true,
+        "direct_booking": false,
+        "route_topology": true
+      },
+      "browser_notes": [
+        "GTFS is a data format, not a ticket seller or a universal feed directory.",
+        "Check the publisher, service calendar, feed date, license, fares coverage, and stop identities."
+      ],
+      "priority": 55,
+      "fallback": ["transitland", "operator_official_site", "opentripplanner", "motis"],
+      "last_verified": "2026-08-11",
+      "evidence_url": "https://gtfs.org/documentation/schedule/reference/"
+    },
+    {
+      "source_id": "openstreetmap",
+      "name": "OpenStreetMap",
+      "url": "https://www.openstreetmap.org/",
+      "source_type": "open_geospatial_data",
+      "modes": ["walking", "bicycle", "automobile", "rail", "public_transit"],
+      "regions": ["global_with_variable_coverage"],
+      "capabilities": {
+        "flexible_destinations": false,
+        "reverse_search": false,
+        "date_flexibility": false,
+        "direct_booking": false,
+        "route_topology": true
+      },
+      "browser_notes": [
+        "Use for roads, paths, stations, terminals, and physical access topology.",
+        "OSM does not itself provide current ticket fares or a guaranteed timetable; attribution and license rules apply."
+      ],
+      "priority": 50,
+      "fallback": ["valhalla", "operator_official_site", "open_transit_data"],
+      "last_verified": "2026-08-11",
+      "evidence_url": "https://welcome.openstreetmap.org/what-is-openstreetmap/"
+    },
+    {
+      "source_id": "opentripplanner",
+      "name": "OpenTripPlanner",
+      "url": "https://www.opentripplanner.org/",
+      "source_type": "open_source_routing_engine",
+      "modes": ["public_transit", "rail", "bus", "ferry", "walking", "bicycle", "automobile"],
+      "regions": ["deployment_defined"],
+      "capabilities": {
+        "flexible_destinations": false,
+        "reverse_search": "unknown",
+        "date_flexibility": "unknown",
+        "direct_booking": false,
+        "route_topology": true
+      },
+      "browser_notes": [
+        "OTP is software that must be deployed with OSM and GTFS, GTFS-RT, GBFS, or supported NeTEx data.",
+        "Do not treat the project website as a hosted global planner or fare source."
+      ],
+      "priority": 45,
+      "fallback": ["motis", "valhalla", "transitland"],
+      "last_verified": "2026-08-11",
+      "evidence_url": "https://docs.opentripplanner.org/en/latest/Data-Sources/"
+    },
+    {
+      "source_id": "motis",
+      "name": "MOTIS",
+      "url": "https://github.com/motis-project/motis",
+      "source_type": "open_source_routing_engine",
+      "modes": ["public_transit", "rail", "bus", "ferry", "walking", "bicycle", "shared_mobility", "automobile"],
+      "regions": ["deployment_defined"],
+      "capabilities": {
+        "flexible_destinations": false,
+        "reverse_search": "unknown",
+        "date_flexibility": true,
+        "direct_booking": false,
+        "route_topology": true
+      },
+      "browser_notes": [
+        "MOTIS is deployable software using OSM, GTFS, NeTEx, GTFS-RT, SIRI, and GBFS inputs.",
+        "Input coverage and timetable validity determine results; it is not a live global fare source."
+      ],
+      "priority": 45,
+      "fallback": ["opentripplanner", "valhalla", "transitland"],
+      "last_verified": "2026-08-11",
+      "evidence_url": "https://github.com/motis-project/motis"
+    },
+    {
+      "source_id": "valhalla",
+      "name": "Valhalla",
+      "url": "https://valhalla.github.io/valhalla/",
+      "source_type": "open_source_routing_engine",
+      "modes": ["walking", "bicycle", "automobile", "public_transit"],
+      "regions": ["deployment_defined"],
+      "capabilities": {
+        "flexible_destinations": false,
+        "reverse_search": true,
+        "date_flexibility": true,
+        "direct_booking": false,
+        "route_topology": true
+      },
+      "browser_notes": [
+        "Use a deployed instance for road access, time-distance matrices, isochrones, and supported multimodal routing.",
+        "It consumes OSM and user-supplied GTFS; matrix documentation states multimodal costing is not supported by the matrix service.",
+        "A public demo is not a production entitlement."
+      ],
+      "priority": 45,
+      "fallback": ["opentripplanner", "motis", "openstreetmap"],
+      "last_verified": "2026-08-11",
+      "evidence_url": "https://valhalla.github.io/valhalla/api/"
+    }
+  ],
+  "dynamic_source_rules": [
+    {
+      "source_id": "carrier_official_site",
+      "instruction": "When a candidate airline is not listed, discover and use its official website. Verify the domain from the operator's official public presence."
+    },
+    {
+      "source_id": "operator_official_site",
+      "instruction": "When a rail, bus, ferry, or transit operator is discovered, prefer its official public timetable or booking site to confirm schedule, stop, and fare."
+    },
+    {
+      "source_id": "open_transit_data",
+      "instruction": "When structured coverage is missing, search the responsible transport authority or operator for an official GTFS, NeTEx, API, timetable, or route document."
+    }
+  ]
+}

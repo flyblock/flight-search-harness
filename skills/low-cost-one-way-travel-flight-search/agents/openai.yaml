@@ -1,0 +1,7 @@
+interface:
+  display_name: "Low-Cost One-Way Flight Search"
+  short_description: "Find cheap one-way journeys across flexible gateways"
+  default_prompt: "Use $low-cost-one-way-travel-flight-search to find the best verified low-cost one-way journey to my selected destination."
+policy:
+  products:
+    - "CODEX"

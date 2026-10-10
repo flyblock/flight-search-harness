@@ -1,0 +1,213 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/flight-search-harness/product/one-way/schemas/planner-config.schema.json",
+  "title": "One-way Product Kernel configuration v0.7.1",
+  "type": "object",
+  "required": [
+    "trip_mode",
+    "base_currency",
+    "currency_decimal_places",
+    "profile_file",
+    "nodes_file",
+    "edges_file",
+    "search"
+  ],
+  "properties": {
+    "product_version": {"const": "0.7.1"},
+    "trip_mode": {"const": "fixed_destination"},
+    "base_currency": {"type": "string", "pattern": "^[A-Z]{3}$"},
+    "currency_decimal_places": {"type": "integer", "minimum": 0, "maximum": 6},
+    "accommodation_cost_policy": {
+      "enum": ["include_required", "exclude_from_optimization"],
+      "default": "include_required",
+      "description": "Materialized copy of the Profile policy; runtime rejects a mismatch."
+    },
+    "fx_to_base": {
+      "type": "object",
+      "additionalProperties": {"type": "number", "exclusiveMinimum": 0}
+    },
+    "fx_snapshot": {"$ref": "#/$defs/fx_snapshot"},
+    "profile_file": {"type": "string", "minLength": 1},
+    "nodes_file": {"type": "string", "minLength": 1},
+    "edges_file": {"type": "string", "minLength": 1},
+    "airport_transit_file": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Optional airport operating-topology catalog."
+    },
+    "airport_transit": {
+      "type": "object",
+      "properties": {
+        "unknown_policy": {
+          "enum": ["allow_with_warning", "reject"],
+          "default": "allow_with_warning"
+        },
+        "airside_only": {"type": "boolean", "default": false}
+      },
+      "additionalProperties": false
+    },
+    "region_pools_file": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Optional catalog conforming to region-pool.schema.json."
+    },
+    "scenario_id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9._-]*$",
+      "description": "Optional scenario that assigns catalog pools to origin and destination."
+    },
+    "search": {
+      "type": "object",
+      "properties": {
+        "max_total_travel_minutes": {"type": "integer", "minimum": 1},
+        "max_transfers": {"type": "integer", "minimum": 1},
+        "max_routes": {"type": ["integer", "null"], "minimum": 1, "default": null},
+        "labels_per_node": {"type": ["integer", "null"], "minimum": 1, "default": null},
+        "reference_cost": {"type": ["number", "null"], "minimum": 0},
+        "connector_probe_limit": {"type": "integer", "minimum": 1},
+        "cost_relaxation_factor": {"type": "number", "exclusiveMinimum": 0},
+        "max_connector_gap_km": {"type": "number", "exclusiveMinimum": 0},
+        "minimum_connection_minutes": {"type": "integer", "minimum": 0},
+        "mode_transition_buffers_minutes": {"$ref": "#/$defs/mode_transition_buffers_minutes"}
+      },
+      "additionalProperties": false
+    },
+    "frontier_search": {
+      "type": "object",
+      "description": "Optional lightweight runtime overrides consumed by the deterministic frontier core. This is not the full search-policy orchestration object.",
+      "properties": {
+        "search_intensity": {
+          "enum": ["standard", "deep_savings", "extreme_exploration"]
+        },
+        "query_budget": {"type": "integer", "minimum": 0},
+        "max_hops": {"type": "integer", "minimum": 1},
+        "max_labels_per_node": {"type": "integer", "minimum": 1},
+        "max_total_cost": {"type": "number", "minimum": 0},
+        "max_total_minutes": {"type": "number", "minimum": 0},
+        "minimum_connection_minutes": {"type": "number", "minimum": 0},
+        "geography_quota": {"type": "integer", "minimum": 0},
+        "mode_quota": {"type": "integer", "minimum": 0},
+        "max_trace_entries": {"type": "integer", "minimum": 0},
+        "incumbent_scan_limit": {"type": "integer", "minimum": 0},
+        "max_unresolved_gap_km": {"type": "number", "minimum": 0},
+        "max_surface_gap_km": {"type": "number", "minimum": 0},
+        "max_connector_speed_kmh": {"type": "number", "exclusiveMinimum": 0},
+        "allowed_connector_modes": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "enum": ["flight", "rail", "bus", "coach", "ferry", "local_transit", "walk", "rideshare", "car"]
+          }
+        },
+        "connector_mode_max_gap_km": {
+          "$ref": "#/$defs/nonnegative_mode_map"
+        },
+        "connector_mode_max_speed_kmh": {
+          "$ref": "#/$defs/positive_mode_map"
+        },
+        "min_connector_cost_per_km": {"type": "number", "minimum": 0},
+        "query_cost_relaxation_factor": {"type": "number", "minimum": 0},
+        "search_as_of": {"type": "string", "format": "date-time"}
+      },
+      "additionalProperties": false
+    },
+    "temporal_corridor_search": {
+      "$ref": "temporal-corridor-policy.schema.json",
+      "description": "Bounded independent-date scheduling per discovered corridor."
+    },
+    "live_provider_session": {
+      "type": "object",
+      "properties": {
+        "query_budget": {
+          "type": ["integer", "null"],
+          "minimum": 1,
+          "default": null,
+          "description": "Optional user-requested hard cap on external browser attempts. Null keeps the ledger without stopping AI exploration."
+        },
+        "source_selection_mode": {
+          "type": "string",
+          "const": "ai_led",
+          "default": "ai_led",
+          "description": "ai_led keeps one task per research question and exposes applicable sources as non-binding suggestions."
+        },
+        "preferred_provider": {"type": "string", "minLength": 1},
+        "require_fresh_fx_snapshot": {"type": "boolean", "default": false},
+        "fx_as_of": {"type": "string", "format": "date-time"}
+      },
+      "additionalProperties": true
+    }
+  },
+  "dependentRequired": {
+    "scenario_id": ["region_pools_file"]
+  },
+  "additionalProperties": true,
+  "$defs": {
+    "mode_transition_buffers_minutes": {
+      "type": "object",
+      "properties": {
+        "surface_to_flight": {"type": "integer", "minimum": 0},
+        "self_transfer_to_flight": {"type": "integer", "minimum": 0},
+        "flight_to_flight": {"type": "integer", "minimum": 0},
+        "flight_to_surface": {"type": "integer", "minimum": 0},
+        "surface_to_surface": {"type": "integer", "minimum": 0}
+      },
+      "additionalProperties": false
+    },
+    "fx_snapshot": {
+      "type": "object",
+      "required": [
+        "base_currency",
+        "rates",
+        "source_url",
+        "provider",
+        "observed_at",
+        "expires_at"
+      ],
+      "properties": {
+        "base_currency": {"type": "string", "pattern": "^[A-Z]{3}$"},
+        "rates": {
+          "type": "object",
+          "minProperties": 1,
+          "propertyNames": {"pattern": "^[A-Z]{3}$"},
+          "additionalProperties": {"type": "number", "exclusiveMinimum": 0}
+        },
+        "source_url": {"type": "string", "format": "uri"},
+        "provider": {"type": "string", "minLength": 1},
+        "observed_at": {"type": "string", "format": "date-time"},
+        "expires_at": {"type": "string", "format": "date-time"}
+      },
+      "additionalProperties": false
+    },
+    "nonnegative_mode_map": {
+      "type": "object",
+      "properties": {
+        "flight": {"type": "number", "minimum": 0},
+        "rail": {"type": "number", "minimum": 0},
+        "bus": {"type": "number", "minimum": 0},
+        "coach": {"type": "number", "minimum": 0},
+        "ferry": {"type": "number", "minimum": 0},
+        "local_transit": {"type": "number", "minimum": 0},
+        "walk": {"type": "number", "minimum": 0},
+        "rideshare": {"type": "number", "minimum": 0},
+        "car": {"type": "number", "minimum": 0}
+      },
+      "additionalProperties": false
+    },
+    "positive_mode_map": {
+      "type": "object",
+      "properties": {
+        "flight": {"type": "number", "exclusiveMinimum": 0},
+        "rail": {"type": "number", "exclusiveMinimum": 0},
+        "bus": {"type": "number", "exclusiveMinimum": 0},
+        "coach": {"type": "number", "exclusiveMinimum": 0},
+        "ferry": {"type": "number", "exclusiveMinimum": 0},
+        "local_transit": {"type": "number", "exclusiveMinimum": 0},
+        "walk": {"type": "number", "exclusiveMinimum": 0},
+        "rideshare": {"type": "number", "exclusiveMinimum": 0},
+        "car": {"type": "number", "exclusiveMinimum": 0}
+      },
+      "additionalProperties": false
+    }
+  }
+}

@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/flight-search-harness/product/round-trip/schemas/round-trip-hypothesis-suggestions.schema.json",
+  "title": "Evidence-backed round-trip route-hypothesis suggestions v0.5.0",
+  "type": "object",
+  "required": ["generator_version", "decision_owner", "candidate_pool_exhaustion_required", "world_airport_enumeration", "origin_gateway_count", "destination_gateway_count", "published_suggestion_count", "gateway_blockers", "suggestions", "selection_instruction"],
+  "properties": {
+    "generator_version": {"const": "0.5.0"},
+    "decision_owner": {"const": "ai"},
+    "candidate_pool_exhaustion_required": {"const": false},
+    "world_airport_enumeration": {"const": false},
+    "origin_gateway_count": {"type": "integer", "minimum": 0},
+    "destination_gateway_count": {"type": "integer", "minimum": 0},
+    "published_suggestion_count": {"type": "integer", "minimum": 0},
+    "gateway_blockers": {"type": "array", "items": {"type": "string"}},
+    "suggestions": {"type": "array", "items": {"$ref": "#/$defs/suggestion"}},
+    "selection_instruction": {"type": "string"}
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "suggestion": {
+      "type": "object",
+      "required": ["hypothesis_id", "route_shape", "origin_gateway_nodes", "destination_gateway_nodes", "geographic_cell", "advisory_basis", "research_sequence", "temporal_strategy", "joint_baseline_reason"],
+      "properties": {
+        "hypothesis_id": {"type": "string"},
+        "route_shape": {"enum": ["closed_airport_pair", "regional_open_jaw", "nested_round_trips", "mixed_atomic_portfolio"]},
+        "origin_gateway_nodes": {"type": "array", "minItems": 1, "items": {"type": "string"}},
+        "destination_gateway_nodes": {"type": "array", "minItems": 1, "items": {"type": "string"}},
+        "geographic_cell": {"type": "string"},
+        "advisory_basis": {"type": "object"},
+        "research_sequence": {"type": "array", "minItems": 1, "items": {"type": "string"}},
+        "temporal_strategy": {"const": "ai_led_date_frontier"},
+        "joint_baseline_reason": {"type": "string"},
+        "task_specs": {"type": "array", "minItems": 1, "items": {"type": "object"}}
+      },
+      "additionalProperties": false
+    }
+  }
+}

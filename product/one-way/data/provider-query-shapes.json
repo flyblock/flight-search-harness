@@ -1,0 +1,114 @@
+{
+  "query_shape_version": "1.0",
+  "purpose": "Evidence-backed Provider UI query-shape capabilities. These capabilities route browser questions; they do not prove market coverage or select a route.",
+  "default_support": "unknown",
+  "shapes": [
+    "exact_to_exact",
+    "airport_pool_to_exact",
+    "airport_pool_to_airport_pool",
+    "country_to_exact",
+    "region_to_exact",
+    "continent_to_exact",
+    "anywhere_to_exact",
+    "exact_to_anywhere",
+    "airport_pool_to_anywhere"
+  ],
+  "sources": [
+    {
+      "source_id": "google-flights",
+      "support": {
+        "exact_to_exact": true,
+        "airport_pool_to_exact": true,
+        "airport_pool_to_airport_pool": true,
+        "country_to_exact": "unknown",
+        "region_to_exact": "unknown",
+        "continent_to_exact": false,
+        "anywhere_to_exact": false,
+        "exact_to_anywhere": true,
+        "airport_pool_to_anywhere": true
+      },
+      "evidence": "Live UI evidence confirms exact/multi-airport searches and destination Anywhere; an Anywhere origin was rejected by the origin control.",
+      "last_verified": "2026-10-08"
+    },
+    {
+      "source_id": "kiwi-com",
+      "support": {
+        "exact_to_exact": true,
+        "airport_pool_to_exact": true,
+        "airport_pool_to_airport_pool": true,
+        "country_to_exact": true,
+        "region_to_exact": "unknown",
+        "continent_to_exact": "unknown",
+        "anywhere_to_exact": false,
+        "exact_to_anywhere": true,
+        "airport_pool_to_anywhere": true
+      },
+      "evidence": "Live UI evidence confirms a country-level origin to an exact destination over a flexible date range; literal Anywhere/Everywhere origin was not accepted.",
+      "last_verified": "2026-10-08"
+    },
+    {
+      "source_id": "skyscanner",
+      "support": {
+        "exact_to_exact": true,
+        "airport_pool_to_exact": true,
+        "airport_pool_to_airport_pool": "unknown",
+        "country_to_exact": "unknown",
+        "region_to_exact": "unknown",
+        "continent_to_exact": "unknown",
+        "anywhere_to_exact": "unknown",
+        "exact_to_anywhere": true,
+        "airport_pool_to_anywhere": "unknown"
+      },
+      "evidence": "Public Everywhere/flexible-date behavior is known; broad-origin shapes remain unverified in this project.",
+      "last_verified": "2026-10-08"
+    },
+    {
+      "source_id": "trip-com",
+      "support": {
+        "exact_to_exact": true,
+        "airport_pool_to_exact": true,
+        "airport_pool_to_airport_pool": true,
+        "country_to_exact": "unknown",
+        "region_to_exact": "unknown",
+        "continent_to_exact": "unknown",
+        "anywhere_to_exact": "unknown",
+        "exact_to_anywhere": "unknown",
+        "airport_pool_to_anywhere": "unknown"
+      },
+      "evidence": "Exact and multi-airport seller search is supported; broad-origin discovery is not yet verified.",
+      "last_verified": "2026-10-08"
+    },
+    {
+      "source_id": "flightconnections",
+      "support": {
+        "exact_to_exact": true,
+        "airport_pool_to_exact": "unknown",
+        "airport_pool_to_airport_pool": "unknown",
+        "country_to_exact": "unknown",
+        "region_to_exact": "unknown",
+        "continent_to_exact": "unknown",
+        "anywhere_to_exact": true,
+        "exact_to_anywhere": true,
+        "airport_pool_to_anywhere": "unknown"
+      },
+      "evidence": "Arrive-here/depart-from-here topology discovery is research-only and requires later payable verification.",
+      "last_verified": "2026-10-08"
+    },
+    {
+      "source_id": "rome2rio",
+      "support": {
+        "exact_to_exact": true,
+        "airport_pool_to_exact": false,
+        "airport_pool_to_airport_pool": false,
+        "country_to_exact": false,
+        "region_to_exact": false,
+        "continent_to_exact": false,
+        "anywhere_to_exact": false,
+        "exact_to_anywhere": false,
+        "airport_pool_to_anywhere": false
+      },
+      "evidence": "Use concrete place-to-place topology discovery; broad regions are not payable endpoints.",
+      "last_verified": "2026-10-08"
+    }
+  ]
+}

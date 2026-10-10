@@ -1,0 +1,340 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/flight-search-harness/product/one-way/schemas/search-policy.schema.json",
+  "title": "Bidirectional frontier search policy v0.7.1",
+  "description": "Execution policy for a bounded, multi-source, bidirectional Pareto search. Profile baggage and transport-entitlement switches are inherited rather than redefined here.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "policy_id",
+    "search_intensity",
+    "search_behavior",
+    "budgets",
+    "frontier_quotas",
+    "hard_constraints",
+    "minimum_savings",
+    "lower_bound_policy",
+    "evidence_policy"
+  ],
+  "properties": {
+    "schema_version": {"const": "0.7.1"},
+    "policy_id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9._-]*$"
+    },
+    "search_intensity": {
+      "enum": ["standard", "deep_savings", "extreme_exploration"],
+      "description": "Named preset family. All effective limits remain explicit in this policy so a run can be reproduced."
+    },
+    "search_behavior": {
+      "type": "object",
+      "required": [
+        "strategy",
+        "bidirectional_anchor_search",
+        "dynamic_connector_discovery",
+        "geographic_diversity",
+        "stop_after_frontier_stable_expansions"
+      ],
+      "properties": {
+        "strategy": {"const": "bidirectional_multi_source_pareto"},
+        "bidirectional_anchor_search": {"const": true},
+        "dynamic_connector_discovery": {"type": "boolean"},
+        "geographic_diversity": {"type": "boolean"},
+        "allow_targeted_browser_gap_research": {"type": "boolean", "default": true},
+        "stop_after_frontier_stable_expansions": {"type": "integer", "minimum": 1}
+      },
+      "additionalProperties": false
+    },
+    "budgets": {"$ref": "#/$defs/budgets"},
+    "frontier_quotas": {"$ref": "#/$defs/frontier_quotas"},
+    "hard_constraints": {"$ref": "#/$defs/hard_constraints"},
+    "minimum_savings": {"$ref": "#/$defs/minimum_savings"},
+    "lower_bound_policy": {"$ref": "#/$defs/lower_bound_policy"},
+    "evidence_policy": {"$ref": "#/$defs/evidence_policy"}
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "money": {
+      "type": "object",
+      "required": ["amount", "currency"],
+      "properties": {
+        "amount": {"type": "number", "minimum": 0},
+        "currency": {"type": "string", "pattern": "^[A-Z]{3}$"}
+      },
+      "additionalProperties": false
+    },
+    "nullable_money": {
+      "oneOf": [
+        {"$ref": "#/$defs/money"},
+        {"type": "null"}
+      ]
+    },
+    "nullable_nonnegative_integer": {
+      "type": ["integer", "null"],
+      "minimum": 0
+    },
+    "budgets": {
+      "type": "object",
+      "description": "Hard execution budgets. A zero query sub-budget disables that query class.",
+      "required": [
+        "provider_queries_total",
+        "flight_discovery_queries",
+        "structured_route_queries",
+        "browser_research_queries",
+        "edge_refresh_queries",
+        "hub_expansions",
+        "connector_probes",
+        "candidate_pairs_evaluated",
+        "labels_created",
+        "wall_clock_seconds"
+      ],
+      "properties": {
+        "provider_queries_total": {"type": "integer", "minimum": 1},
+        "flight_discovery_queries": {"type": "integer", "minimum": 0},
+        "structured_route_queries": {"type": "integer", "minimum": 0},
+        "browser_research_queries": {"type": "integer", "minimum": 0},
+        "edge_refresh_queries": {"type": "integer", "minimum": 0},
+        "hub_expansions": {"type": "integer", "minimum": 0},
+        "connector_probes": {"type": "integer", "minimum": 0},
+        "candidate_pairs_evaluated": {"type": "integer", "minimum": 1},
+        "labels_created": {"type": "integer", "minimum": 1},
+        "wall_clock_seconds": {"type": "integer", "minimum": 1}
+      },
+      "additionalProperties": false
+    },
+    "frontier_quotas": {
+      "type": "object",
+      "description": "Diversity and capacity limits applied before global price ordering can collapse the frontier onto one network or corridor.",
+      "required": [
+        "forward_anchors_total",
+        "backward_anchors_total",
+        "anchor_pairs_total",
+        "pareto_candidates_total",
+        "per_origin_node",
+        "per_destination_node",
+        "per_geographic_cell",
+        "per_operator_network",
+        "per_date_bucket",
+        "per_route_shape",
+        "exploration_reserved"
+      ],
+      "properties": {
+        "forward_anchors_total": {"type": "integer", "minimum": 1},
+        "backward_anchors_total": {"type": "integer", "minimum": 1},
+        "anchor_pairs_total": {"type": "integer", "minimum": 1},
+        "pareto_candidates_total": {"type": "integer", "minimum": 1},
+        "per_origin_node": {"type": "integer", "minimum": 1},
+        "per_destination_node": {"type": "integer", "minimum": 1},
+        "per_geographic_cell": {"type": "integer", "minimum": 1},
+        "per_operator_network": {"type": "integer", "minimum": 1},
+        "per_date_bucket": {"type": "integer", "minimum": 1},
+        "per_route_shape": {"type": "integer", "minimum": 1},
+        "exploration_reserved": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Slots reserved for geographically or modally distinct anchors that are not currently cheapest."
+        },
+        "geographic_cell_system": {
+          "enum": ["geohash", "administrative_region", "provider_region"],
+          "default": "geohash"
+        },
+        "geographic_cell_precision": {"type": "string", "minLength": 1}
+      },
+      "additionalProperties": false
+    },
+    "hard_constraints": {
+      "type": "object",
+      "description": "Run-level feasibility limits. Null means unlimited; Profile policies still apply independently.",
+      "required": [
+        "max_total_cost",
+        "max_total_travel_minutes",
+        "max_ground_travel_minutes",
+        "max_wait_minutes",
+        "max_transfers",
+        "max_self_transfers",
+        "max_overnights",
+        "max_border_crossings",
+        "max_legs",
+        "minimum_connection_minutes",
+        "maximum_connection_minutes",
+        "allowed_transport_modes",
+        "require_complete_within_date_window"
+      ],
+      "properties": {
+        "max_total_cost": {"$ref": "#/$defs/nullable_money"},
+        "max_total_travel_minutes": {"$ref": "#/$defs/nullable_nonnegative_integer"},
+        "max_ground_travel_minutes": {"$ref": "#/$defs/nullable_nonnegative_integer"},
+        "max_wait_minutes": {"$ref": "#/$defs/nullable_nonnegative_integer"},
+        "max_transfers": {"$ref": "#/$defs/nullable_nonnegative_integer"},
+        "max_self_transfers": {"$ref": "#/$defs/nullable_nonnegative_integer"},
+        "max_overnights": {"$ref": "#/$defs/nullable_nonnegative_integer"},
+        "max_border_crossings": {"$ref": "#/$defs/nullable_nonnegative_integer"},
+        "max_legs": {"type": "integer", "minimum": 1},
+        "minimum_connection_minutes": {"type": "integer", "minimum": 0},
+        "maximum_connection_minutes": {"$ref": "#/$defs/nullable_nonnegative_integer"},
+        "allowed_transport_modes": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {"$ref": "#/$defs/transport_mode"}
+        },
+        "require_complete_within_date_window": {"type": "boolean"}
+      },
+      "additionalProperties": false
+    },
+    "minimum_savings": {
+      "type": "object",
+      "description": "Material-improvement gate measured against an observed conventional or confirmed incumbent total-trip cost.",
+      "required": [
+        "baseline_selector",
+        "comparison_metric",
+        "minimum_absolute",
+        "minimum_percent",
+        "threshold_rule",
+        "enforce_at",
+        "retain_non_saving_pareto_candidates"
+      ],
+      "properties": {
+        "baseline_selector": {
+          "enum": ["conventional_reference", "best_confirmed_incumbent", "user_budget"]
+        },
+        "comparison_metric": {"const": "complete_total_trip_cost"},
+        "minimum_absolute": {"$ref": "#/$defs/money"},
+        "minimum_percent": {"type": "number", "minimum": 0, "maximum": 100},
+        "threshold_rule": {
+          "enum": ["absolute", "percent", "either", "both"]
+        },
+        "enforce_at": {
+          "enum": ["connector_probe_admission", "complete_candidate_admission", "presentation_only"]
+        },
+        "retain_non_saving_pareto_candidates": {
+          "type": "boolean",
+          "description": "Retain faster or stronger-evidence candidates even when they do not meet the price-saving threshold."
+        }
+      },
+      "additionalProperties": false
+    },
+    "lower_bound_policy": {
+      "type": "object",
+      "description": "Admissible lower bounds used for branch-and-bound. Evidence weakness may change queue priority but must not make a pruning bound optimistic in the wrong direction.",
+      "required": [
+        "prune_only_with_proven_admissible_bound",
+        "combine_valid_bounds",
+        "unknown_cost_floor",
+        "unknown_duration_floor_minutes",
+        "include_known_mandatory_costs",
+        "profile_cost_normalization_required",
+        "currency_normalization_required",
+        "nonzero_bound_requires_evidence",
+        "estimators"
+      ],
+      "properties": {
+        "prune_only_with_proven_admissible_bound": {"const": true},
+        "combine_valid_bounds": {"const": "maximum"},
+        "unknown_cost_floor": {"$ref": "#/$defs/money"},
+        "unknown_duration_floor_minutes": {"type": "integer", "minimum": 0},
+        "include_known_mandatory_costs": {"const": true},
+        "profile_cost_normalization_required": {
+          "const": true,
+          "description": "Apply the declared Profile baggage policy and transport entitlements before evaluating cost bounds; this policy cannot override them."
+        },
+        "currency_normalization_required": {"const": true},
+        "nonzero_bound_requires_evidence": {"const": true},
+        "estimators": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"$ref": "#/$defs/lower_bound_estimator"}
+        }
+      },
+      "additionalProperties": false
+    },
+    "lower_bound_estimator": {
+      "type": "object",
+      "required": [
+        "estimator_id",
+        "metric",
+        "method",
+        "admissible_for_pruning",
+        "admissibility_basis",
+        "evidence_required"
+      ],
+      "properties": {
+        "estimator_id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9._-]*$"},
+        "metric": {"enum": ["cost", "duration"]},
+        "method": {
+          "enum": [
+            "zero",
+            "observed_price_floor",
+            "provider_published_floor",
+            "scheduled_duration_floor",
+            "physical_minimum",
+            "custom"
+          ]
+        },
+        "admissible_for_pruning": {"type": "boolean"},
+        "admissibility_basis": {
+          "enum": [
+            "mathematical_zero",
+            "exact_known_component",
+            "provider_guaranteed_minimum",
+            "physical_limit",
+            "formal_proof",
+            "not_pruning_eligible"
+          ]
+        },
+        "evidence_required": {"type": "boolean"},
+        "maximum_evidence_age_minutes": {"type": ["integer", "null"], "minimum": 0},
+        "applies_to_modes": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {"$ref": "#/$defs/transport_mode"}
+        }
+      },
+      "additionalProperties": false
+    },
+    "evidence_policy": {
+      "type": "object",
+      "required": [
+        "allowed_during_search",
+        "allowed_in_final_output",
+        "lowest_cost_claim_requires",
+        "allow_stale_for_discovery",
+        "refresh_price_sensitive_edges_before_confirmation",
+        "weakest_mandatory_edge_sets_itinerary_status",
+        "source_url_required",
+        "observation_time_required",
+        "minimum_confidence"
+      ],
+      "properties": {
+        "allowed_during_search": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {"$ref": "#/$defs/evidence_status"}
+        },
+        "allowed_in_final_output": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {"$ref": "#/$defs/evidence_status"}
+        },
+        "lowest_cost_claim_requires": {"const": "confirmed"},
+        "allow_stale_for_discovery": {"type": "boolean"},
+        "refresh_price_sensitive_edges_before_confirmation": {"const": true},
+        "weakest_mandatory_edge_sets_itinerary_status": {"const": true},
+        "source_url_required": {"const": true},
+        "observation_time_required": {"const": true},
+        "minimum_confidence": {"type": "number", "minimum": 0, "maximum": 1},
+        "maximum_unresolved_mandatory_edges": {"type": "integer", "minimum": 0, "default": 1}
+      },
+      "additionalProperties": false
+    },
+    "evidence_status": {
+      "enum": ["confirmed", "estimate", "research_candidate"]
+    },
+    "transport_mode": {
+      "enum": ["flight", "rail", "bus", "coach", "ferry", "local_transit", "walk", "rideshare", "car"]
+    }
+  }
+}

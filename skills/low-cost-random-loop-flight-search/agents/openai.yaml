@@ -1,0 +1,7 @@
+interface:
+  display_name: "Low-Cost Random-Loop Flight Search"
+  short_description: "Discover cheap flexible-date multi-leg flight loops"
+  default_prompt: "Use $low-cost-random-loop-flight-search to find a low-cost flexible-date flight loop from my airport region."
+policy:
+  products:
+    - "CODEX"

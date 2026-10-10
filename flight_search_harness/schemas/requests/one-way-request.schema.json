@@ -1,0 +1,70 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "one-way-request.schema.json",
+  "title": "One-way Flight Search Harness request v2",
+  "type": "object",
+  "required": ["request_version", "journey_shape", "intent"],
+  "properties": {
+    "request_version": {"const": "2.0"},
+    "request_id": {"type": "string", "minLength": 1},
+    "journey_shape": {"const": "one_way"},
+    "intent": {
+      "type": "object",
+      "required": [
+        "base_currency",
+        "traveler_count",
+        "baggage_policy",
+        "overnight_allowed",
+        "self_transfer_policy",
+        "fx_to_base",
+        "origin",
+        "destination",
+        "departure_window"
+      ],
+      "properties": {
+        "base_currency": {"$ref": "common-defs.schema.json#/$defs/currency_code"},
+        "traveler_count": {"type": "integer", "minimum": 1},
+        "baggage_policy": {"$ref": "common-defs.schema.json#/$defs/baggage_policy"},
+        "overnight_allowed": {"type": "boolean"},
+        "self_transfer_policy": {"$ref": "common-defs.schema.json#/$defs/self_transfer_policy"},
+        "fx_to_base": {"$ref": "common-defs.schema.json#/$defs/fx_to_base"},
+        "fx_snapshot": {"$ref": "common-defs.schema.json#/$defs/fx_snapshot"},
+        "origin": {
+          "allOf": [
+            {"$ref": "common-defs.schema.json#/$defs/fixed_region_side"},
+            {"properties": {"endpoint_policy": {"const": "anchor_required"}}}
+          ]
+        },
+        "destination": {
+          "allOf": [
+            {"$ref": "common-defs.schema.json#/$defs/fixed_region_side"},
+            {"properties": {"endpoint_policy": {"const": "anchor_required"}}}
+          ]
+        },
+        "departure_window": {"$ref": "common-defs.schema.json#/$defs/date_or_datetime_window"},
+        "date_flexibility": {
+          "$ref": "common-defs.schema.json#/$defs/date_flexibility",
+          "description": "Every exact_departure_dates value must fall inside departure_window."
+        },
+        "budget": {
+          "oneOf": [
+            {"$ref": "common-defs.schema.json#/$defs/money"},
+            {"type": "null"}
+          ]
+        },
+        "allowed_modes": {
+          "allOf": [
+            {"$ref": "common-defs.schema.json#/$defs/allowed_modes"},
+            {"contains": {"const": "flight"}}
+          ]
+        },
+        "strategy": {"enum": ["lowest_price", "shortest_time", "convenience", "balanced", "extreme_savings"]},
+        "maximum_total_duration_minutes": {"type": "integer", "minimum": 1},
+        "maximum_provider_queries": {"type": "integer", "minimum": 1}
+      },
+      "additionalProperties": false
+    },
+    "metadata": {"type": "object"}
+  },
+  "additionalProperties": false
+}

@@ -1,0 +1,7 @@
+interface:
+  display_name: "Low-Cost Round-Trip Flight Search"
+  short_description: "Compare complete low-cost round-trip portfolios"
+  default_prompt: "Use $low-cost-round-trip-flight-search to find the best verified low-cost round-trip journey to my selected destination."
+policy:
+  products:
+    - "CODEX"

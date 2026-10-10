@@ -1,0 +1,81 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/flight-search-harness/product/one-way/provider-execution-plan.schema.json",
+  "title": "Provider execution plan v0.7.1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "scheduler_version",
+    "registry_schema_version",
+    "registry_last_verified",
+    "registry_is_whitelist",
+    "static_source_count",
+    "dynamic_rule_count",
+    "parent_request_count",
+    "scheduled_request_count",
+    "disposition_counts",
+    "requests",
+    "coverage"
+  ],
+  "properties": {
+    "scheduler_version": {"const": "0.7.1"},
+    "registry_schema_version": {"type": ["string", "null"]},
+    "registry_last_verified": {"type": ["string", "null"]},
+    "registry_is_whitelist": {"const": false},
+    "static_source_count": {"type": "integer", "minimum": 1},
+    "dynamic_rule_count": {"type": "integer", "minimum": 1},
+    "parent_request_count": {"type": "integer", "minimum": 0},
+    "scheduled_request_count": {"type": "integer", "minimum": 0},
+    "disposition_counts": {
+      "type": "object",
+      "additionalProperties": {"type": "integer", "minimum": 0}
+    },
+    "requests": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["request_id", "parent_request_key", "assigned_source"],
+        "properties": {
+          "request_id": {"type": "string", "minLength": 1},
+          "parent_request_key": {"type": "string", "minLength": 1},
+          "assigned_source": {
+            "type": "object",
+            "required": ["source_id", "name", "url", "source_type", "registry_priority", "execution_kind", "admission_policy"],
+            "properties": {
+              "source_id": {"type": "string", "minLength": 1},
+              "name": {"type": "string", "minLength": 1},
+              "url": {"type": "string", "format": "uri", "pattern": "^https?://"},
+              "source_type": {"type": "string", "minLength": 1},
+              "registry_priority": {"type": "integer"},
+              "execution_kind": {"type": "string", "minLength": 1},
+              "admission_policy": {"type": "string", "minLength": 1}
+            },
+            "additionalProperties": true
+          }
+        },
+        "additionalProperties": true
+      }
+    },
+    "coverage": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["parent_request_key", "task_family", "source_id", "source_name", "source_type", "execution_kind", "admission_policy", "disposition", "reason"],
+        "properties": {
+          "parent_request_key": {"type": "string", "minLength": 1},
+          "parent_request_id": {"type": ["string", "null"]},
+          "task_family": {"enum": ["baseline", "market", "reverse", "corridor_calendar", "budgeted_predecessor", "bridge", "refresh"]},
+          "source_id": {"type": "string", "minLength": 1},
+          "source_name": {"type": "string", "minLength": 1},
+          "source_type": {"type": "string", "minLength": 1},
+          "execution_kind": {"type": "string", "minLength": 1},
+          "admission_policy": {"type": "string", "minLength": 1},
+          "disposition": {"enum": ["scheduled_candidate", "not_applicable", "configuration_required", "awaiting_trigger"]},
+          "reason": {"type": "string", "minLength": 1},
+          "provider_request_id": {"type": "string", "minLength": 1}
+        },
+        "additionalProperties": false
+      }
+    }
+  }
+}

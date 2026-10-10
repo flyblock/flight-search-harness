@@ -1,0 +1,560 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/flight-search-harness/product/one-way/schemas/residual-budget-state.schema.json",
+  "title": "Residual-budget recursive search state v0.7.1",
+  "description": "Auditable runtime state for verified reverse labels, atomic offers, bounded research queries, safe pruning, and incomplete coverage disclosure.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "state_id",
+    "policy_id",
+    "as_of",
+    "trip_mode",
+    "journey_direction",
+    "base_currency",
+    "currency_decimal_places",
+    "strict_improvement_delta",
+    "incumbent_epoch",
+    "incumbent_total_cost",
+    "incumbent_candidate",
+    "reverse_labels",
+    "lower_bounds",
+    "atomic_priced_offers",
+    "unknown_edges",
+    "discovered_nodes",
+    "query_budget_usage",
+    "query_queue",
+    "diversity_occupancy",
+    "pruned_labels",
+    "coverage_truncations",
+    "coverage_disclosure"
+  ],
+  "properties": {
+    "schema_version": {"const": "0.7.1"},
+    "state_id": {"type": "string", "minLength": 1},
+    "policy_id": {"type": "string", "minLength": 1},
+    "as_of": {"type": "string", "format": "date-time"},
+    "trip_mode": {"const": "fixed_destination"},
+    "journey_direction": {"const": "one_way"},
+    "base_currency": {"$ref": "#/$defs/currency"},
+    "currency_decimal_places": {"type": "integer", "minimum": 0, "maximum": 6},
+    "strict_improvement_delta": {"$ref": "#/$defs/positive_money"},
+    "incumbent_epoch": {"type": "integer", "minimum": 0},
+    "incumbent_total_cost": {
+      "$ref": "#/$defs/money",
+      "description": "Current verified complete-itinerary upper bound in base_currency."
+    },
+    "incumbent_candidate": {"$ref": "#/$defs/incumbent_candidate"},
+    "reverse_labels": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/reverse_label"}
+    },
+    "lower_bounds": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/lower_bound"}
+    },
+    "atomic_priced_offers": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/atomic_priced_offer"}
+    },
+    "unknown_edges": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/unknown_edge"}
+    },
+    "discovered_nodes": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/discovered_node"}
+    },
+    "query_budget_usage": {"$ref": "#/$defs/query_budget_usage"},
+    "query_queue": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/query_item"}
+    },
+    "diversity_occupancy": {"$ref": "#/$defs/diversity_occupancy"},
+    "pruned_labels": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/pruned_label"}
+    },
+    "coverage_truncations": {
+      "type": "array",
+      "description": "Budget and quota evictions are coverage limits, not mathematically safe prunes.",
+      "items": {"$ref": "#/$defs/coverage_truncation"}
+    },
+    "coverage_disclosure": {"$ref": "#/$defs/coverage_disclosure"}
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "currency": {"type": "string", "pattern": "^[A-Z]{3}$"},
+    "money": {
+      "type": "object",
+      "required": ["amount", "currency"],
+      "properties": {
+        "amount": {"type": "number", "minimum": 0},
+        "currency": {"$ref": "#/$defs/currency"}
+      },
+      "additionalProperties": false
+    },
+    "positive_money": {
+      "type": "object",
+      "required": ["amount", "currency"],
+      "properties": {
+        "amount": {"type": "number", "exclusiveMinimum": 0},
+        "currency": {"$ref": "#/$defs/currency"}
+      },
+      "additionalProperties": false
+    },
+    "transport_mode": {
+      "enum": ["flight", "rail", "bus", "coach", "ferry", "local_transit", "walk", "rideshare", "car"]
+    },
+    "incumbent_candidate": {
+      "type": "object",
+      "required": ["candidate_id", "evidence_status", "complete_itinerary", "atomic_offer_ids", "departure", "arrival", "total_cost"],
+      "properties": {
+        "candidate_id": {"type": "string", "minLength": 1},
+        "evidence_status": {"const": "confirmed"},
+        "complete_itinerary": {"const": true},
+        "atomic_offer_ids": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {"type": "string", "minLength": 1}
+        },
+        "departure": {"type": "string", "format": "date-time"},
+        "arrival": {"type": "string", "format": "date-time"},
+        "total_cost": {"$ref": "#/$defs/money"}
+      },
+      "additionalProperties": false
+    },
+    "reverse_label": {
+      "type": "object",
+      "description": "A verified destination-side suffix. remaining_budget must equal incumbent_total_cost minus verified_cost_to_destination minus strict_improvement_delta after base-currency normalization.",
+      "required": [
+        "label_id",
+        "label_kind",
+        "node_id",
+        "destination_pool_id",
+        "verified_cost_to_destination",
+        "remaining_budget",
+        "suffix_departure",
+        "destination_arrival",
+        "atomic_offer_ids",
+        "movement_edge_ids",
+        "evidence_status",
+        "region_bucket",
+        "mode_bucket",
+        "route_shape_bucket",
+        "arithmetic_verified"
+      ],
+      "properties": {
+        "label_id": {"type": "string", "minLength": 1},
+        "label_kind": {"enum": ["destination_seed", "verified_suffix"]},
+        "node_id": {"type": "string", "minLength": 1},
+        "destination_pool_id": {"type": "string", "minLength": 1},
+        "verified_cost_to_destination": {"$ref": "#/$defs/money"},
+        "remaining_budget": {"$ref": "#/$defs/money"},
+        "arithmetic_verified": {"const": true},
+        "suffix_departure": {"type": "string", "format": "date-time"},
+        "destination_arrival": {"type": "string", "format": "date-time"},
+        "latest_feasible_arrival_at_node": {"type": "string", "format": "date-time"},
+        "atomic_offer_ids": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {"type": "string", "minLength": 1}
+        },
+        "movement_edge_ids": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {"type": "string", "minLength": 1}
+        },
+        "evidence_status": {"const": "verified"},
+        "region_bucket": {"type": "string", "minLength": 1},
+        "mode_bucket": {"type": "string", "minLength": 1},
+        "route_shape_bucket": {"type": "string", "minLength": 1}
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"label_kind": {"const": "destination_seed"}}, "required": ["label_kind"]},
+          "then": {
+            "properties": {
+              "verified_cost_to_destination": {
+                "type": "object",
+                "required": ["amount", "currency"],
+                "properties": {
+                  "amount": {"const": 0},
+                  "currency": {"$ref": "#/$defs/currency"}
+                },
+                "additionalProperties": false
+              },
+              "atomic_offer_ids": {"maxItems": 0},
+              "movement_edge_ids": {"maxItems": 0}
+            }
+          }
+        },
+        {
+          "if": {"properties": {"label_kind": {"const": "verified_suffix"}}, "required": ["label_kind"]},
+          "then": {
+            "properties": {
+              "atomic_offer_ids": {"minItems": 1},
+              "movement_edge_ids": {"minItems": 1}
+            }
+          }
+        }
+      ],
+      "additionalProperties": false
+    },
+    "lower_bound": {
+      "type": "object",
+      "required": [
+        "bound_id",
+        "applies_to_label_id",
+        "dimension",
+        "bound_kind",
+        "amount",
+        "method",
+        "admissible_for_pruning",
+        "safety_basis",
+        "evidence_refs",
+        "computed_at"
+      ],
+      "properties": {
+        "bound_id": {"type": "string", "minLength": 1},
+        "applies_to_label_id": {"type": "string", "minLength": 1},
+        "dimension": {"enum": ["cost", "duration"]},
+        "bound_kind": {"enum": ["proven_admissible", "heuristic"]},
+        "amount": {"type": "number", "minimum": 0},
+        "unit": {"enum": ["base_currency", "minutes"]},
+        "method": {"type": "string", "minLength": 1},
+        "admissible_for_pruning": {"type": "boolean"},
+        "safety_basis": {
+          "enum": ["mathematical_zero", "exact_verified_component", "provider_guaranteed_floor", "hard_constraint", "none"]
+        },
+        "evidence_refs": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {"type": "string", "minLength": 1}
+        },
+        "computed_at": {"type": "string", "format": "date-time"}
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"bound_kind": {"const": "proven_admissible"}}, "required": ["bound_kind"]},
+          "then": {
+            "properties": {
+              "admissible_for_pruning": {"const": true},
+              "safety_basis": {"enum": ["mathematical_zero", "exact_verified_component", "provider_guaranteed_floor", "hard_constraint"]}
+            }
+          }
+        },
+        {
+          "if": {"properties": {"bound_kind": {"const": "heuristic"}}, "required": ["bound_kind"]},
+          "then": {
+            "properties": {
+              "admissible_for_pruning": {"const": false},
+              "safety_basis": {"const": "none"}
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {"method": {"enum": ["observed_price_floor", "historical_price", "ai_estimate"]}},
+            "required": ["method"]
+          },
+          "then": {
+            "properties": {
+              "bound_kind": {"const": "heuristic"},
+              "admissible_for_pruning": {"const": false},
+              "safety_basis": {"const": "none"}
+            }
+          }
+        }
+      ],
+      "additionalProperties": false
+    },
+    "atomic_priced_offer": {
+      "type": "object",
+      "description": "One provider-priced product. Multi-leg through fares remain one atomic offer and must not be split into inferred movement prices.",
+      "required": [
+        "offer_id",
+        "provider_id",
+        "source_url",
+        "observed_at",
+        "price_scope",
+        "quoted_total",
+        "movement_edge_ids",
+        "departure",
+        "arrival",
+        "ticketing_scope",
+        "movement_prices_must_not_be_inferred",
+        "evidence_status",
+        "valid_at_state_as_of"
+      ],
+      "properties": {
+        "offer_id": {"type": "string", "minLength": 1},
+        "provider_id": {"type": "string", "minLength": 1},
+        "source_url": {"type": "string", "minLength": 1},
+        "observed_at": {"type": "string", "format": "date-time"},
+        "expires_at": {"type": "string", "format": "date-time"},
+        "price_scope": {"const": "atomic_offer"},
+        "quoted_total": {"$ref": "#/$defs/money"},
+        "movement_edge_ids": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {"type": "string", "minLength": 1}
+        },
+        "departure": {"type": "string", "format": "date-time"},
+        "arrival": {"type": "string", "format": "date-time"},
+        "ticketing_scope": {"enum": ["single_ticket", "separate_tickets"]},
+        "quoted_total_includes": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {"enum": ["base_transport_price", "taxes", "mandatory_carrier_fees", "mandatory_baggage", "required_accommodation", "other_mandatory_costs"]}
+        },
+        "movement_prices_must_not_be_inferred": {"const": true},
+        "evidence_status": {"const": "confirmed"},
+        "valid_at_state_as_of": {"const": true}
+      },
+      "additionalProperties": false
+    },
+    "unknown_edge": {
+      "type": "object",
+      "required": [
+        "unknown_edge_id",
+        "from_node",
+        "to_node",
+        "candidate_modes",
+        "research_question",
+        "status",
+        "allowed_in_verified_cost",
+        "allowed_in_bookable_itinerary",
+        "contributes_cost"
+      ],
+      "properties": {
+        "unknown_edge_id": {"type": "string", "minLength": 1},
+        "from_node": {"type": "string", "minLength": 1},
+        "to_node": {"type": "string", "minLength": 1},
+        "candidate_modes": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {"$ref": "#/$defs/transport_mode"}
+        },
+        "research_question": {"type": "string", "minLength": 1},
+        "earliest_departure": {"type": "string", "format": "date-time"},
+        "latest_arrival": {"type": "string", "format": "date-time"},
+        "status": {"const": "research_only"},
+        "allowed_in_verified_cost": {"const": false},
+        "allowed_in_bookable_itinerary": {"const": false},
+        "contributes_cost": {"const": false}
+      },
+      "additionalProperties": false
+    },
+    "discovered_node": {
+      "type": "object",
+      "required": ["node_id", "node_type", "authorized_scope_id", "discovery_evidence_id", "authorized_for_research", "discovered_at"],
+      "properties": {
+        "node_id": {"type": "string", "minLength": 1},
+        "node_type": {"enum": ["airport", "railway_station", "bus_terminal", "ferry_terminal", "city_destination"]},
+        "authorized_scope_id": {"type": "string", "minLength": 1},
+        "discovery_evidence_id": {"type": "string", "minLength": 1},
+        "authorized_for_research": {"const": true},
+        "discovered_at": {"type": "string", "format": "date-time"}
+      },
+      "additionalProperties": false
+    },
+    "budget_counter": {
+      "type": "object",
+      "required": ["limit", "used", "remaining"],
+      "properties": {
+        "limit": {"type": "integer", "minimum": 0},
+        "used": {"type": "integer", "minimum": 0},
+        "remaining": {"type": "integer", "minimum": 0}
+      },
+      "additionalProperties": false
+    },
+    "query_budget_usage": {
+      "type": "object",
+      "required": ["total_queries", "flight_discovery_queries", "connector_research_queries", "offer_refresh_queries", "browser_research_queries"],
+      "properties": {
+        "total_queries": {"$ref": "#/$defs/budget_counter"},
+        "flight_discovery_queries": {"$ref": "#/$defs/budget_counter"},
+        "connector_research_queries": {"$ref": "#/$defs/budget_counter"},
+        "offer_refresh_queries": {"$ref": "#/$defs/budget_counter"},
+        "browser_research_queries": {"$ref": "#/$defs/budget_counter"}
+      },
+      "additionalProperties": false
+    },
+    "query_item": {
+      "type": "object",
+      "required": [
+        "query_id",
+        "logical_query_id",
+        "attempt_id",
+        "incumbent_epoch",
+        "objective_class",
+        "query_type",
+        "from_scope_ids",
+        "to_scope_ids",
+        "departure_not_before",
+        "complete_not_after",
+        "candidate_modes",
+        "authorized_scope_ids",
+        "expected_improvement",
+        "improvement_probability",
+        "estimated_query_cost",
+        "priority_formula",
+        "priority_score",
+        "status"
+      ],
+      "properties": {
+        "query_id": {"type": "string", "minLength": 1},
+        "logical_query_id": {"type": "string", "minLength": 1},
+        "attempt_id": {"type": "string", "minLength": 1},
+        "incumbent_epoch": {"type": "integer", "minimum": 0},
+        "objective_class": {"enum": ["price_improvement", "pareto_exploration"]},
+        "query_type": {"enum": ["reverse_flight_offer", "forward_flight_offer", "connector_research", "offer_refresh"]},
+        "from_scope_ids": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {"type": "string", "minLength": 1}
+        },
+        "to_scope_ids": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {"type": "string", "minLength": 1}
+        },
+        "departure_not_before": {"type": "string", "format": "date-time"},
+        "complete_not_after": {"type": "string", "format": "date-time"},
+        "candidate_modes": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {"$ref": "#/$defs/transport_mode"}
+        },
+        "authorized_scope_ids": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {"type": "string", "minLength": 1}
+        },
+        "expected_improvement": {"$ref": "#/$defs/money"},
+        "improvement_probability": {"type": "number", "minimum": 0, "maximum": 1},
+        "estimated_query_cost": {"type": "number", "exclusiveMinimum": 0},
+        "priority_formula": {"const": "expected_improvement_divided_by_query_cost"},
+        "priority_score": {"type": "number", "minimum": 0},
+        "related_reverse_label_ids": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {"type": "string", "minLength": 1}
+        },
+        "unknown_edge_id": {"type": "string", "minLength": 1},
+        "status": {"enum": ["queued", "running", "completed", "failed", "budget_blocked"]}
+      },
+      "additionalProperties": false
+    },
+    "bucket_occupancy": {
+      "type": "object",
+      "required": ["bucket_id", "labels_retained", "quota"],
+      "properties": {
+        "bucket_id": {"type": "string", "minLength": 1},
+        "labels_retained": {"type": "integer", "minimum": 0},
+        "quota": {"type": "integer", "minimum": 1}
+      },
+      "additionalProperties": false
+    },
+    "diversity_occupancy": {
+      "type": "object",
+      "required": ["region", "mode", "route_shape"],
+      "properties": {
+        "region": {"type": "array", "items": {"$ref": "#/$defs/bucket_occupancy"}},
+        "mode": {"type": "array", "items": {"$ref": "#/$defs/bucket_occupancy"}},
+        "route_shape": {"type": "array", "items": {"$ref": "#/$defs/bucket_occupancy"}}
+      },
+      "additionalProperties": false
+    },
+    "pruned_label": {
+      "type": "object",
+      "required": ["label_id", "pruned_at", "safe_prune", "prune_class", "safe_prune_reason", "heuristic_bound_ids_used"],
+      "properties": {
+        "label_id": {"type": "string", "minLength": 1},
+        "pruned_at": {"type": "string", "format": "date-time"},
+        "safe_prune": {"const": true},
+        "prune_class": {"enum": ["hard_constraint", "proven_admissible_lower_bound"]},
+        "safe_prune_reason": {
+          "enum": [
+            "hard_constraint_total_cost",
+            "hard_constraint_total_duration",
+            "hard_constraint_date_window",
+            "hard_constraint_mode_not_allowed",
+            "time_incompatible",
+            "proven_admissible_cost_bound_cannot_improve_incumbent",
+            "proven_admissible_bound_dominated_by_frontier"
+          ]
+        },
+        "lower_bound_ids": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {"type": "string", "minLength": 1}
+        },
+        "hard_constraint_id": {"type": "string", "minLength": 1},
+        "heuristic_bound_ids_used": {"type": "array", "maxItems": 0}
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"prune_class": {"const": "proven_admissible_lower_bound"}}, "required": ["prune_class"]},
+          "then": {"required": ["lower_bound_ids"]}
+        },
+        {
+          "if": {"properties": {"prune_class": {"const": "hard_constraint"}}, "required": ["prune_class"]},
+          "then": {"required": ["hard_constraint_id"]}
+        }
+      ],
+      "additionalProperties": false
+    },
+    "coverage_truncation": {
+      "type": "object",
+      "required": ["subject_id", "reason", "safe_prune", "recorded_at"],
+      "properties": {
+        "subject_id": {"type": "string", "minLength": 1},
+        "reason": {"enum": ["query_budget_exhausted", "region_quota_exceeded", "mode_quota_exceeded", "route_shape_quota_exceeded", "wall_clock_budget_exhausted", "provider_unavailable"]},
+        "safe_prune": {"const": false},
+        "recorded_at": {"type": "string", "format": "date-time"}
+      },
+      "additionalProperties": false
+    },
+    "coverage_disclosure": {
+      "type": "object",
+      "required": ["not_global_optimum", "global_optimum_claimed", "statement", "providers_queried", "origin_pools_covered", "destination_pools_covered", "unresolved_unknown_edge_ids", "budget_exhausted"],
+      "properties": {
+        "not_global_optimum": {"const": true},
+        "global_optimum_claimed": {"const": false},
+        "statement": {"const": "Best observed within configured providers, pools, date window, evidence freshness, and query budgets; not a proven global optimum."},
+        "providers_queried": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {"type": "string", "minLength": 1}
+        },
+        "origin_pools_covered": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {"type": "string", "minLength": 1}
+        },
+        "destination_pools_covered": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {"type": "string", "minLength": 1}
+        },
+        "unresolved_unknown_edge_ids": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {"type": "string", "minLength": 1}
+        },
+        "budget_exhausted": {"type": "boolean"}
+      },
+      "additionalProperties": false
+    }
+  }
+}

@@ -1,0 +1,298 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/flight-search-harness/product/one-way/schemas/ai-browser-observations.schema.json",
+  "title": "AI browser observation adapter input v0.7.1",
+  "description": "Browser-blind input contract. An AI extracts facts from visible provider pages; the deterministic adapter validates and normalizes them into a live evidence bundle. No field authorizes this adapter to open, control, or scrape a browser.",
+  "type": "object",
+  "required": ["adapter_version", "task", "source", "observations"],
+  "properties": {
+    "adapter_version": {"const": "0.7.1"},
+    "bundle_id": {"type": "string", "minLength": 1},
+    "task": {"$ref": "#/$defs/issued_task"},
+    "source": {"$ref": "#/$defs/source"},
+    "discovered_nodes": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/discovered_node"}
+    },
+    "observations": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"$ref": "#/$defs/observation"}
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "issued_task": {
+      "type": "object",
+      "required": [
+        "task_id",
+        "status",
+        "evidence_contract_version",
+        "endpoint_policy",
+        "earliest_departure",
+        "latest_arrival",
+        "suggested_modes"
+      ],
+      "properties": {
+        "task_id": {"type": "string", "minLength": 1},
+        "status": {"const": "pending"},
+        "evidence_contract_version": {"const": "0.7.1"},
+        "endpoint_policy": {
+          "type": "object",
+          "required": ["from", "to"],
+          "properties": {
+            "from": {"enum": ["exact", "exact_node", "allowed", "pool", "node_pool", "discovered", "provider_authorized_anywhere"]},
+            "to": {"enum": ["exact", "exact_node", "allowed", "pool", "node_pool", "discovered", "provider_authorized_anywhere"]}
+          },
+          "additionalProperties": false
+        },
+        "origins": {"type": "array", "items": {"type": "string"}},
+        "destinations": {"type": "array", "items": {"type": "string"}},
+        "from_node": {"type": ["string", "null"]},
+        "to_node": {"type": ["string", "null"]},
+        "earliest_departure": {"type": "string", "format": "date-time"},
+        "latest_arrival": {"type": "string", "format": "date-time"},
+        "suggested_modes": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"type": "string", "minLength": 1}
+        }
+      },
+      "additionalProperties": true
+    },
+    "source": {
+      "type": "object",
+      "required": ["provider", "url", "observed_at"],
+      "properties": {
+        "provider": {"type": "string", "minLength": 1},
+        "url": {"type": "string", "format": "uri", "pattern": "^https?://"},
+        "observed_at": {"type": "string", "format": "date-time"},
+        "expires_at": {"type": "string", "format": "date-time"}
+      },
+      "additionalProperties": false
+    },
+    "source_override": {
+      "type": "object",
+      "properties": {
+        "provider": {"type": "string", "minLength": 1},
+        "url": {"type": "string", "format": "uri", "pattern": "^https?://"},
+        "observed_at": {"type": "string", "format": "date-time"},
+        "expires_at": {"type": "string", "format": "date-time"}
+      },
+      "additionalProperties": false
+    },
+    "discovery_provenance": {
+      "type": "array",
+      "minItems": 1,
+      "description": "Research-only sources that led the AI to the final seller quote. These entries never admit a route or contribute price; the verified observation source remains authoritative for route admission.",
+      "items": {
+        "type": "object",
+        "required": ["provider", "url", "observed_at", "purpose", "admission_status"],
+        "properties": {
+          "provider": {"type": "string", "minLength": 1},
+          "url": {"type": "string", "format": "uri", "pattern": "^https?://"},
+          "observed_at": {"type": "string", "format": "date-time"},
+          "purpose": {"enum": ["itinerary_and_fare_rule_discovery", "route_discovery", "calendar_anchor", "price_indication"]},
+          "admission_status": {"const": "research_only"},
+          "displayed_price": {
+            "type": "object",
+            "required": ["amount", "currency"],
+            "properties": {
+              "amount": {"type": "number", "minimum": 0},
+              "currency": {"type": "string", "pattern": "^[A-Za-z]{3}$"}
+            },
+            "additionalProperties": false
+          },
+          "notes": {"type": "array", "items": {"type": "string"}}
+        },
+        "additionalProperties": false
+      }
+    },
+    "exact_money": {
+      "type": "object",
+      "required": ["status", "amount", "currency"],
+      "properties": {
+        "status": {"const": "observed_exact"},
+        "amount": {"type": "number", "minimum": 0},
+        "currency": {"type": "string", "pattern": "^[A-Za-z]{3}$"}
+      },
+      "additionalProperties": false
+    },
+    "baggage": {
+      "type": "object",
+      "required": ["status", "included_personal_item", "mandatory_cost"],
+      "properties": {
+        "status": {"enum": ["confirmed", "not_applicable"]},
+        "included_personal_item": {"type": "boolean"},
+        "mandatory_cost": {"$ref": "#/$defs/exact_money"}
+      },
+      "additionalProperties": false
+    },
+    "unknown_reason": {
+      "type": "object",
+      "required": ["code"],
+      "properties": {
+        "code": {"enum": ["not_disclosed_by_source", "not_visible_in_search_result", "provider_omitted"]},
+        "detail": {"type": "string", "minLength": 1}
+      },
+      "additionalProperties": false
+    },
+    "flight_identity": {
+      "type": "object",
+      "properties": {
+        "marketing_carrier": {"type": "string", "minLength": 1},
+        "operating_carrier": {"type": "string", "minLength": 1},
+        "flight_numbers": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {"type": "string", "minLength": 1}
+        },
+        "unknown_reason": {"$ref": "#/$defs/unknown_reason"}
+      },
+      "allOf": [
+        {
+          "anyOf": [
+            {"required": ["marketing_carrier"]},
+            {"required": ["operating_carrier"]}
+          ]
+        },
+        {
+          "oneOf": [
+            {"required": ["flight_numbers"]},
+            {"required": ["unknown_reason"]}
+          ]
+        }
+      ],
+      "additionalProperties": false
+    },
+    "itinerary_segment": {
+      "type": "object",
+      "required": ["from_node", "to_node", "mode", "departure", "arrival"],
+      "properties": {
+        "component_id": {"type": "string", "minLength": 1},
+        "from_node": {"type": "string", "minLength": 1},
+        "to_node": {"type": "string", "minLength": 1},
+        "mode": {"type": "string", "minLength": 1},
+        "departure": {"type": "string", "format": "date-time"},
+        "arrival": {"type": "string", "format": "date-time"}
+      },
+      "additionalProperties": false
+    },
+    "atomic_itinerary": {
+      "type": "object",
+      "required": ["segments"],
+      "properties": {
+        "atomic_offer_id": {"type": "string", "minLength": 1},
+        "planned_exit_node": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Optional connection where the traveler plans to end use of the ticket while later ticketed components remain unused. The complete ticketed segments are still required and the full atomic price is counted once."
+        },
+        "segments": {
+          "type": "array",
+          "minItems": 2,
+          "items": {"$ref": "#/$defs/itinerary_segment"}
+        }
+      },
+      "additionalProperties": false
+    },
+    "coordinates": {
+      "type": "object",
+      "required": ["latitude", "longitude"],
+      "properties": {
+        "latitude": {"type": "number", "minimum": -90, "maximum": 90},
+        "longitude": {"type": "number", "minimum": -180, "maximum": 180}
+      },
+      "additionalProperties": false
+    },
+    "discovered_node": {
+      "type": "object",
+      "required": ["node_id", "node_type", "location", "country_or_region", "timezone"],
+      "properties": {
+        "node_id": {"type": "string", "minLength": 1},
+        "node_type": {"enum": ["airport", "railway_station", "bus_terminal", "ferry_terminal", "city_destination"]},
+        "location": {"type": "string", "minLength": 1},
+        "country_or_region": {"type": "string", "minLength": 1},
+        "country_code": {"type": "string", "pattern": "^[A-Za-z]{2}$"},
+        "timezone": {"type": "string", "minLength": 1},
+        "coordinates": {"$ref": "#/$defs/coordinates"},
+        "notes": {"type": "array", "items": {"type": "string"}},
+        "source": {"$ref": "#/$defs/source_override"}
+      },
+      "additionalProperties": false
+    },
+    "common_observation": {
+      "type": "object",
+      "required": ["evidence_status"],
+      "properties": {
+        "observation_id": {"type": "string", "minLength": 1},
+        "evidence_status": {"enum": ["verified_observed", "no_result", "rejected"]},
+        "source": {"$ref": "#/$defs/source_override"},
+        "notes": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "verified": {
+      "allOf": [
+        {"$ref": "#/$defs/common_observation"},
+        {
+          "type": "object",
+          "required": ["evidence_status", "price", "baggage"],
+          "properties": {
+            "observation_id": {"type": "string", "minLength": 1},
+            "evidence_status": {"const": "verified_observed"},
+            "source": {"$ref": "#/$defs/source_override"},
+            "from_node": {"type": "string", "minLength": 1},
+            "to_node": {"type": "string", "minLength": 1},
+            "mode": {"type": "string", "minLength": 1},
+            "departure": {"type": "string", "format": "date-time"},
+            "arrival": {"type": "string", "format": "date-time"},
+            "price": {"$ref": "#/$defs/exact_money"},
+            "baggage": {"$ref": "#/$defs/baggage"},
+            "flight_identity": {"$ref": "#/$defs/flight_identity"},
+            "operator": {"type": "string", "minLength": 1},
+            "service_id": {"type": "string", "minLength": 1},
+            "provider_offer_id": {"type": "string", "minLength": 1},
+            "discovery_provenance": {"$ref": "#/$defs/discovery_provenance"},
+            "itinerary": {"$ref": "#/$defs/atomic_itinerary"},
+            "independent_ticket_group": {"type": "string", "minLength": 1},
+            "entitlement_tags": {"type": "array", "items": {"type": "string"}},
+            "border_crossing_count": {"type": "integer", "minimum": 0},
+            "notes": {"type": "array", "items": {"type": "string"}}
+          },
+          "allOf": [
+            {"anyOf": [{"required": ["from_node", "to_node", "mode", "departure", "arrival"]}, {"required": ["itinerary"]}]},
+            {
+              "if": {"properties": {"mode": {"const": "flight"}}, "required": ["mode"]},
+              "then": {"required": ["flight_identity"]}
+            }
+          ]
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    "terminal": {
+      "allOf": [
+        {"$ref": "#/$defs/common_observation"},
+        {
+          "type": "object",
+          "required": ["evidence_status", "reason"],
+          "properties": {
+            "observation_id": {"type": "string", "minLength": 1},
+            "evidence_status": {"enum": ["no_result", "rejected"]},
+            "source": {"$ref": "#/$defs/source_override"},
+            "reason": {"type": "string", "minLength": 1},
+            "notes": {"type": "array", "items": {"type": "string"}}
+          }
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    "observation": {
+      "oneOf": [
+        {"$ref": "#/$defs/verified"},
+        {"$ref": "#/$defs/terminal"}
+      ]
+    }
+  }
+}

@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/flight-search-harness/product/round-trip/schemas/provider-execution-policy.schema.json",
+  "title": "Round-trip Provider execution policy v0.5.0",
+  "type": "object",
+  "required": ["policy_version", "registry_file", "decision_owner", "one_question_one_task", "source_fan_out", "registry_order_is_preference", "task_families", "scoring", "source_policies"],
+  "properties": {
+    "policy_version": {"const": "0.5.0"},
+    "registry_file": {"const": "source-registry.json"},
+    "decision_owner": {"const": "ai"},
+    "one_question_one_task": {"const": true},
+    "source_fan_out": {"const": false},
+    "registry_order_is_preference": {"const": false},
+    "task_families": {"type": "array", "minItems": 7, "uniqueItems": true, "items": {"enum": ["gateway_discovery", "joint_quote", "split_outbound", "split_return", "nested_atomic", "surface_access", "refresh"]}},
+    "scoring": {"type": "object"},
+    "source_policies": {"type": "array", "minItems": 24, "items": {"type": "object", "required": ["source_id", "activation", "task_scores"], "properties": {"source_id": {"type": "string"}, "activation": {"enum": ["global", "regional", "regional_market_or_identified_operator", "configured_source"]}, "task_scores": {"type": "object", "additionalProperties": {"type": "integer", "minimum": 0, "maximum": 100}}}, "additionalProperties": false}}
+  },
+  "additionalProperties": false
+}

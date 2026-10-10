@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/flight-search-harness/product/random-loop/v0.6.1/random-loop-result.schema.json",
+  "title": "Random-loop draft or final result v0.6.1",
+  "type": "object",
+  "required": ["result_version", "product_id", "search_status", "incomplete", "outcome", "selected_route", "completed_routes", "finalization_audit", "search_audit", "browser_query_ledger", "scope_coverage", "ordered_dfs", "unsearched_scope"],
+  "properties": {
+    "result_version": {"const": "0.6.1"},
+    "product_id": {"const": "random_loop"},
+    "search_status": {"enum": ["draft", "final"]},
+    "incomplete": {"type": "boolean"},
+    "outcome": {"enum": ["route_found", "bounded_no_result", "open"]},
+    "reason": {"type": ["string", "null"]},
+    "selected_route": {"type": ["object", "null"]},
+    "completed_routes": {"type": "array", "items": {"type": "object"}},
+    "finalization_audit": {"type": "object"},
+    "search_audit": {"type": "object"},
+    "browser_query_ledger": {"type": "object"},
+    "scope_coverage": {"type": "object"},
+    "ordered_dfs": {"type": "object"},
+    "unsearched_scope": {"type": "string"}
+  },
+  "additionalProperties": false
+}

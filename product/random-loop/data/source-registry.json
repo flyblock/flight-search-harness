@@ -1,0 +1,302 @@
+{
+  "registry_schema_version": "0.2.0",
+  "last_verified": "2026-08-21",
+  "purpose": "Browser-first navigation hints for an AI gathering flight offers and route topology.",
+  "not_a_whitelist": true,
+  "capability_value_domain": [true, false, "unknown"],
+  "selection_strategy": {
+    "selection_mode": "ordered",
+    "default_primary_source_id": "azair",
+    "ordered_source_ids": ["azair", "google-flights", "kiwi-com", "trip-com", "skyscanner", "kayak"],
+    "budget_field": "optional search_budget.max_browser_queries",
+    "technical_fallback_triggers": ["source_unavailable", "scope_unsupported"],
+    "partial_scope_disposition": "partition exact supported and unsupported remainders; retry supported remainder on current source before advancing only unsupported remainder",
+    "coverage_fields": ["submitted_scope", "coverage_complete", "scope_partitions", "acquisition"],
+    "business_no_match_disposition": "ordinary_continuation_backtracks; root_initial_and_closure_probe_receive_one_google_challenger_after_azair",
+    "business_no_match_challenger_source_id": "google-flights",
+    "business_no_match_challenger_request_kinds": ["initial", "closure_probe"],
+    "pending_dispositions": ["scope_incomplete", "research_only"],
+    "fallback_executor": "deterministic_route_engine",
+    "runtime_role": "issue_required_source_id, enforce typed dispositions, and reject out-of-order results",
+    "query_accounting_unit": "one_search_results_source_group",
+    "same_parent_fallback_counts_separately": true,
+    "exhaust_all_sources_by_default": false
+  },
+  "sources": [
+    {
+      "source_id": "azair",
+      "name": "AZair",
+      "url": "https://www.azair.eu/",
+      "source_type": "low_cost_flight_discovery",
+      "modes": ["flight"],
+      "regions": ["europe", "mediterranean", "selected_asia_where_available"],
+      "capabilities": {
+        "flexible_destinations": true,
+        "reverse_search": "unknown",
+        "date_flexibility": true,
+        "direct_booking": false,
+        "route_topology": true,
+        "multi_airport": true,
+        "independent_airline_combination": true,
+        "ground_airport_transfer": true
+      },
+      "product_policy": {
+        "allow_ground_airport_transfer": false,
+        "reason": "random_loop accepts airport-to-airport flight edges only"
+      },
+      "browser_notes": [
+        "Use as an important low-cost-carrier discovery source for Anywhere, flexible-date, multi-origin, and multi-destination searches.",
+        "Keep airport-change-by-ground disabled: this product accepts flight edges only.",
+        "Regional and carrier coverage can change and is not guaranteed, and browser automation compatibility is not guaranteed.",
+        "Treat displayed fares as discovery evidence; confirm the exact itinerary on Google Flights or another suitable current fare source. Use a carrier or seller page only when facts are missing or conflicting, or when the user asks."
+      ],
+      "priority": 100,
+      "fallback": ["google-flights", "kiwi-com", "trip-com", "skyscanner", "kayak", "carrier_official_site"],
+      "last_verified": "2026-08-11",
+      "evidence_url": "https://www.azair.eu/"
+    },
+    {
+      "source_id": "google-flights",
+      "name": "Google Flights",
+      "url": "https://www.google.com/travel/flights",
+      "source_type": "flight_metasearch",
+      "modes": ["flight"],
+      "regions": ["global_where_available"],
+      "capabilities": {
+        "flexible_destinations": true,
+        "reverse_search": "unknown",
+        "date_flexibility": true,
+        "direct_booking": false,
+        "route_topology": false
+      },
+      "browser_notes": [
+        "Use the map, Dates, Price graph, Airports, Best, and Cheapest views when visible.",
+        "Google states that results draw on more than 300 partners but may not include every offer.",
+        "Treat an exact dated result with visible flight identity, current fare, and included baggage as sufficient final evidence.",
+        "Treat booking links as handoffs to partners, not as Google selling the ticket."
+      ],
+      "priority": 95,
+      "fallback": ["kiwi-com", "trip-com", "skyscanner", "kayak", "carrier_official_site"],
+      "last_verified": "2026-08-11",
+      "evidence_url": "https://support.google.com/travel/answer/2475306?hl=en"
+    },
+    {
+      "source_id": "kiwi-com",
+      "name": "Kiwi.com",
+      "url": "https://www.kiwi.com/",
+      "source_type": "flight_metasearch_and_ticket_seller",
+      "modes": ["flight"],
+      "regions": ["global_where_available"],
+      "capabilities": {
+        "flexible_destinations": true,
+        "reverse_search": "unknown",
+        "date_flexibility": true,
+        "direct_booking": true,
+        "route_topology": false,
+        "multi_airport": true,
+        "independent_airline_combination": true
+      },
+      "browser_notes": [
+        "Use for flexible dates, multiple airports, low-cost-carrier inventory, and independently ticketed virtual-interline combinations.",
+        "Capture every segment, self-transfer condition, baggage allowance, seller total, and mandatory extra shown for the exact itinerary.",
+        "Do not treat a Kiwi search result as market-complete; compare it with other metasearch, OTA, and airline-direct sources."
+      ],
+      "priority": 90,
+      "fallback": ["trip-com", "skyscanner", "kayak", "carrier_official_site"],
+      "last_verified": "2026-08-12",
+      "evidence_url": "https://www.kiwi.com/"
+    },
+    {
+      "source_id": "trip-com",
+      "name": "Trip.com / Ctrip",
+      "url": "https://www.trip.com/flights/",
+      "source_type": "flight_ota_and_ticket_seller",
+      "modes": ["flight"],
+      "regions": ["global_where_available", "china", "asia_pacific"],
+      "capabilities": {
+        "flexible_destinations": true,
+        "reverse_search": "unknown",
+        "date_flexibility": true,
+        "direct_booking": true,
+        "route_topology": false,
+        "multi_airport": true,
+        "eligibility_gated_fares": true
+      },
+      "browser_notes": [
+        "Use current dated results and price calendars for exact seller offers, including platform-specific public or eligibility-gated fares when the user explicitly requests them.",
+        "Keep coupons, membership, student, or other eligibility conditions attached only to the exact observed offer; never transfer them to another seller's quote.",
+        "Capture displayed baggage, ticket conditions, mandatory fees, and the final payable total before admission."
+      ],
+      "priority": 85,
+      "fallback": ["skyscanner", "kayak", "carrier_official_site"],
+      "last_verified": "2026-08-12",
+      "evidence_url": "https://www.trip.com/flights/"
+    },
+    {
+      "source_id": "skyscanner",
+      "name": "Skyscanner",
+      "url": "https://www.skyscanner.com/",
+      "source_type": "flight_metasearch",
+      "modes": ["flight"],
+      "regions": ["global_where_available"],
+      "capabilities": {
+        "flexible_destinations": true,
+        "reverse_search": "unknown",
+        "date_flexibility": true,
+        "direct_booking": false,
+        "route_topology": false
+      },
+      "browser_notes": [
+        "Use Everywhere, nearby airports, and Flexible dates or whole-month views when available.",
+        "Calendar prices may be indicative and based on recent searches; open a date to refresh an offer.",
+        "Skyscanner redirects to an airline or travel provider for booking."
+      ],
+      "priority": 85,
+      "fallback": ["kayak", "carrier_official_site"],
+      "last_verified": "2026-08-11",
+      "evidence_url": "https://help.skyscanner.net/hc/en-gb/articles/201150942-How-do-I-find-the-best-prices"
+    },
+    {
+      "source_id": "kayak",
+      "name": "KAYAK",
+      "url": "https://www.kayak.com/flights",
+      "source_type": "flight_metasearch",
+      "modes": ["flight"],
+      "regions": ["global_where_available", "united_states"],
+      "capabilities": {
+        "flexible_destinations": true,
+        "reverse_search": "unknown",
+        "date_flexibility": true,
+        "direct_booking": "unknown",
+        "route_topology": false
+      },
+      "browser_notes": [
+        "Use Explore for flexible destinations and plus-or-minus days or month search for flexible dates.",
+        "Confirm the final seller and current total before recording an observed offer."
+      ],
+      "priority": 80,
+      "fallback": ["carrier_official_site"],
+      "last_verified": "2026-08-11",
+      "evidence_url": "https://www.kayak.com/news/flexible-dates/"
+    },
+    {
+      "source_id": "flightconnections",
+      "name": "FlightConnections",
+      "url": "https://www.flightconnections.com/",
+      "source_type": "flight_route_topology",
+      "modes": ["flight"],
+      "regions": ["global"],
+      "capabilities": {
+        "flexible_destinations": true,
+        "reverse_search": true,
+        "date_flexibility": true,
+        "direct_booking": false,
+        "route_topology": true
+      },
+      "browser_notes": [
+        "Use for route, airport, airline, direct-flight, stopover, and arrive-here/depart-from-here discovery.",
+        "Treat it as topology and schedule discovery; verify any fare through a fare source or carrier."
+      ],
+      "priority": 70,
+      "fallback": ["carrier_official_site", "google-flights"],
+      "last_verified": "2026-08-11",
+      "evidence_url": "https://www.flightconnections.com/"
+    },
+    {
+      "source_id": "southwest",
+      "name": "Southwest Airlines",
+      "url": "https://www.southwest.com/",
+      "source_type": "airline_direct",
+      "modes": ["flight"],
+      "regions": ["united_states", "north_america", "central_america", "caribbean"],
+      "capabilities": {
+        "flexible_destinations": false,
+        "reverse_search": false,
+        "date_flexibility": true,
+        "direct_booking": true,
+        "route_topology": true
+      },
+      "browser_notes": [
+        "Use the Low Fare Calendar for a known route and the route map for carrier coverage.",
+        "Use when the candidate region or a metasearch result indicates Southwest may operate the leg."
+      ],
+      "priority": 85,
+      "fallback": ["google-flights", "kayak", "carrier_official_site"],
+      "last_verified": "2026-08-11",
+      "evidence_url": "https://www.southwest.com/html/travel-tools/index.html"
+    },
+    {
+      "source_id": "frontier",
+      "name": "Frontier Airlines",
+      "url": "https://www.flyfrontier.com/",
+      "source_type": "airline_direct_low_cost",
+      "modes": ["flight"],
+      "regions": ["united_states", "mexico", "caribbean"],
+      "capabilities": {
+        "flexible_destinations": "unknown",
+        "reverse_search": false,
+        "date_flexibility": "unknown",
+        "direct_booking": true,
+        "route_topology": true
+      },
+      "browser_notes": [
+        "Use direct search and the official route map after Frontier is identified as a candidate operator.",
+        "Record the displayed fare basis and mandatory extras separately."
+      ],
+      "priority": 80,
+      "fallback": ["google-flights", "kayak", "carrier_official_site"],
+      "last_verified": "2026-08-11",
+      "evidence_url": "https://www.flyfrontier.com/plan-and-book/route-map/"
+    },
+    {
+      "source_id": "ryanair",
+      "name": "Ryanair",
+      "url": "https://www.ryanair.com/",
+      "source_type": "airline_direct_low_cost",
+      "modes": ["flight"],
+      "regions": ["europe", "north_africa", "middle_east_where_served"],
+      "capabilities": {
+        "flexible_destinations": "unknown",
+        "reverse_search": false,
+        "date_flexibility": "unknown",
+        "direct_booking": true,
+        "route_topology": true
+      },
+      "browser_notes": [
+        "Use Fare Finder and direct search after Ryanair is identified as a candidate operator.",
+        "Record the fare bundle and mandatory extras separately."
+      ],
+      "priority": 80,
+      "fallback": ["google-flights", "skyscanner", "carrier_official_site"],
+      "last_verified": "2026-08-11",
+      "evidence_url": "https://www.ryanair.com/flights/ie/en"
+    },
+    {
+      "source_id": "airasia",
+      "name": "AirAsia",
+      "url": "https://www.airasia.com/flights/",
+      "source_type": "airline_direct_low_cost",
+      "modes": ["flight"],
+      "regions": ["asia_pacific", "selected_long_haul_routes"],
+      "capabilities": {
+        "flexible_destinations": false,
+        "reverse_search": false,
+        "date_flexibility": "unknown",
+        "direct_booking": true,
+        "route_topology": true
+      },
+      "browser_notes": [
+        "Use AirAsia Flights Only when confirming an AirAsia-operated candidate.",
+        "The AirAsia MOVE interface may also show other airlines; preserve the actual operator and seller."
+      ],
+      "priority": 80,
+      "fallback": ["google-flights", "skyscanner", "carrier_official_site"],
+      "last_verified": "2026-08-11",
+      "evidence_url": "https://www.airasia.com/flights/"
+    }
+  ],
+  "dynamic_source_rule": {
+    "source_id": "carrier_official_site",
+    "instruction": "Use an operator's official website when it is the most useful source, when another source leaves material facts missing or conflicting, or when the user asks. It is not a mandatory final-verification step."
+  }
+}

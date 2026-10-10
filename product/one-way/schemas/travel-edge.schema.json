@@ -1,0 +1,194 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/flight-search-harness/product/one-way/schemas/travel-edge.schema.json",
+  "title": "Dynamic TravelEdge v0.7.1",
+  "type": "object",
+  "required": [
+    "edge_id",
+    "from_node",
+    "to_node",
+    "mode",
+    "departure",
+    "arrival",
+    "cost",
+    "cost_category",
+    "entitlement_tags",
+    "mandatory_baggage_cost",
+    "source"
+  ],
+  "properties": {
+    "edge_id": {"type": "string", "minLength": 1},
+    "from_node": {"type": "string", "minLength": 1},
+    "to_node": {"type": "string", "minLength": 1},
+    "mode": {"$ref": "#/$defs/transport_mode"},
+    "operator": {"type": "string"},
+    "service_id": {"type": "string"},
+    "departure": {"type": "string", "format": "date-time"},
+    "arrival": {"type": "string", "format": "date-time"},
+    "departure_context": {"$ref": "#/$defs/airport_context"},
+    "arrival_context": {"$ref": "#/$defs/airport_context"},
+    "cost": {"$ref": "#/$defs/money"},
+    "cost_category": {
+      "enum": [
+        "origin_ground_cost",
+        "airfare",
+        "intermediate_ground_cost",
+        "destination_ground_cost",
+        "required_accommodation_cost",
+        "other_mandatory_costs"
+      ]
+    },
+    "entitlement_tags": {
+      "type": "array",
+      "items": {"type": "string", "minLength": 1},
+      "uniqueItems": true
+    },
+    "mandatory_baggage_cost": {"$ref": "#/$defs/money"},
+    "accommodation_cost_policy": {
+      "enum": ["include_required", "exclude_from_optimization"],
+      "description": "Runtime audit field on normalized edges; input edges inherit the Profile policy."
+    },
+    "required_accommodation_cost_observed": {
+      "type": "number",
+      "minimum": 0,
+      "description": "Observed base-currency amount retained even when excluded from optimization."
+    },
+    "required_accommodation_cost_included": {"type": "number", "minimum": 0},
+    "excluded_required_accommodation_cost": {"type": "number", "minimum": 0},
+    "included_baggage": {
+      "type": "array",
+      "items": {"type": "string"},
+      "uniqueItems": true
+    },
+    "border_crossing_count": {"type": "integer", "minimum": 0, "default": 0},
+    "border_crossing_audit": {
+      "type": "object",
+      "required": ["method", "declared", "computed_minimum", "effective", "audited_node_path", "known_country_code_transitions", "unknown_country_code_nodes"],
+      "properties": {
+        "method": {"const": "known_node_country_code_changes_lower_bound"},
+        "declared": {"type": "integer", "minimum": 0},
+        "computed_minimum": {"type": "integer", "minimum": 0},
+        "effective": {"type": "integer", "minimum": 0},
+        "audited_node_path": {
+          "type": "array",
+          "minItems": 2,
+          "items": {
+            "type": "object",
+            "required": ["node_id", "country_code"],
+            "properties": {
+              "node_id": {"type": "string", "minLength": 1},
+              "country_code": {"type": ["string", "null"], "pattern": "^[A-Z]{2}$"}
+            },
+            "additionalProperties": false
+          }
+        },
+        "known_country_code_transitions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["from_node", "from_country_code", "to_node", "to_country_code"],
+            "properties": {
+              "from_node": {"type": "string", "minLength": 1},
+              "from_country_code": {"type": "string", "pattern": "^[A-Z]{2}$"},
+              "to_node": {"type": "string", "minLength": 1},
+              "to_country_code": {"type": "string", "pattern": "^[A-Z]{2}$"}
+            },
+            "additionalProperties": false
+          }
+        },
+        "unknown_country_code_nodes": {
+          "type": "array",
+          "items": {"type": "string", "minLength": 1},
+          "uniqueItems": true
+        }
+      },
+      "additionalProperties": false
+    },
+    "independent_ticket_group": {"type": "string"},
+    "ticket_context": {"$ref": "#/$defs/ticket_context"},
+    "source": {"$ref": "#/$defs/source"},
+    "notes": {"type": "array", "items": {"type": "string"}, "default": []}
+  },
+  "additionalProperties": true,
+  "$defs": {
+    "transport_mode": {
+      "enum": ["flight", "rail", "bus", "coach", "ferry", "local_transit", "walk", "rideshare", "car"]
+    },
+    "money": {
+      "type": "object",
+      "required": ["amount", "currency"],
+      "properties": {
+        "amount": {"type": "number", "minimum": 0},
+        "currency": {"type": "string", "pattern": "^[A-Z]{3}$"}
+      },
+      "additionalProperties": false
+    },
+    "ticket_context": {
+      "type": "object",
+      "required": ["pricing_scope", "atomic_offer_id", "component_edge_ids"],
+      "properties": {
+        "pricing_scope": {"const": "atomic_offer"},
+        "atomic_offer_id": {"type": "string", "minLength": 1},
+        "component_edge_ids": {
+          "type": "array",
+          "minItems": 2,
+          "uniqueItems": true,
+          "items": {"type": "string", "minLength": 1}
+        },
+        "via_nodes": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {"type": "string", "minLength": 1}
+        },
+        "segments": {
+          "type": "array",
+          "minItems": 2,
+          "items": {"type": "object"}
+        },
+        "use_pattern": {"const": "planned_exit_at_connection"},
+        "ticketed_final_node": {"type": "string", "minLength": 1},
+        "planned_exit_node": {"type": "string", "minLength": 1},
+        "used_component_edge_ids": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {"type": "string", "minLength": 1}
+        },
+        "unused_component_edge_ids": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {"type": "string", "minLength": 1}
+        },
+        "used_via_nodes": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {"type": "string", "minLength": 1}
+        }
+      },
+      "additionalProperties": false
+    },
+    "source": {
+      "type": "object",
+      "required": ["provider_id", "url", "observed_at", "evidence_type", "confidence"],
+      "properties": {
+        "provider_id": {"type": "string", "minLength": 1},
+        "url": {"type": "string", "minLength": 1},
+        "observed_at": {"type": "string", "format": "date-time"},
+        "evidence_type": {"type": "string", "minLength": 1},
+        "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+        "expires_at": {"type": "string", "format": "date-time"}
+      },
+      "additionalProperties": true
+    },
+    "airport_context": {
+      "type": "object",
+      "required": ["terminal_id", "zone_id"],
+      "properties": {
+        "terminal_id": {"type": "string", "minLength": 1},
+        "zone_id": {"type": "string", "minLength": 1}
+      },
+      "additionalProperties": false
+    }
+  }
+}

@@ -1,0 +1,83 @@
+{
+  "request_version": "2.0",
+  "journey_shape": "one_way",
+  "intent": {
+    "base_currency": "REPLACE_WITH_BASE_CURRENCY_CODE",
+    "traveler_count": "REPLACE_WITH_TRAVELER_COUNT",
+    "baggage_policy": {
+      "cabin_baggage": "REPLACE_WITH_CABIN_BAGGAGE_REQUIREMENT",
+      "checked_bag_count": "REPLACE_WITH_CHECKED_BAG_COUNT",
+      "paid_baggage_allowed": "REPLACE_WITH_TRUE_OR_FALSE"
+    },
+    "overnight_allowed": "REPLACE_WITH_TRUE_OR_FALSE",
+    "self_transfer_policy": "REPLACE_WITH_ALLOW_AVOID_OR_NEVER",
+    "fx_to_base": {
+      "REPLACE_WITH_BASE_CURRENCY_CODE": 1.0
+    },
+    "budget": null,
+    "origin": {
+      "region_id": "REPLACE_WITH_ORIGIN_REGION_ID",
+      "label": "REPLACE_WITH_ORIGIN_REGION_LABEL",
+      "country_codes": ["REPLACE_WITH_ORIGIN_COUNTRY_CODE"],
+      "policy": "extended_region",
+      "endpoint_policy": "anchor_required",
+      "anchor_nodes": [
+        {
+          "node_id": "REPLACE_WITH_ORIGIN_ANCHOR_ID",
+          "node_type": "city_destination",
+          "location": "REPLACE_WITH_ORIGIN_CITY_OR_REGION",
+          "country_or_region": "REPLACE_WITH_ORIGIN_COUNTRY_OR_REGION",
+          "country_code": "REPLACE_WITH_ORIGIN_COUNTRY_CODE",
+          "timezone": "REPLACE_WITH_ORIGIN_IANA_TIMEZONE",
+          "utc_offset": "REPLACE_WITH_ORIGIN_UTC_OFFSET"
+        }
+      ],
+      "seed_gateway_nodes": [
+        {
+          "node_id": "REPLACE_WITH_ORIGIN_IATA_CODE",
+          "node_type": "airport",
+          "location": "REPLACE_WITH_ORIGIN_AIRPORT_NAME",
+          "country_or_region": "REPLACE_WITH_ORIGIN_COUNTRY_OR_REGION",
+          "country_code": "REPLACE_WITH_ORIGIN_COUNTRY_CODE",
+          "timezone": "REPLACE_WITH_ORIGIN_IANA_TIMEZONE",
+          "utc_offset": "REPLACE_WITH_ORIGIN_UTC_OFFSET"
+        }
+      ],
+      "max_ground_cost": null
+    },
+    "destination": {
+      "region_id": "REPLACE_WITH_DESTINATION_REGION_ID",
+      "label": "REPLACE_WITH_DESTINATION_REGION_LABEL",
+      "country_codes": ["REPLACE_WITH_DESTINATION_COUNTRY_CODE"],
+      "policy": "extended_region",
+      "endpoint_policy": "anchor_required",
+      "anchor_nodes": [
+        {
+          "node_id": "REPLACE_WITH_DESTINATION_ANCHOR_ID",
+          "node_type": "city_destination",
+          "location": "REPLACE_WITH_DESTINATION_CITY_OR_REGION",
+          "country_or_region": "REPLACE_WITH_DESTINATION_COUNTRY_OR_REGION",
+          "country_code": "REPLACE_WITH_DESTINATION_COUNTRY_CODE",
+          "timezone": "REPLACE_WITH_DESTINATION_IANA_TIMEZONE",
+          "utc_offset": "REPLACE_WITH_DESTINATION_UTC_OFFSET"
+        }
+      ],
+      "seed_gateway_nodes": [
+        {
+          "node_id": "REPLACE_WITH_DESTINATION_IATA_CODE",
+          "node_type": "airport",
+          "location": "REPLACE_WITH_DESTINATION_AIRPORT_NAME",
+          "country_or_region": "REPLACE_WITH_DESTINATION_COUNTRY_OR_REGION",
+          "country_code": "REPLACE_WITH_DESTINATION_COUNTRY_CODE",
+          "timezone": "REPLACE_WITH_DESTINATION_IANA_TIMEZONE",
+          "utc_offset": "REPLACE_WITH_DESTINATION_UTC_OFFSET"
+        }
+      ],
+      "max_ground_cost": null
+    },
+    "departure_window": {
+      "start": "REPLACE_WITH_START_YYYY-MM-DD",
+      "end": "REPLACE_WITH_END_YYYY-MM-DD"
+    }
+  }
+}

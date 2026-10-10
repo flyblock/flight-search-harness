@@ -1,0 +1,17 @@
+{
+  "schema_version": "1.0.0",
+  "product_id": "random_loop",
+  "version": "1.0.0",
+  "package_files": [
+    "PRODUCT-MANIFEST.json",
+    "data/source-registry.json",
+    "references/AIRPORT-TRANSIT.md",
+    "references/airport-transit.schema.json",
+    "references/search-config.schema.json",
+    "references/random-loop-result.schema.json",
+    "references/workflow.md",
+    "scripts/airport_transit.py",
+    "scripts/route_engine.py",
+    "scripts/scope_coverage.py"
+  ]
+}

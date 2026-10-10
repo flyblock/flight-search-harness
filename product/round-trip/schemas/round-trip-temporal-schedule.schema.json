@@ -1,0 +1,61 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/flight-search-harness/product/round-trip/schemas/round-trip-temporal-schedule.schema.json",
+  "title": "AI-owned round-trip temporal candidate catalog v0.1.0",
+  "type": "object",
+  "required": ["scheduler_version", "decision_owner", "binding", "candidate_catalog", "advisory_order", "suggested_subset", "input_contract", "coverage", "ai_instruction"],
+  "properties": {
+    "scheduler_version": {"const": "0.1.0"},
+    "decision_owner": {"const": "ai"},
+    "binding": {"const": false},
+    "candidate_catalog": {
+      "type": "object",
+      "required": ["complete_for_materializable_supplied_observed_signals", "candidate_count", "candidates"],
+      "properties": {
+        "complete_for_materializable_supplied_observed_signals": {"const": true},
+        "candidate_count": {"type": "integer", "minimum": 0},
+        "candidates": {"type": "array", "items": {"type": "object"}}
+      },
+      "additionalProperties": false
+    },
+    "advisory_order": {
+      "type": "object",
+      "required": ["decision_owner", "binding", "candidate_ids", "does_not_choose_for_ai"],
+      "properties": {
+        "decision_owner": {"const": "ai"},
+        "binding": {"const": false},
+        "candidate_ids": {"type": "array", "items": {"type": "string"}},
+        "basis": {"type": "string"},
+        "does_not_choose_for_ai": {"const": true}
+      },
+      "additionalProperties": false
+    },
+    "suggested_subset": {
+      "type": "object",
+      "required": ["decision_owner", "binding", "candidate_ids", "outside_subset_candidate_ids", "outside_subset_remains_available_to_ai", "limit_is_not_a_query_budget_or_search_stop"],
+      "properties": {
+        "decision_owner": {"const": "ai"},
+        "binding": {"const": false},
+        "visibility_limit": {"type": "integer", "minimum": 0},
+        "candidate_ids": {"type": "array", "items": {"type": "string"}},
+        "outside_subset_candidate_ids": {"type": "array", "items": {"type": "string"}},
+        "outside_subset_remains_available_to_ai": {"const": true},
+        "limit_is_not_a_query_budget_or_search_stop": {"const": true}
+      },
+      "additionalProperties": false
+    },
+    "input_contract": {"type": "object"},
+    "coverage": {
+      "type": "object",
+      "required": ["candidate_pool_exhaustion_required", "calendar_signals_promoted_to_verified_offers", "claims_market_exhaustion"],
+      "properties": {
+        "candidate_pool_exhaustion_required": {"const": false},
+        "calendar_signals_promoted_to_verified_offers": {"const": 0},
+        "claims_market_exhaustion": {"const": false}
+      },
+      "additionalProperties": true
+    },
+    "ai_instruction": {"type": "string", "minLength": 1}
+  },
+  "additionalProperties": false
+}
