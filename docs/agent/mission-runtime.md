@@ -29,11 +29,17 @@ python "<launcher-ref>" --help
 
 Copy the selected Skill's compact template to `runs/requests/<run-id>-request.json`. Replace every `REPLACE_...` value, remove an explicitly optional placeholder field when the user did not supply it, and add only user-requested constraints supported by the public request Schema.
 
-Every request uses `request_version: "2.0"` and exactly one `journey_shape`: `random_loop`, `one_way`, or `round_trip`. Shared user semantics use `base_currency`, `traveler_count`, `baggage_policy`, `overnight_allowed`, `self_transfer_policy`, and `fx_to_base`. One-way and round-trip requests distinguish accepted `anchor_nodes` from optional `seed_gateway_nodes`.
+Every request uses `request_version: "4.0"` and exactly one `journey_shape`: `random_loop`, `one_way`, or `round_trip`. Shared user semantics use `base_currency`, `adult_count`, `baggage_policy`, `overnight_allowed`, and `self_transfer_policy`. The current Products support adults only; explicit child or infant travel is unsupported. `baggage_policy.cabin_baggage` is one of `none_required`, `personal_item`, `cabin_bag`, or `personal_item_and_cabin_bag`; `none_required` means no minimum cabin-baggage entitlement, not that included baggage is forbidden. One-way and random-loop requests currently require `none_required`; round-trip requests can use all four values. The Harness obtains ECB reference rates for internal comparison when possible; failure leaves only Base-Currency Offers comparable and never causes an invented rate. One-way and round-trip requests distinguish accepted `anchor_nodes` from optional `seed_gateway_nodes`.
 
 The request carries user intent. The Product Kernel creates hypotheses, Observations, Offers, Evidence, Work Items, and the Outcome during the Run.
 
 ## Start live research
+
+Treat every new user search as a clean room. Create a new Run in the current
+task's Run root and do not inspect, select, or resume another chat's Run merely
+because its request looks similar. Resume an existing Run only when the user
+explicitly asks to continue that exact Run or the current task itself created
+it earlier.
 
 Use the External Worker for an authorized browser search:
 
@@ -61,23 +67,19 @@ Handle each Work Item by kind:
 
 Execute every independent compatible Work Item in the Lease. Work Items with the same `execution.batch_key` may share one Provider interaction; each receives its own item-bound Receipt. Capture current Provider values, URLs, and observation time from the actual interaction.
 
-Write the Receipt batch under the caller workspace, normally `runs/requests/<run-id>-receipts-<revision>.json`:
+For a lowest-price objective, establish the lowest compatible result through the Provider's lowest-price view, ascending price sort, price-sorted API, or comparison of all visible results. Record `price_selection_method`; default recommended ordering and an unopened lower-price label are not lowest-price Evidence.
+
+Write a compact Receipt submission under the caller workspace, normally `runs/requests/<run-id>-receipts-<revision>.json`. Supply only each Work Item's identity, status, payload or blocked reason, plus optional metrics. The External Worker binds the current Lease, Mission revision, claim, Worker instance, Receipt version, and attempt number when it resumes the Run:
 
 ```json
 {
-  "lease_id": "lease-000004",
-  "mission_revision": 3,
-  "claim_id": "REPLACE_WITH_ACTIVE_CLAIM_ID",
-  "worker_instance_id": "external:<unique-instance-id>",
   "metrics": {
     "provider_query_count": 1,
     "items": {}
   },
   "receipts": [
     {
-      "receipt_version": "2.0",
       "item_id": "work:example",
-      "attempt_number": 1,
       "status": "complete",
       "payload": {
         "kind": "observations",
@@ -88,7 +90,7 @@ Write the Receipt batch under the caller workspace, normally `runs/requests/<run
 }
 ```
 
-For a `choice`, use `{"action_key": "<published-action-key>", "reason": "<concrete-reason>"}`. For research and retries, follow the Work Item's expected payload shape. The Harness derives Receipt identity from `lease_id + item_id + attempt_number`; replaying that identity with different content is rejected. Keep both `claim_id` and `worker_instance_id` unchanged for the active claim.
+For a `choice`, use `{"action_key": "<published-action-key>", "reason": "<concrete-reason>"}`. For research and retries, follow the Work Item's `payload.work.attempt_schema`. A blocked Receipt omits `payload` and includes a non-empty `reason`. The Harness rejects unknown or duplicate Work Item IDs and any caller-supplied protocol field that conflicts with the current Lease. Existing full Receipt batches remain accepted for compatibility. Receipt identity is still derived internally from the Lease, Work Item, and attempt number.
 
 ## Checkpoint and continue
 
@@ -114,7 +116,7 @@ python "<launcher-ref>" --runs-root runs metrics --run-id "<run-id>"
 
 ## Interpret the Outcome
 
-- `completed`: present the finalized summary, follow `result_ref` when the full result is useful, and disclose investigated and unsearched scope.
+- `completed`: present the finalized summary, follow `result_ref` when the full result is useful, disclose investigated and unsearched scope, and describe the price as current only while `price_freshness` is `current`; it becomes historical 900 seconds after completion.
 - `draft`: resume while useful work remains and the active request authorizes it; present progress only when the current execution must stop.
 - `blocked`: execute it directly when `action_required` belongs to the Worker; present it only when the required action belongs to the user or another unavailable external actor.
 - `failed`: the Run is terminal. Report the structured error; do not resume that Run.

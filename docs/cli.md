@@ -25,7 +25,7 @@ Choose one Worker with `--worker`:
 
 | Value | Behavior |
 | --- | --- |
-| `external` | Default. Returns the active Lease for an authorized external browser-capable Worker, or submits `resume --receipt-batch`. |
+| `external` | Default. Returns the active Lease for an authorized external browser-capable Worker, or binds and submits `resume --receipt-batch`. |
 | `codex-app-server` | Starts `codex app-server --listen stdio://` and executes the Lease through structured Codex turns. |
 
 Examples:
@@ -36,7 +36,7 @@ python <plugin-directory>/scripts/run_flight_harness.py --worker external resume
 python <plugin-directory>/scripts/run_flight_harness.py --worker codex-app-server --model <model> --effort <effort> start --request <request.json>
 ```
 
-The request must use `request_version: "2.0"`, one of `random_loop`, `one_way`, or `round_trip` as `journey_shape`, and the matching public request Schema returned by the selected Skill's resolver.
+The request must use `request_version: "4.0"`, one of `random_loop`, `one_way`, or `round_trip` as `journey_shape`, and the matching public request Schema returned by the selected Skill's resolver.
 
 ## Global options
 
@@ -49,7 +49,7 @@ The request must use `request_version: "2.0"`, one of `random_loop`, `one_way`, 
 | `--effort <effort>` | Pass a reasoning-effort override to the Codex app-server Worker. |
 | `--worker-timeout-seconds <seconds>` | Set the app-server Worker timeout; default is `900`. |
 
-`--receipt-batch <json>` belongs to `resume` rather than the global options. It is valid only with `--worker external`.
+`--receipt-batch <json>` belongs to `resume` rather than the global options. It is valid only with `--worker external`. The compact JSON requires `receipts`, with only `item_id`, `status`, and `payload` or blocked `reason` for each entry; `metrics` is optional. The External Worker derives the current Lease, Mission revision, claim, Worker instance, Receipt version, and attempt number. Existing full Receipt batches remain accepted when all supplied protocol fields match the current Lease.
 
 ## Read a Run
 
@@ -58,7 +58,7 @@ python <plugin-directory>/scripts/run_flight_harness.py status --run-id <run-id>
 python <plugin-directory>/scripts/run_flight_harness.py metrics --run-id <run-id>
 ```
 
-`status` returns the current Run manifest under `run` and a non-authoritative `active_work` summary. The summary contains only the active Lease identity, reference, remaining item count, Worker instance, and expiry; it does not create a second lifecycle status.
+`status` returns the current Run manifest under `run` and a non-authoritative `active_work` summary. A completed Outcome exposes `completed_at`, `price_valid_until`, and `price_freshness`; price freshness expires uniformly 900 seconds after completion without changing the historical `completed` Outcome. The active-work summary contains only the active Lease identity, reference, remaining item count, Worker instance, and expiry; it does not create a second lifecycle status.
 
 The CLI exits with code `2` when a lifecycle command returns a terminal `failed` Outcome. `draft`, `blocked`, and `completed` Outcomes exit with code `0` and must be distinguished by their JSON `kind`.
 

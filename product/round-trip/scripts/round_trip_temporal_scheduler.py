@@ -22,7 +22,13 @@ from typing import Any
 
 VERSION = "0.1.0"
 SIGNAL_KINDS = {"joint_date_pair", "split_date_pair", "directional_date"}
-ADMITTED_GATEWAY_STATUSES = {None, "accepted", "research_observed", "user_declared"}
+ADMITTED_GATEWAY_STATUSES = {
+    None,
+    "accepted",
+    "exact_anchor",
+    "research_observed",
+    "user_declared",
+}
 
 
 class RoundTripTemporalSchedulerError(ValueError):

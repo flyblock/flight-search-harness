@@ -148,6 +148,118 @@ class ProductAdapterSeamTestCase(unittest.TestCase):
         self.assertEqual("committed", replayed["receipt_results"][0]["status"])
         self.assertEqual("blocked", replayed["effect"]["kind"])
 
+    def test_receipt_admission_survives_transient_next_effect_failure(self) -> None:
+        adapter, state = self._fixture_adapter(
+            OneWayProductAdapter,
+            self._fixed_route_state("planning-recovery-session"),
+        )
+        calls = {"ingestions": 0, "post_admission_plans": 0}
+        investigation = {
+            "kind": "investigate",
+            "action_key": "investigate:research-1",
+            "task_id": "research-1",
+        }
+
+        adapter.completed_result = lambda product_directory, current: None
+        adapter.normalize_attempt = lambda attempt: copy.deepcopy(attempt)
+        adapter.attempt_committed = (
+            lambda current, action, attempt: bool(current.get("receipt_committed"))
+        )
+
+        def ingest_attempt(
+            product_directory: Path,
+            action: dict[str, Any],
+            attempt: dict[str, Any],
+        ) -> dict[str, Any]:
+            calls["ingestions"] += 1
+            state["receipt_committed"] = True
+            return copy.deepcopy(state)
+
+        def inspect(current: dict[str, Any]) -> dict[str, Any]:
+            if current.get("receipt_committed"):
+                calls["post_admission_plans"] += 1
+                if calls["post_admission_plans"] == 1:
+                    raise RuntimeError("transient planning failure")
+                actions = []
+            else:
+                actions = [investigation]
+            return {
+                "product_id": adapter.product_id,
+                "actions": copy.deepcopy(actions),
+                "investigation_actions": copy.deepcopy(actions),
+                "disposition_actions": [],
+                "has_complete_result": False,
+                "can_finalize": False,
+            }
+
+        def plan_transition(
+            current: dict[str, Any], control: dict[str, Any]
+        ) -> dict[str, Any]:
+            if current.get("receipt_committed"):
+                return {
+                    "kind": "blocked",
+                    "reason": "No further work is available.",
+                    "action_required": {"type": "supply_more_evidence"},
+                }
+            return {
+                "kind": "investigate",
+                "actions": [copy.deepcopy(investigation)],
+                "reason": "Collect Evidence.",
+            }
+
+        adapter.ingest_attempt = ingest_attempt
+        adapter.inspect = inspect
+        adapter.plan_transition = plan_transition
+        adapter.build_research_items = (
+            lambda product_directory, investigations, reason, identify: [
+                {
+                    "item_id": "research-1",
+                    "kind": "browser_research",
+                    "payload": {"action": copy.deepcopy(investigations[0])},
+                }
+            ]
+        )
+        kernel = AdapterProductKernel(adapter)
+
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            product_directory = Path(temporary_directory)
+            item = kernel.start(
+                {"journey_shape": adapter.journey_shape}, product_directory
+            )["effect"]["items"][0]
+            transition = kernel.advance(
+                product_directory,
+                {
+                    "kind": "receipt_batch",
+                    "entries": [
+                        {
+                            "item": item,
+                            "receipt": {
+                                "receipt_id": "receipt-planning-recovery",
+                                "status": "complete",
+                                "payload": {"kind": "observations"},
+                            },
+                        }
+                    ],
+                },
+            )
+
+            self.assertEqual(
+                [{"item_id": "research-1", "status": "committed"}],
+                transition["receipt_results"],
+            )
+            self.assertEqual("draft", transition["effect"]["kind"])
+            self.assertEqual(
+                "transient planning failure",
+                transition["effect"]["action_required"]["error"],
+            )
+
+            resumed = kernel.advance(product_directory, None)
+
+        self.assertEqual(1, calls["ingestions"])
+        self.assertEqual(2, calls["post_admission_plans"])
+        self.assertEqual([], resumed["receipt_results"])
+        self.assertEqual("blocked", resumed["effect"]["kind"])
+
     def test_random_loop_replay_uses_persisted_query_identity_after_request_closes(
         self,
     ) -> None:

@@ -1,32 +1,11 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "common-defs.schema.json",
-  "title": "Flight Search Harness public request definitions v2",
+  "title": "Flight Search Harness public request definitions v4",
   "$defs": {
     "currency_code": {
       "type": "string",
       "pattern": "^[A-Z]{3}$"
-    },
-    "fx_to_base": {
-      "type": "object",
-      "minProperties": 1,
-      "propertyNames": {"pattern": "^[A-Z]{3}$"},
-      "additionalProperties": {"type": "number", "exclusiveMinimum": 0},
-      "description": "Positive rates into base_currency. The base_currency entry must be 1.0."
-    },
-    "fx_snapshot": {
-      "type": "object",
-      "description": "Source-attributed rates satisfying observed_at <= current UTC < expires_at at Run start and again at finalization.",
-      "required": ["base_currency", "rates", "source_url", "provider", "observed_at", "expires_at"],
-      "properties": {
-        "base_currency": {"$ref": "#/$defs/currency_code"},
-        "rates": {"$ref": "#/$defs/fx_to_base"},
-        "source_url": {"type": "string", "format": "uri", "pattern": "^https?://"},
-        "provider": {"type": "string", "minLength": 1},
-        "observed_at": {"type": "string", "format": "date-time"},
-        "expires_at": {"type": "string", "format": "date-time"}
-      },
-      "additionalProperties": false
     },
     "money": {
       "type": "object",
@@ -42,12 +21,18 @@
       "required": ["cabin_baggage", "checked_bag_count", "paid_baggage_allowed"],
       "properties": {
         "cabin_baggage": {
-          "type": "string",
-          "minLength": 1,
-          "description": "The explicit cabin-baggage requirement to verify and price."
+          "enum": ["none_required", "personal_item", "cabin_bag", "personal_item_and_cabin_bag"],
+          "description": "The minimum cabin-baggage entitlement required. none_required does not exclude fares that include baggage."
         },
-        "checked_bag_count": {"type": "integer", "minimum": 0},
-        "paid_baggage_allowed": {"type": "boolean"}
+        "checked_bag_count": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "The total number of checked bags required for the traveler party."
+        },
+        "paid_baggage_allowed": {
+          "type": "boolean",
+          "description": "Whether missing required baggage may be purchased when its observed mandatory cost is included in the total."
+        }
       },
       "additionalProperties": false
     },
@@ -81,25 +66,12 @@
       },
       "additionalProperties": false
     },
-    "date_flexibility": {
-      "type": "object",
-      "required": ["mode"],
-      "properties": {
-        "mode": {"enum": ["exact_dates", "bounded_window", "fully_flexible"]},
-        "exact_departure_dates": {
-          "type": "array",
-          "minItems": 1,
-          "uniqueItems": true,
-          "items": {"type": "string", "format": "date"}
-        }
-      },
-      "allOf": [
-        {
-          "if": {"properties": {"mode": {"const": "exact_dates"}}, "required": ["mode"]},
-          "then": {"required": ["exact_departure_dates"]}
-        }
-      ],
-      "additionalProperties": false
+    "exact_departure_dates": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "description": "Optional exact departure dates inside the required departure window. Omission allows the whole window.",
+      "items": {"type": "string", "format": "date"}
     },
     "node": {
       "type": "object",
@@ -149,9 +121,10 @@
           "type": "array",
           "items": {"$ref": "#/$defs/node"}
         },
-        "max_access_time_minutes": {"type": "integer", "minimum": 0},
-        "max_egress_time_minutes": {"type": "integer", "minimum": 0},
+        "max_access_time_minutes": {"type": ["integer", "null"], "minimum": 0, "description": "Optional user hard ceiling for regional access time; null or omission means no user ceiling."},
+        "max_egress_time_minutes": {"type": ["integer", "null"], "minimum": 0, "description": "Optional user hard ceiling for regional egress time; null or omission means no user ceiling."},
         "max_ground_cost": {
+          "description": "Inclusive hard price ceiling for one required regional access or egress Offer; null means no price ceiling.",
           "oneOf": [
             {"$ref": "#/$defs/money"},
             {"type": "null"}
@@ -202,9 +175,12 @@
       "type": "array",
       "minItems": 1,
       "uniqueItems": true,
-      "description": "Must include every effective allowed_ground_modes value from both regional sides, including Product Kernel defaults when a side omits that field.",
+      "description": "Hard allowed-mode set for the complete journey. Must include every effective allowed_ground_modes value from both regional sides.",
       "items": {"enum": ["flight", "rail", "bus", "coach", "ferry", "local_transit", "walk", "rideshare", "car"]}
     },
-    "self_transfer_policy": {"enum": ["allow", "avoid", "never"]}
+    "self_transfer_policy": {
+      "enum": ["allow", "never"],
+      "description": "Whether independently ticketed flight connections are allowed."
+    }
   }
 }

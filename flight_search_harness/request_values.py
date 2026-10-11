@@ -13,17 +13,23 @@ import hashlib
 import json
 import math
 import re
-from datetime import date, datetime, timezone
+from datetime import date, datetime
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
-from .contracts import HarnessProtocolError
+from .contracts import HarnessProtocolError, REQUEST_VERSION
 
 
 _CURRENCY_PATTERN = re.compile(r"^[A-Z]{3}$")
-_SELF_TRANSFER_POLICIES = {"allow", "avoid", "never"}
+_SELF_TRANSFER_POLICIES = {"allow", "never"}
+_CABIN_BAGGAGE_REQUIRED_ITEMS = {
+    "none_required": (),
+    "personal_item": ("personal_item",),
+    "cabin_bag": ("cabin_bag",),
+    "personal_item_and_cabin_bag": ("personal_item", "cabin_bag"),
+}
 _ENDPOINT_POLICIES = {"anchor_required", "any_admitted_gateway"}
 _GROUND_MODES = {
     "rail",
@@ -35,27 +41,23 @@ _GROUND_MODES = {
     "rideshare",
     "car",
 }
-_ENVELOPE_FIELDS = {"request_version", "request_id", "journey_shape", "intent", "metadata"}
+_ENVELOPE_FIELDS = {"request_version", "journey_shape", "intent"}
 _SHARED_FIELDS = {
     "base_currency",
-    "traveler_count",
+    "adult_count",
     "baggage_policy",
     "overnight_allowed",
     "self_transfer_policy",
-    "fx_to_base",
-    "fx_snapshot",
 }
 _PRODUCT_FIELDS = {
     "one_way": {
         "origin",
         "destination",
         "departure_window",
-        "date_flexibility",
+        "exact_departure_dates",
         "budget",
         "allowed_modes",
-        "strategy",
         "maximum_total_duration_minutes",
-        "maximum_provider_queries",
     },
     "random_loop": {
         "departure_airports",
@@ -68,25 +70,22 @@ _PRODUCT_FIELDS = {
         "max_connection_wait_minutes",
         "first_leg_earliest_local_time",
         "airport_transit",
-        "maximum_provider_queries",
         "quality_gate",
-        "airport_catalog_ref",
-        "airport_transit_catalog_ref",
     },
     "round_trip": {
         "origin",
         "destination",
         "outbound_departure_window",
         "return_departure_window",
-        "outbound_date_flexibility",
-        "return_date_flexibility",
+        "outbound_exact_departure_dates",
+        "return_exact_departure_dates",
         "minimum_stay_nights",
         "maximum_stay_nights",
         "budget",
         "allowed_modes",
-        "maximum_total_duration_minutes",
+        "maximum_outbound_duration_minutes",
+        "maximum_return_duration_minutes",
         "airport_transit_unknown_policy",
-        "fx_snapshot",
     },
 }
 _PRODUCT_REQUIRED = {
@@ -424,59 +423,6 @@ def _parsed_window(
     return parsed[0], parsed[1]
 
 
-def validate_fx_snapshot_freshness(
-    snapshot: Any,
-    *,
-    now_utc: datetime | None = None,
-) -> None:
-    """Require a source-attributed FX snapshot to be current at evaluation time.
-
-    Product Adapters call this at both request admission and finalization.  The
-    function is stateless so a resumed Run never relies on its start-time
-    freshness decision.
-    """
-
-    if snapshot is None:
-        return
-    if not isinstance(snapshot, dict):
-        raise HarnessProtocolError("intent.fx_snapshot must be an object")
-    try:
-        observed_at = datetime.fromisoformat(
-            str(snapshot.get("observed_at") or "").replace("Z", "+00:00")
-        )
-        expires_at = datetime.fromisoformat(
-            str(snapshot.get("expires_at") or "").replace("Z", "+00:00")
-        )
-    except ValueError as exc:
-        raise HarnessProtocolError(
-            "intent.fx_snapshot timestamps must be offset date-times"
-        ) from exc
-    if observed_at.tzinfo is None or observed_at.utcoffset() is None:
-        raise HarnessProtocolError(
-            "intent.fx_snapshot.observed_at must include a UTC offset"
-        )
-    if expires_at.tzinfo is None or expires_at.utcoffset() is None:
-        raise HarnessProtocolError(
-            "intent.fx_snapshot.expires_at must include a UTC offset"
-        )
-    current = now_utc or datetime.now(timezone.utc)
-    if current.tzinfo is None or current.utcoffset() is None:
-        raise HarnessProtocolError("FX freshness evaluation time must include a UTC offset")
-    current = current.astimezone(timezone.utc)
-    observed_at = observed_at.astimezone(timezone.utc)
-    expires_at = expires_at.astimezone(timezone.utc)
-    if expires_at <= observed_at:
-        raise HarnessProtocolError(
-            "intent.fx_snapshot.expires_at must be after observed_at"
-        )
-    if observed_at > current:
-        raise HarnessProtocolError(
-            "intent.fx_snapshot.observed_at must not be in the future"
-        )
-    if current >= expires_at:
-        raise HarnessProtocolError("intent.fx_snapshot is expired")
-
-
 def _validate_effective_regional_modes(
     intent: dict[str, Any],
     origin: dict[str, Any],
@@ -508,13 +454,13 @@ def _require_anchor_utc_offsets(side: dict[str, Any], field: str) -> None:
 
 
 def validate_public_request(request: Any) -> dict[str, Any]:
-    """Validate the strict public request-v2 surface before creating a Run."""
+    """Validate the strict public request surface before creating a Run."""
 
     if not isinstance(request, dict):
         raise HarnessProtocolError("Search Mission start requires request")
     _reject_unknown(request, _ENVELOPE_FIELDS, "request")
-    if request.get("request_version") != "2.0":
-        raise HarnessProtocolError("request_version must be 2.0")
+    if request.get("request_version") != REQUEST_VERSION:
+        raise HarnessProtocolError(f"request_version must be {REQUEST_VERSION}")
     shape = request.get("journey_shape")
     if shape not in _PRODUCT_FIELDS:
         raise HarnessProtocolError("request.journey_shape is unsupported")
@@ -523,31 +469,13 @@ def validate_public_request(request: Any) -> dict[str, Any]:
     if not isinstance(intent, dict):
         raise HarnessProtocolError("request.intent must be an object")
     _reject_unknown(intent, _SHARED_FIELDS | _PRODUCT_FIELDS[shape], "intent")
-    required_fields = (_SHARED_FIELDS - {"fx_snapshot"}) | _PRODUCT_REQUIRED[shape]
+    required_fields = _SHARED_FIELDS | _PRODUCT_REQUIRED[shape]
     missing = sorted(required_fields - set(intent))
     if missing:
         raise HarnessProtocolError(
             "request.intent is missing required fields: " + ", ".join(missing)
         )
     shared = canonical_shared_intent(intent)
-
-    snapshot = intent.get("fx_snapshot")
-    if len(shared["fx_to_base"]) > 1 and not isinstance(snapshot, dict):
-        raise HarnessProtocolError(
-            "non-Base-Currency comparison requires source-attributed intent.fx_snapshot"
-        )
-    if isinstance(snapshot, dict):
-        if (
-            snapshot.get("base_currency") != shared["base_currency"]
-            or snapshot.get("rates") != shared["fx_to_base"]
-        ):
-            raise HarnessProtocolError(
-                "intent.fx_snapshot must match base_currency and fx_to_base"
-            )
-        for field in ("source_url", "provider", "observed_at", "expires_at"):
-            if not isinstance(snapshot.get(field), str) or not snapshot[field].strip():
-                raise HarnessProtocolError(f"intent.fx_snapshot.{field} is required")
-        validate_fx_snapshot_freshness(snapshot)
 
     if shape in {"one_way", "round_trip"}:
         origin = canonical_region_side(intent, "origin")
@@ -574,10 +502,10 @@ def validate_public_request(request: Any) -> dict[str, Any]:
         ):
             if (
                 isinstance(money, dict)
-                and money.get("currency") not in shared["fx_to_base"]
+                and money.get("currency") != shared["base_currency"]
             ):
                 raise HarnessProtocolError(
-                    f"intent.{field}.currency requires a matching fx_to_base rate"
+                    f"intent.{field}.currency must equal intent.base_currency"
                 )
 
     windows: dict[str, tuple[date, date]] = {}
@@ -586,16 +514,16 @@ def validate_public_request(request: Any) -> dict[str, Any]:
         windows["outbound"] = _parsed_window(
             canonical_window(intent, "departure_window"), "departure_window"
         )
-        flexibility = intent.get("date_flexibility")
-        if isinstance(flexibility, dict):
+        exact_departure_dates = intent.get("exact_departure_dates")
+        if isinstance(exact_departure_dates, list):
             start, end = windows["outbound"]
             start_date = start.date() if isinstance(start, datetime) else start
             end_date = end.date() if isinstance(end, datetime) else end
-            for raw_date in flexibility.get("exact_departure_dates", []):
+            for raw_date in exact_departure_dates:
                 selected = date.fromisoformat(str(raw_date))
                 if selected < start_date or selected > end_date:
                     raise HarnessProtocolError(
-                        "intent.date_flexibility exact date is outside "
+                        "intent.exact_departure_dates value is outside "
                         "departure_window"
                     )
     elif shape == "random_loop":
@@ -640,16 +568,16 @@ def validate_public_request(request: Any) -> dict[str, Any]:
                     relevant_side,
                     "origin" if direction == "outbound" else "destination",
                 )
-            flexibility = intent.get(f"{direction}_date_flexibility")
-            if isinstance(flexibility, dict):
-                for raw_date in flexibility.get("exact_departure_dates", []):
+            exact_dates = intent.get(f"{direction}_exact_departure_dates")
+            if isinstance(exact_dates, list):
+                for raw_date in exact_dates:
                     selected = date.fromisoformat(str(raw_date))
                     start, end = windows[direction]
                     start_date = start.date() if isinstance(start, datetime) else start
                     end_date = end.date() if isinstance(end, datetime) else end
                     if selected < start_date or selected > end_date:
                         raise HarnessProtocolError(
-                            f"intent.{direction}_date_flexibility exact date is outside "
+                            f"intent.{direction}_exact_departure_dates value is outside "
                             f"{field}"
                         )
         minimum_stay = intent.get("minimum_stay_nights")
@@ -666,7 +594,7 @@ def validate_public_request(request: Any) -> dict[str, Any]:
 
 
 def canonical_shared_intent(intent: dict[str, Any]) -> dict[str, Any]:
-    """Validate and copy values shared by every public v2 intent."""
+    """Validate and copy values shared by every public intent."""
 
     base_currency = intent.get("base_currency")
     if not isinstance(base_currency, str) or not _CURRENCY_PATTERN.fullmatch(
@@ -676,13 +604,13 @@ def canonical_shared_intent(intent: dict[str, Any]) -> dict[str, Any]:
             "intent.base_currency must be an uppercase three-letter currency code"
         )
 
-    traveler_count = intent.get("traveler_count")
+    adult_count = intent.get("adult_count")
     if (
-        isinstance(traveler_count, bool)
-        or not isinstance(traveler_count, int)
-        or traveler_count < 1
+        isinstance(adult_count, bool)
+        or not isinstance(adult_count, int)
+        or adult_count < 1
     ):
-        raise HarnessProtocolError("intent.traveler_count must be a positive integer")
+        raise HarnessProtocolError("intent.adult_count must be a positive integer")
 
     baggage_policy = intent.get("baggage_policy")
     if not isinstance(baggage_policy, dict):
@@ -695,9 +623,13 @@ def canonical_shared_intent(intent: dict[str, Any]) -> dict[str, Any]:
     cabin_baggage = baggage_policy.get("cabin_baggage")
     checked_bag_count = baggage_policy.get("checked_bag_count")
     paid_baggage_allowed = baggage_policy.get("paid_baggage_allowed")
-    if not isinstance(cabin_baggage, str) or not cabin_baggage.strip():
+    if (
+        not isinstance(cabin_baggage, str)
+        or cabin_baggage not in _CABIN_BAGGAGE_REQUIRED_ITEMS
+    ):
         raise HarnessProtocolError(
-            "intent.baggage_policy.cabin_baggage must be a non-empty string"
+            "intent.baggage_policy.cabin_baggage must be none_required, "
+            "personal_item, cabin_bag, or personal_item_and_cabin_bag"
         )
     if (
         isinstance(checked_bag_count, bool)
@@ -718,47 +650,19 @@ def canonical_shared_intent(intent: dict[str, Any]) -> dict[str, Any]:
     self_transfer_policy = intent.get("self_transfer_policy")
     if self_transfer_policy not in _SELF_TRANSFER_POLICIES:
         raise HarnessProtocolError(
-            "intent.self_transfer_policy must be allow, avoid, or never"
-        )
-
-    fx_to_base = intent.get("fx_to_base")
-    if not isinstance(fx_to_base, dict) or not fx_to_base:
-        raise HarnessProtocolError("intent.fx_to_base must be a non-empty object")
-    normalized_rates: dict[str, float] = {}
-    for raw_currency, raw_rate in fx_to_base.items():
-        currency = str(raw_currency).upper()
-        if not _CURRENCY_PATTERN.fullmatch(currency):
-            raise HarnessProtocolError(
-                f"intent.fx_to_base.{raw_currency} has an invalid currency code"
-            )
-        if isinstance(raw_rate, bool) or not isinstance(raw_rate, (int, float)):
-            raise HarnessProtocolError(
-                f"intent.fx_to_base.{raw_currency} must be a positive number"
-            )
-        rate = float(raw_rate)
-        if not math.isfinite(rate) or rate <= 0:
-            raise HarnessProtocolError(
-                f"intent.fx_to_base.{raw_currency} must be a positive number"
-            )
-        normalized_rates[currency] = rate
-    if base_currency not in normalized_rates or not math.isclose(
-        normalized_rates[base_currency], 1.0, rel_tol=0.0, abs_tol=1e-12
-    ):
-        raise HarnessProtocolError(
-            f"intent.fx_to_base.{base_currency} is required and must equal 1"
+            "intent.self_transfer_policy must be allow or never"
         )
 
     return {
         "base_currency": base_currency,
-        "traveler_count": traveler_count,
+        "adult_count": adult_count,
         "baggage_policy": {
-            "cabin_baggage": cabin_baggage.strip(),
+            "cabin_baggage": cabin_baggage,
             "checked_bag_count": checked_bag_count,
             "paid_baggage_allowed": paid_baggage_allowed,
         },
         "overnight_allowed": overnight_allowed,
         "self_transfer_policy": self_transfer_policy,
-        "fx_to_base": normalized_rates,
     }
 
 
@@ -828,19 +732,22 @@ def canonical_region_side(intent: dict[str, Any], field: str) -> dict[str, Any]:
     normalized["anchor_nodes"] = copy.deepcopy(anchors)
     normalized["seed_gateway_nodes"] = copy.deepcopy(gateways)
     normalized["endpoint_policy"] = endpoint_policy
+    normalized["max_access_time_minutes"] = side.get("max_access_time_minutes")
+    normalized["max_egress_time_minutes"] = side.get("max_egress_time_minutes")
+    normalized["allowed_ground_modes"] = copy.deepcopy(
+        side.get("allowed_ground_modes", sorted(_GROUND_MODES))
+    )
     return normalized
 
 
 def derived_intent_id(
     journey_shape: str,
     intent: dict[str, Any],
-    request_id: Any = None,
 ) -> str:
     """Derive an internal Product Kernel intent ID from public request values."""
 
     identity_input = {
         "journey_shape": journey_shape,
-        "request_id": request_id if isinstance(request_id, str) else None,
         "intent": intent,
     }
     canonical = json.dumps(
@@ -868,7 +775,9 @@ def one_way_baggage(baggage_policy: dict[str, Any]) -> dict[str, Any]:
 def round_trip_baggage(baggage_policy: dict[str, Any]) -> dict[str, Any]:
     """Translate the public baggage vocabulary to round-trip required items."""
 
-    required_items = [baggage_policy["cabin_baggage"]]
+    required_items = list(
+        _CABIN_BAGGAGE_REQUIRED_ITEMS[baggage_policy["cabin_baggage"]]
+    )
     checked = baggage_policy["checked_bag_count"]
     if checked:
         required_items.append(

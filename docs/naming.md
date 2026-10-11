@@ -103,7 +103,7 @@ concepts.
 ## Currency
 
 - Require the request to declare its three-letter `base_currency`; do not infer it from geography, language, or a product default.
-- Normalize monetary values with `fx_to_base`, where the Base Currency rate is exactly `1.0`.
+- Normalize monetary values with Harness-owned `fx_to_base`, where the Base Currency rate is exactly `1.0`; public requests declare only the Base Currency.
 - Name normalized amounts with `_in_base_currency` when the surrounding object does not already make the unit unambiguous.
 - Name distance-to-price ratios with `_km_per_base_currency_unit`. Do not encode a concrete currency in a field name.
 - Use `XTS` only for synthetic examples. Provider Observations and user requests retain their actual currency codes.

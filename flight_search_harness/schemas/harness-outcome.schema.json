@@ -13,7 +13,9 @@
     "action_required": {},
     "error": {"type": "object"},
     "result_ref": {"const": "product/final.json"},
-    "result_summary_ref": {"const": "result/summary.json"},
+    "completed_at": {"type": "string", "format": "date-time"},
+    "price_valid_until": {"type": "string", "format": "date-time"},
+    "price_freshness": {"enum": ["current", "expired"]},
     "result": {"type": "object"}
   },
   "allOf": [
@@ -27,7 +29,7 @@
     },
     {
       "if": {"properties": {"kind": {"const": "completed"}}, "required": ["kind"]},
-      "then": {"required": ["result_ref", "result"]}
+      "then": {"required": ["result_ref", "result", "completed_at", "price_valid_until", "price_freshness"]}
     }
   ],
   "additionalProperties": false

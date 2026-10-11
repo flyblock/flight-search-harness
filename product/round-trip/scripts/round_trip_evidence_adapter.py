@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import copy
 import json
+import math
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -91,6 +92,8 @@ def _normalize_proposed_at(
 
 def _observation_time_fields(identity: dict[str, Any]) -> dict[str, Any]:
     result = {"observed_at": identity["observed_at"]}
+    if "price_selection_method" in identity:
+        result["price_selection_method"] = identity["price_selection_method"]
     if "observed_at_normalization" in identity:
         result["observed_at_normalization"] = copy.deepcopy(
             identity["observed_at_normalization"]
@@ -211,16 +214,175 @@ def _gateway_candidate(raw: Any, field: str, identity: dict[str, Any]) -> dict[s
     signal = raw.get("signal")
     if not isinstance(signal, dict):
         raise EvidenceAdapterError(f"{field}.signal must be an object")
+    node = _node(raw.get("node"), f"{field}.node")
     return {
         "candidate_id": _text(raw.get("candidate_id"), f"{field}.candidate_id"),
         "side": side,
-        "node": _node(raw.get("node"), f"{field}.node"),
-        "signal": copy.deepcopy(signal),
+        "node": node,
+        "signal": _gateway_signal(
+            signal, f"{field}.signal", node["node_id"], side
+        ),
         "source_id": identity["source_id"],
         "provider": identity["provider"],
         "url": identity["url"],
         **_observation_time_fields(identity),
     }
+
+
+def _gateway_signal_amount(value: Any, field: str) -> dict[str, Any] | float:
+    if isinstance(value, dict):
+        normalized = _money(value, field)
+        assert normalized is not None
+        return normalized
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, (int, float))
+        or not math.isfinite(float(value))
+        or value < 0
+    ):
+        raise EvidenceAdapterError(
+            f"{field} must be a non-negative number or money object"
+        )
+    return float(value)
+
+
+def _gateway_signal(
+    raw: dict[str, Any], field: str, candidate_node_id: str, side: str
+) -> dict[str, Any]:
+    """Normalize the compact gateway-signal contract at the Evidence Seam."""
+
+    result = copy.deepcopy(raw)
+    canonical_kind = raw.get("kind")
+    alias_kind = raw.get("signal_kind")
+    if canonical_kind is not None and alias_kind is not None and canonical_kind != alias_kind:
+        raise EvidenceAdapterError(f"{field}.kind conflicts with signal_kind")
+    result["kind"] = _text(
+        canonical_kind if canonical_kind is not None else alias_kind,
+        f"{field}.kind",
+    )
+    result.pop("signal_kind", None)
+
+    canonical_fare = raw.get("dated_fare_amount")
+    alias_fare = raw.get("lowest_displayed_total")
+    normalized_fare = (
+        _gateway_signal_amount(canonical_fare, f"{field}.dated_fare_amount")
+        if canonical_fare is not None
+        else None
+    )
+    normalized_alias_fare = (
+        _gateway_signal_amount(alias_fare, f"{field}.lowest_displayed_total")
+        if alias_fare is not None
+        else None
+    )
+    if (
+        normalized_fare is not None
+        and normalized_alias_fare is not None
+        and normalized_fare != normalized_alias_fare
+    ):
+        raise EvidenceAdapterError(
+            f"{field}.dated_fare_amount conflicts with lowest_displayed_total"
+        )
+    if normalized_fare is not None or normalized_alias_fare is not None:
+        result["dated_fare_amount"] = (
+            normalized_fare
+            if normalized_fare is not None
+            else normalized_alias_fare
+        )
+        date_coverage = raw.get("date_coverage", "sampled_date_pair")
+        if date_coverage not in {
+            "sampled_date_pair",
+            "exact_dates",
+            "bounded_window",
+        }:
+            raise EvidenceAdapterError(
+                f"{field}.date_coverage is unsupported"
+            )
+        result["date_coverage"] = date_coverage
+    elif raw.get("date_coverage") is not None:
+        raise EvidenceAdapterError(
+            f"{field}.date_coverage requires dated_fare_amount"
+        )
+    result.pop("lowest_displayed_total", None)
+
+    for amount_field in ("complete_cost_lower_bound", "access_cost"):
+        if raw.get(amount_field) is not None:
+            result[amount_field] = _gateway_signal_amount(
+                raw[amount_field], f"{field}.{amount_field}"
+            )
+
+    has_pair_price = any(
+        result.get(amount_field) is not None
+        for amount_field in ("dated_fare_amount", "complete_cost_lower_bound")
+    )
+    legacy_opposite_field = (
+        "destination_gateway_node_id"
+        if side == "origin"
+        else "origin_gateway_node_id"
+    )
+    legacy_candidate_field = (
+        "origin_gateway_node_id"
+        if side == "origin"
+        else "destination_gateway_node_id"
+    )
+    opposite_gateway_node_id = raw.get("opposite_gateway_node_id")
+    legacy_opposite_gateway_node_id = raw.get(legacy_opposite_field)
+    if (
+        opposite_gateway_node_id is not None
+        and legacy_opposite_gateway_node_id is not None
+        and _text(
+            opposite_gateway_node_id, f"{field}.opposite_gateway_node_id"
+        )
+        != _text(
+            legacy_opposite_gateway_node_id, f"{field}.{legacy_opposite_field}"
+        )
+    ):
+        raise EvidenceAdapterError(
+            f"{field}.opposite_gateway_node_id conflicts with {legacy_opposite_field}"
+        )
+    if opposite_gateway_node_id is None:
+        opposite_gateway_node_id = legacy_opposite_gateway_node_id
+    legacy_candidate_node_id = raw.get(legacy_candidate_field)
+    if (
+        legacy_candidate_node_id is not None
+        and _text(
+            legacy_candidate_node_id, f"{field}.{legacy_candidate_field}"
+        )
+        != candidate_node_id
+    ):
+        raise EvidenceAdapterError(
+            f"{field}.{legacy_candidate_field} conflicts with the candidate node"
+        )
+    if has_pair_price:
+        opposite_gateway_node_id = _text(
+            opposite_gateway_node_id, f"{field}.opposite_gateway_node_id"
+        )
+        if opposite_gateway_node_id == candidate_node_id:
+            raise EvidenceAdapterError(
+                f"{field}.opposite_gateway_node_id must identify the other gateway"
+            )
+        result["opposite_gateway_node_id"] = opposite_gateway_node_id
+    elif opposite_gateway_node_id is not None:
+        result["opposite_gateway_node_id"] = _text(
+            opposite_gateway_node_id, f"{field}.opposite_gateway_node_id"
+        )
+    result.pop("origin_gateway_node_id", None)
+    result.pop("destination_gateway_node_id", None)
+
+    currencies = {
+        value["currency"]
+        for amount_field in (
+            "dated_fare_amount",
+            "complete_cost_lower_bound",
+            "access_cost",
+        )
+        for value in [result.get(amount_field)]
+        if isinstance(value, dict)
+    }
+    if len(currencies) > 1:
+        raise EvidenceAdapterError(
+            f"{field} money fields must use one currency"
+        )
+    return result
 
 
 def _temporal_signal(raw: Any, field: str, identity: dict[str, Any]) -> dict[str, Any]:
@@ -250,6 +412,22 @@ def _temporal_signal(raw: Any, field: str, identity: dict[str, Any]) -> dict[str
     if kind == "joint_date_pair":
         result["origin_gateway_node_id"] = _text(raw.get("origin_gateway_node_id"), f"{field}.origin_gateway_node_id")
         result["destination_gateway_node_id"] = _text(raw.get("destination_gateway_node_id"), f"{field}.destination_gateway_node_id")
+        result["outbound_origin_gateway_node_id"] = _text(
+            raw.get("outbound_origin_gateway_node_id", result["origin_gateway_node_id"]),
+            f"{field}.outbound_origin_gateway_node_id",
+        )
+        result["outbound_destination_gateway_node_id"] = _text(
+            raw.get("outbound_destination_gateway_node_id", result["destination_gateway_node_id"]),
+            f"{field}.outbound_destination_gateway_node_id",
+        )
+        result["return_origin_gateway_node_id"] = _text(
+            raw.get("return_origin_gateway_node_id", result["destination_gateway_node_id"]),
+            f"{field}.return_origin_gateway_node_id",
+        )
+        result["return_destination_gateway_node_id"] = _text(
+            raw.get("return_destination_gateway_node_id", result["origin_gateway_node_id"]),
+            f"{field}.return_destination_gateway_node_id",
+        )
         result["outbound_date"] = _date_only(raw.get("outbound_date"), f"{field}.outbound_date")
         result["return_date"] = _date_only(raw.get("return_date"), f"{field}.return_date")
         result["atomic_total"] = _money(raw.get("atomic_total"), f"{field}.atomic_total")
@@ -291,6 +469,9 @@ def adapt_observations(
     coverage_complete = raw.get("coverage_complete", True)
     if not isinstance(coverage_complete, bool):
         raise EvidenceAdapterError("coverage_complete must be boolean")
+    submitted_scope = raw.get("submitted_scope")
+    if submitted_scope is not None and not isinstance(submitted_scope, dict):
+        raise EvidenceAdapterError("submitted_scope must be an object")
     sources = _registry(registry_path)
     trusted_time = _trusted_evaluation_time(trusted_at)
     observations = raw.get("observations")
@@ -314,7 +495,7 @@ def adapt_observations(
         statuses.add(status)
         if status == "ai_proposed":
             proposal_type = observation.get("proposal_type")
-            if proposal_type not in {"region_scope", "region_scope_challenge", "structural_challengers"}:
+            if proposal_type != "region_scope":
                 raise EvidenceAdapterError(f"{field}.proposal_type is unsupported")
             proposal = observation.get("proposal")
             if not isinstance(proposal, dict):
@@ -355,10 +536,31 @@ def adapt_observations(
                 trusted_time,
             ),
         }
+        if observation.get("price_selection_method") is not None:
+            identity["price_selection_method"] = _text(
+                observation["price_selection_method"],
+                f"{field}.price_selection_method",
+            )
         if status in {"no_result", "rejected"}:
             if observation.get("movements") or observation.get("offer") or observation.get("gateway_candidates") or observation.get("temporal_signals"):
                 raise EvidenceAdapterError(f"{field} terminal evidence cannot carry facts")
-            normalized.append({**identity, "evidence_status": status, "reason": _text(observation.get("reason"), f"{field}.reason")})
+            terminal = {
+                **identity,
+                "evidence_status": status,
+                "reason": _text(observation.get("reason"), f"{field}.reason"),
+            }
+            if observation.get("date_coverage") is not None:
+                date_coverage = observation["date_coverage"]
+                if date_coverage not in {
+                    "sampled_date_pair",
+                    "exact_dates",
+                    "bounded_window",
+                }:
+                    raise EvidenceAdapterError(
+                        f"{field}.date_coverage is unsupported"
+                    )
+                terminal["date_coverage"] = date_coverage
+            normalized.append(terminal)
             continue
         if status == "research_observed":
             candidates_raw = observation.get("gateway_candidates")
@@ -386,7 +588,24 @@ def adapt_observations(
                         raise EvidenceAdapterError(f"conflicting temporal signal {signal_id}")
                     temporal_signals[signal_id] = signal
                     signal_ids.append(signal_id)
-            normalized.append({**identity, "evidence_status": status, "gateway_candidate_ids": candidate_ids, "temporal_signal_ids": signal_ids})
+            normalized_research = {
+                **identity,
+                "evidence_status": status,
+                "gateway_candidate_ids": candidate_ids,
+                "temporal_signal_ids": signal_ids,
+            }
+            if observation.get("date_coverage") is not None:
+                date_coverage = observation["date_coverage"]
+                if date_coverage not in {
+                    "sampled_date_pair",
+                    "exact_dates",
+                    "bounded_window",
+                }:
+                    raise EvidenceAdapterError(
+                        f"{field}.date_coverage is unsupported"
+                    )
+                normalized_research["date_coverage"] = date_coverage
+            normalized.append(normalized_research)
             continue
         raw_movements = observation.get("movements")
         offer = observation.get("offer")
@@ -455,6 +674,7 @@ def adapt_observations(
         "task_id": task_id,
         "evidence_status": evidence_status,
         "coverage_complete": coverage_complete,
+        "submitted_scope": copy.deepcopy(submitted_scope),
         "nodes": list(nodes.values()),
         "gateway_candidates": list(gateway_candidates.values()),
         "temporal_signals": list(temporal_signals.values()),

@@ -29,7 +29,6 @@
         "item_hash": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
         "attempt_count": {"type": "integer", "minimum": 1},
         "last_error": {"type": "string"},
-        "last_admission_ref": {"type": "string"},
         "last_decision": {"enum": ["committed", "retry_required", "blocked"]},
         "last_decision_attempt": {"type": "integer", "minimum": 1}
       },

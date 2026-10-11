@@ -31,6 +31,7 @@
         "research_sequence": {"type": "array", "minItems": 1, "items": {"type": "string"}},
         "temporal_strategy": {"const": "ai_led_date_frontier"},
         "joint_baseline_reason": {"type": "string"},
+        "screen_candidate": {"type": "object"},
         "task_specs": {"type": "array", "minItems": 1, "items": {"type": "object"}}
       },
       "additionalProperties": false

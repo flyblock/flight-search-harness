@@ -2,28 +2,26 @@
 
 ## Authority
 
-The AI owns gateway, route, date, portfolio, seller, challenger, and stopping decisions. The shared Provider policy for the one-way and round-trip Product Kernels owns one narrow invariant: the first flight attempt for a Work Item uses Google Flights at base score 95 and AZair is excluded. After that attempt, the registry remains a capability catalog rather than a whitelist or exhaustive scheduler. One Research Question remains one Work Item; source options never create sibling Work Items.
+The AI owns gateway, route, date, portfolio, and seller decisions. The shared fixed-route rule owns one narrow invariant: when Google Flights supports the Work Item shape, the first flight attempt uses it. After that attempt, the brief carries at most three non-binding source hints rather than a scored catalog. One Research Question remains one Work Item; source hints never create sibling Work Items.
 
 The source catalog is adapted from the one-way Product Kernel's broad Provider model. Round-trip execution keeps the catalog breadth and dynamic official-source rules, but scores them against round-trip Work Item families rather than copying one-way corridor Work Items verbatim.
 
-Registry file order has no ranking meaning. `round_trip_provider_advisor.py` derives post-first-attempt suggestions from Work Item family, geography, transport mode, flexible-date and multi-airport needs, independent-combination capability, payable/research role, and source attempts already recorded in the Session. The Harness brief carries the binding first source separately from later `ai-choice` suggestions.
+Registry file order has no ranking meaning. The Harness brief carries the binding first source separately from at most three later hints and may use another suitable source when needed.
 
 ## Progressive disclosure
 
 1. For a non-exact region, render AI-only `region_scope_definition` with no Provider assignment.
-2. Persist the primary proposal, then render independent `region_scope_challenge` against omitted airport categories.
-3. Merge both AI proposals and compile one Provider Work Item for each airport in their union.
-4. Render the compact catalog and select one gateway or complete-journey hypothesis.
-5. Render only the selected Work Item's executable query and Evidence contract.
-6. Operate the browser, adapt visible observations, and ingest them transactionally.
-7. After an incumbent, run one bounded AI-only structural-definition Work Item and resolve every proposal.
-8. Continue the active hypothesis until complete, hard-dead, deferred-low-value, or pause.
+2. Persist the bounded proposal and compile one Provider Work Item for each candidate airport.
+3. Render the compact catalog and select one regional-scope, pool-screen, or complete-journey Work Item.
+4. Render only the selected Work Item's executable query and Evidence contract.
+5. Operate the browser, adapt visible observations, and ingest them transactionally.
+6. Continue the active hypothesis until complete, hard-dead, deferred-low-value, or pause.
 
 ## Gateway Work Items
 
-`region_scope_definition` and `region_scope_challenge` are semantic-judgment Work Items, not Browser Evidence. Neither has an assigned Provider. The first returns candidates, roles, inclusion reasons, seed exclusions, and a scope reason. The second must review every published category and add non-core candidates or give a category-complete explanation. No production mapping supplies either airport list. Their union becomes separate `gateway_discovery` Work Items, so recovery and coverage are node-specific.
+`region_scope_definition` is a semantic-judgment Work Item, not Browser Evidence, and has no assigned Provider. It returns candidates, roles, inclusion reasons, seed exclusions, and a scope reason after checking the published gateway categories. No production mapping supplies the airport list.
 
-Gateway discovery starts from city/region anchors and pool constraints. A broad map, regional airport search, scheduled transport source, or concrete fare anomaly may create `research_observed` gateway candidates.
+After both scopes are defined, one `region_pool_fare_screen` compares the complete admitted airport pools, date windows, and stay range. Its Receipt preserves the submitted scope and concrete pair/date totals. Sampled dates cannot close it, and its signals remain research-only until a payable Offer is verified.
 
 Do not:
 

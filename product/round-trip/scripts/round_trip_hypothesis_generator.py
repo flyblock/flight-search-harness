@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import argparse
 import copy
-import heapq
 import json
 import re
 from pathlib import Path
@@ -45,18 +44,131 @@ def _money_amount(signal: dict[str, Any], field: str) -> float | None:
     return _number(value)
 
 
+def _money_identity(value: Any, field: str) -> tuple[float, str | None]:
+    if isinstance(value, dict):
+        amount = _number(value.get("amount"))
+        currency = value.get("currency")
+        if amount is None or not isinstance(currency, str) or len(currency.strip()) != 3:
+            raise HypothesisGeneratorError(f"{field} must be a valid money object")
+        return amount, currency.strip().upper()
+    amount = _number(value)
+    if amount is None:
+        raise HypothesisGeneratorError(
+            f"{field} must be a non-negative number or money object"
+        )
+    return amount, None
+
+
+def _normalized_gateway_signal(
+    raw: dict[str, Any], field: str, candidate_node_id: str, side: str
+) -> dict[str, Any]:
+    """Read canonical signals and the pre-contract aliases from persisted Runs."""
+
+    result = copy.deepcopy(raw)
+    kind = raw.get("kind")
+    alias_kind = raw.get("signal_kind")
+    if kind is not None and alias_kind is not None and kind != alias_kind:
+        raise HypothesisGeneratorError(f"{field}.kind conflicts with signal_kind")
+    result["kind"] = _text(
+        kind if kind is not None else alias_kind, f"{field}.kind"
+    )
+    result.pop("signal_kind", None)
+
+    fare = raw.get("dated_fare_amount")
+    alias_fare = raw.get("lowest_displayed_total")
+    if fare is not None and alias_fare is not None:
+        if _money_identity(fare, f"{field}.dated_fare_amount") != _money_identity(
+            alias_fare, f"{field}.lowest_displayed_total"
+        ):
+            raise HypothesisGeneratorError(
+                f"{field}.dated_fare_amount conflicts with lowest_displayed_total"
+            )
+    selected_fare = fare if fare is not None else alias_fare
+    if selected_fare is not None:
+        _money_identity(selected_fare, f"{field}.dated_fare_amount")
+        result["dated_fare_amount"] = copy.deepcopy(selected_fare)
+        date_coverage = raw.get("date_coverage", "sampled_date_pair")
+        if date_coverage not in {
+            "sampled_date_pair",
+            "exact_dates",
+            "bounded_window",
+        }:
+            raise HypothesisGeneratorError(
+                f"{field}.date_coverage is unsupported"
+            )
+        result["date_coverage"] = date_coverage
+    elif raw.get("date_coverage") is not None:
+        raise HypothesisGeneratorError(
+            f"{field}.date_coverage requires dated_fare_amount"
+        )
+    result.pop("lowest_displayed_total", None)
+
+    legacy_opposite_field = (
+        "destination_gateway_node_id"
+        if side == "origin"
+        else "origin_gateway_node_id"
+    )
+    legacy_candidate_field = (
+        "origin_gateway_node_id"
+        if side == "origin"
+        else "destination_gateway_node_id"
+    )
+    opposite_value = raw.get("opposite_gateway_node_id")
+    legacy_opposite_value = raw.get(legacy_opposite_field)
+    if opposite_value is not None and legacy_opposite_value is not None:
+        opposite = _text(opposite_value, f"{field}.opposite_gateway_node_id")
+        legacy_opposite = _text(
+            legacy_opposite_value, f"{field}.{legacy_opposite_field}"
+        )
+        if opposite != legacy_opposite:
+            raise HypothesisGeneratorError(
+                f"{field}.opposite_gateway_node_id conflicts with {legacy_opposite_field}"
+            )
+    else:
+        opposite = opposite_value if opposite_value is not None else legacy_opposite_value
+    legacy_candidate_value = raw.get(legacy_candidate_field)
+    if (
+        legacy_candidate_value is not None
+        and _text(legacy_candidate_value, f"{field}.{legacy_candidate_field}")
+        != candidate_node_id
+    ):
+        raise HypothesisGeneratorError(
+            f"{field}.{legacy_candidate_field} conflicts with the candidate node"
+        )
+    if selected_fare is not None or raw.get("complete_cost_lower_bound") is not None:
+        opposite = _text(
+            opposite,
+            f"{field}.opposite_gateway_node_id",
+        )
+        if opposite == candidate_node_id:
+            raise HypothesisGeneratorError(
+                f"{field}.opposite_gateway_node_id must identify the other gateway"
+            )
+        result["opposite_gateway_node_id"] = opposite
+    elif opposite is not None:
+        result["opposite_gateway_node_id"] = _text(
+            opposite, f"{field}.opposite_gateway_node_id"
+        )
+    result.pop("origin_gateway_node_id", None)
+    result.pop("destination_gateway_node_id", None)
+    return result
+
+
 def _candidate_sort_key(candidate: dict[str, Any]) -> tuple[Any, ...]:
     signal = candidate.get("signal", {}) if isinstance(candidate.get("signal"), dict) else {}
-    complete_lb = _money_amount(signal, "complete_cost_lower_bound")
     fare = _money_amount(signal, "dated_fare_amount")
     access_cost = _money_amount(signal, "access_cost")
     duration = _number(signal.get("duration_minutes"))
     kind = str(signal.get("kind", ""))
     strength = 0 if any(token in kind for token in ("fare", "price", "access_and_fare")) else 1
+    coverage_rank = {
+        "bounded_window": 0,
+        "exact_dates": 1,
+        "sampled_date_pair": 2,
+    }.get(signal.get("date_coverage"), 3)
     return (
         strength,
-        complete_lb is None,
-        complete_lb if complete_lb is not None else float("inf"),
+        coverage_rank,
         fare is None,
         fare if fare is not None else float("inf"),
         access_cost is None,
@@ -79,24 +191,23 @@ def _normalized_candidates(state: dict[str, Any], side: str) -> list[dict[str, A
             continue
         node_id = _text(candidate["node"].get("node_id"), f"gateway_candidates.{side}[{index}].node.node_id")
         value = copy.deepcopy(candidate)
+        signal = value.get("signal")
+        if not isinstance(signal, dict):
+            raise HypothesisGeneratorError(
+                f"gateway_candidates.{side}[{index}].signal must be an object"
+            )
+        value["signal"] = _normalized_gateway_signal(
+            signal,
+            f"gateway_candidates.{side}[{index}].signal",
+            node_id,
+            side,
+        )
         current = by_node.get(node_id)
         if current is None or _candidate_sort_key(value) < _candidate_sort_key(current):
             by_node[node_id] = value
     result = list(by_node.values())
     result.sort(key=_candidate_sort_key)
     return result
-
-
-def _pair_lower_bound(origin: dict[str, Any], destination: dict[str, Any]) -> float | None:
-    amounts = []
-    for candidate in (origin, destination):
-        signal = candidate.get("signal", {}) if isinstance(candidate.get("signal"), dict) else {}
-        value = _money_amount(signal, "complete_cost_lower_bound")
-        if value is None:
-            value = _money_amount(signal, "dated_fare_amount")
-        if value is not None:
-            amounts.append(value)
-    return round(sum(amounts), 2) if amounts else None
 
 
 def _safe_token(value: str) -> str:
@@ -118,34 +229,172 @@ def _pair_spec(origin: dict[str, Any], destination: dict[str, Any]) -> dict[str,
         "advisory_basis": {
             "origin_candidate_id": origin["candidate_id"],
             "destination_candidate_id": destination["candidate_id"],
-            "complete_cost_lower_bound": _pair_lower_bound(origin, destination),
+            "complete_cost_lower_bound": None,
+            "observed_complete_cost_signal": None,
             "evidence_backed": True,
         },
         "research_sequence": [
             "joint_2d_surface_then_ai_selected_exact_atomic_quote",
-            "directional_surfaces_then_ai_selected_compatible_split_verification",
             "four_directional_surface_access_egress",
         ],
         "temporal_strategy": "ai_led_date_frontier",
-        "joint_baseline_reason": "A single atomic round-trip ticket often prices below two separately purchased one-ways; observe it directly before comparing split totals.",
+        "joint_baseline_reason": "Observe the atomic round-trip baseline first; verify separate one-ways only when current Evidence indicates a credible improvement.",
     }
+
+
+def _money_in_base_currency(
+    state: dict[str, Any], money: dict[str, Any]
+) -> float | None:
+    amount = money.get("amount")
+    currency = money.get("currency")
+    if isinstance(amount, bool) or not isinstance(amount, (int, float)):
+        return None
+    base = state.get("scenario", {}).get("base_currency")
+    if currency == base:
+        return round(float(amount), 2)
+    rate = (
+        state.get("scenario", {})
+        .get("fx_snapshot", {})
+        .get("rates", {})
+        .get(currency)
+    )
+    if isinstance(rate, bool) or not isinstance(rate, (int, float)):
+        return None
+    return round(float(amount) * float(rate), 2)
+
+
+def _screen_pair_specs(
+    state: dict[str, Any],
+    origins: list[dict[str, Any]],
+    destinations: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    origin_by_id = {item["node"]["node_id"]: item for item in origins}
+    destination_by_id = {item["node"]["node_id"]: item for item in destinations}
+    screen_task_ids = {
+        str(task.get("task_id"))
+        for task in state.get("research_tasks", [])
+        if task.get("research_kind") == "region_pool_fare_screen"
+    }
+    result = []
+    for signal in state.get("temporal_signals", []):
+        if (
+            signal.get("research_task_id") not in screen_task_ids
+            or signal.get("signal_kind") != "joint_date_pair"
+        ):
+            continue
+        outbound_origin_id = signal.get(
+            "outbound_origin_gateway_node_id",
+            signal.get("origin_gateway_node_id"),
+        )
+        return_destination_id = signal.get(
+            "return_destination_gateway_node_id",
+            signal.get("origin_gateway_node_id"),
+        )
+        outbound_destination_id = signal.get(
+            "outbound_destination_gateway_node_id",
+            signal.get("destination_gateway_node_id"),
+        )
+        return_origin_id = signal.get(
+            "return_origin_gateway_node_id",
+            signal.get("destination_gateway_node_id"),
+        )
+        origin_ids = list(dict.fromkeys([outbound_origin_id, return_destination_id]))
+        destination_ids = list(
+            dict.fromkeys([outbound_destination_id, return_origin_id])
+        )
+        origin_candidates = [origin_by_id.get(node_id) for node_id in origin_ids]
+        destination_candidates = [
+            destination_by_id.get(node_id) for node_id in destination_ids
+        ]
+        normalized_total = _money_in_base_currency(
+            state, signal.get("atomic_total", {})
+        )
+        if (
+            any(item is None for item in [*origin_candidates, *destination_candidates])
+            or normalized_total is None
+        ):
+            continue
+        spec = _pair_spec(origin_candidates[0], destination_candidates[0])
+        spec["origin_gateway_nodes"] = origin_ids
+        spec["destination_gateway_nodes"] = destination_ids
+        spec["route_shape"] = (
+            "regional_open_jaw"
+            if len(origin_ids) > 1 or len(destination_ids) > 1
+            else "closed_airport_pair"
+        )
+        outbound_date = str(signal.get("outbound_date"))
+        return_date = str(signal.get("return_date"))
+        endpoint_token = "-".join(
+            _safe_token(str(item))
+            for item in [*origin_ids, *destination_ids]
+        )
+        spec["hypothesis_id"] = (
+            f"hypothesis-screen-{endpoint_token}-"
+            f"{outbound_date.replace('-', '')}-{return_date.replace('-', '')}"
+        )
+        spec["advisory_basis"] = {
+            **spec["advisory_basis"],
+            "origin_candidate_ids": [
+                item["candidate_id"] for item in origin_candidates
+            ],
+            "destination_candidate_ids": [
+                item["candidate_id"] for item in destination_candidates
+            ],
+            "screen_signal_id": signal.get("signal_id"),
+            "observed_complete_cost_signal": normalized_total,
+            "screen_atomic_total": copy.deepcopy(signal.get("atomic_total")),
+            "screen_total_in_base_currency": normalized_total,
+            "evidence_backed": True,
+        }
+        spec["screen_candidate"] = {
+            "signal_id": signal.get("signal_id"),
+            "outbound_origin_gateway_node_id": outbound_origin_id,
+            "outbound_destination_gateway_node_id": outbound_destination_id,
+            "return_origin_gateway_node_id": return_origin_id,
+            "return_destination_gateway_node_id": return_destination_id,
+            "outbound_date": outbound_date,
+            "return_date": return_date,
+            "atomic_total": copy.deepcopy(signal.get("atomic_total")),
+            "total_in_base_currency": normalized_total,
+        }
+        result.append(spec)
+    by_hypothesis: dict[str, dict[str, Any]] = {}
+    for item in result:
+        hypothesis_id = item["hypothesis_id"]
+        current = by_hypothesis.get(hypothesis_id)
+        if (
+            current is None
+            or item["screen_candidate"]["total_in_base_currency"]
+            < current["screen_candidate"]["total_in_base_currency"]
+        ):
+            by_hypothesis[hypothesis_id] = item
+    result = list(by_hypothesis.values())
+    result.sort(
+        key=lambda item: (
+            item["screen_candidate"]["total_in_base_currency"],
+            item["screen_candidate"]["outbound_date"],
+            item["screen_candidate"]["return_date"],
+            item["hypothesis_id"],
+        )
+    )
+    return result
 
 
 def _lazy_pair_specs(origins: list[dict[str, Any]], destinations: list[dict[str, Any]], limit: int) -> list[dict[str, Any]]:
     if not origins or not destinations or limit <= 0:
         return []
-    heap: list[tuple[int, int, int]] = [(0, 0, 0)]
-    visited = {(0, 0)}
-    result = []
-    while heap and len(result) < limit:
-        _, origin_index, destination_index = heapq.heappop(heap)
-        result.append(_pair_spec(origins[origin_index], destinations[destination_index]))
-        for next_origin, next_destination in ((origin_index + 1, destination_index), (origin_index, destination_index + 1)):
-            if next_origin >= len(origins) or next_destination >= len(destinations) or (next_origin, next_destination) in visited:
-                continue
-            visited.add((next_origin, next_destination))
-            heapq.heappush(heap, (next_origin + next_destination, next_origin, next_destination))
-    return result
+    pairs = [
+        (origin, destination)
+        for origin in origins
+        for destination in destinations
+    ]
+    pairs.sort(
+        key=lambda pair: (
+            str(pair[0].get("candidate_id", "")),
+            str(pair[1].get("candidate_id", "")),
+        )
+    )
+    return [_pair_spec(*pair) for pair in pairs[:limit]]
 
 
 def _open_jaw_spec(origins: list[dict[str, Any]], destinations: list[dict[str, Any]]) -> dict[str, Any] | None:
@@ -234,45 +483,7 @@ def _advanced_specs(
     return result
 
 
-def _ai_structural_specs(state: dict[str, Any]) -> list[dict[str, Any]]:
-    exploration = state.get("structural_exploration", {})
-    dispositions = exploration.get("dispositions", {})
-    result = []
-    for proposal in exploration.get("proposals", []):
-        proposal_id = str(proposal.get("proposal_id") or "")
-        if dispositions.get(proposal_id) == "dismissed":
-            continue
-        result.append(
-            {
-                "hypothesis_id": proposal["hypothesis_id"],
-                "route_shape": proposal["route_shape"],
-                "origin_gateway_nodes": list(proposal["origin_gateway_nodes"]),
-                "destination_gateway_nodes": list(
-                    proposal["destination_gateway_nodes"]
-                ),
-                "geographic_cell": "ai-structural-corridor",
-                "advisory_basis": {
-                    "evidence_backed": False,
-                    "ai_proposed": True,
-                    "proposal_id": proposal_id,
-                    "mechanism": proposal["mechanism"],
-                    "reason": proposal["reason"],
-                    "binding": False,
-                },
-                "research_sequence": [
-                    "verify_each_atomic_offer",
-                    "verify_surface_feasibility",
-                    "solve_complete_portfolio",
-                ],
-                "temporal_strategy": "ai_led_date_frontier",
-                "joint_baseline_reason": None,
-                "task_specs": copy.deepcopy(proposal["task_specs"]),
-            }
-        )
-    return result
-
-
-def generate_suggestions(raw_state: Any, *, max_closed_pairs: int = 8, include_open_jaw: bool = True) -> dict[str, Any]:
+def generate_suggestions(raw_state: Any, *, max_closed_pairs: int = 8, include_open_jaw: bool = False) -> dict[str, Any]:
     if not isinstance(raw_state, dict) or raw_state.get("trip_scope") != "round_trip":
         raise HypothesisGeneratorError("state must be a round_trip Session")
     if max_closed_pairs < 1:
@@ -299,16 +510,37 @@ def generate_suggestions(raw_state: Any, *, max_closed_pairs: int = 8, include_o
             "selection_instruction": "Finish or explicitly dispose both AI-scoped gateway-discovery hypotheses before locking a route hypothesis.",
         }
     existing_ids = set(raw_state.get("hypothesis_tree", {}).get("nodes", {}))
-    closed = [item for item in _lazy_pair_specs(origins, destinations, max_closed_pairs) if item["hypothesis_id"] not in existing_ids]
+    screen_pairs = _screen_pair_specs(raw_state, origins, destinations)
+    available_closed = [
+        item
+        for item in (
+            screen_pairs
+            if screen_pairs
+            else _lazy_pair_specs(
+                origins, destinations, len(origins) * len(destinations)
+            )
+        )
+        if item["hypothesis_id"] not in existing_ids
+    ]
+    incumbent = (
+        (raw_state.get("result", {}).get("best_portfolio") or {})
+        .get("total_mandatory_cost", {})
+        .get("amount")
+    )
+    if isinstance(incumbent, (int, float)) and not isinstance(incumbent, bool):
+        available_closed = [
+            item
+            for item in available_closed
+            if item.get("screen_candidate") is None
+            or item["screen_candidate"]["total_in_base_currency"] < float(incumbent)
+        ]
+    closed = available_closed[:max_closed_pairs]
     open_jaw = _open_jaw_spec(origins, destinations) if include_open_jaw else None
     if open_jaw is not None and open_jaw["hypothesis_id"] in existing_ids:
         open_jaw = None
     advanced = [
         item
-        for item in [
-            *_advanced_specs(origins, destinations),
-            *_ai_structural_specs(raw_state),
-        ]
+        for item in _advanced_specs(origins, destinations)
         if item["hypothesis_id"] not in existing_ids
     ]
     suggestions = [*closed, *([open_jaw] if open_jaw else []), *advanced]
@@ -322,7 +554,7 @@ def generate_suggestions(raw_state: Any, *, max_closed_pairs: int = 8, include_o
         "published_suggestion_count": len(suggestions),
         "gateway_blockers": [],
         "suggestions": suggestions,
-        "selection_instruction": "Choose observed-gateway suggestions or explicitly AI-proposed structural corridors worth verifying. AI proposals are not Evidence. Joint atomic pricing is the first baseline inside each ordinary gateway hypothesis, while every selected custom task remains evidence-gated.",
+        "selection_instruction": "Verify the lowest remaining region-pool pair/date signal first. Continue while an unverified screen total can still beat the incumbent complete mandatory total.",
     }
 
 
@@ -331,10 +563,13 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--state", required=True)
     parser.add_argument("--output")
     parser.add_argument("--max-closed-pairs", type=int, default=8)
-    parser.add_argument("--no-open-jaw", action="store_true")
     args = parser.parse_args(argv)
     try:
-        result = generate_suggestions(read_json(args.state), max_closed_pairs=args.max_closed_pairs, include_open_jaw=not args.no_open_jaw)
+        result = generate_suggestions(
+            read_json(args.state),
+            max_closed_pairs=args.max_closed_pairs,
+            include_open_jaw=False,
+        )
         rendered = json.dumps(result, ensure_ascii=False, indent=2) + "\n"
         if args.output:
             Path(args.output).write_text(rendered, encoding="utf-8")

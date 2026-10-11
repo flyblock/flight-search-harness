@@ -56,10 +56,8 @@ A completed Outcome contains a small result summary and the authoritative
 Product result reference:
 
 - `result_ref` is always `product/final.json`, the sole authoritative full
-  result;
-- `result_summary_ref`, when the optional summary sidecar was written, is
-  `result/summary.json`. Its absence never changes `completed`; the same
-  summary is regenerated from `product/final.json` when needed.
+  result. The small inline projection is regenerated from that file when
+  needed.
 
 ## Product Kernel Seam
 
@@ -118,10 +116,10 @@ The admission order is:
 1. validate Lease revision, claim, Work Item, and attempt;
 2. atomically persist immutable raw Receipts;
 3. ask the Product Kernel to admit them idempotently;
-4. persist immutable admission-decision sidecars;
+4. index each Product decision in the Mission cursor;
 5. update the pending Work Attempts once and close an empty Lease;
 6. materialize the Product Kernel's next effect;
-7. write optional metrics, cache, and event sidecars without changing the
+7. write optional metrics and event sidecars without changing the
    admission or Outcome.
 
 If execution stops after raw Receipt persistence or Product admission, replay
@@ -142,20 +140,16 @@ Session revision.
 |   |-- items/                       immutable full Work Items
 |   |-- leases/                      Lease and claim authority
 |   |-- receipts/
-|   |   |-- raw/                     immutable Worker submissions
-|   |   `-- admissions/              immutable Product Kernel decisions
+|   |   `-- raw/                     immutable Worker submissions
 |   `-- metrics/checkpoints/         optional replay-safe metrics
 |-- product/
 |   |-- session.json                 product state authority
 |   `-- final.json                   sole authoritative full result
-|-- browser/                         Browser Adapter-owned checkpoints
-`-- result/
-    `-- summary.json                 regenerable Harness projection
+`-- browser/                         Browser Adapter-owned checkpoints
 ```
 
-Cache, metrics, events, and the result summary are non-authoritative sidecars.
-Their absence or write failure cannot change Evidence admission or lifecycle
-Outcome.
+Metrics and events are non-authoritative sidecars. Their absence or write
+failure cannot change Evidence admission or lifecycle Outcome.
 
 `mission/pending-effect.json` is a crash-recovery cursor for one Product effect
 that has not yet been materialized as a Lease or Outcome. It is bound to the

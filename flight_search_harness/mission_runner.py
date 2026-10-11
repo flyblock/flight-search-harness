@@ -8,14 +8,17 @@ import json
 import threading
 from typing import Any, Mapping
 
-from .contracts import OUTCOME_VERSION, REQUEST_VERSION, HarnessProtocolError
+from .contracts import (
+    OUTCOME_VERSION,
+    REQUEST_VERSION,
+    HarnessProtocolError,
+    result_price_freshness,
+)
 from .mission_contracts import ProductKernel, SearchWorker, validate_receipt_batch
 from .mission_store import MissionStore
 from .request_values import validate_public_request
-from .research_cache import ResearchCache
 from .result_projection import summarize
 from .run_store import RunBusyError, RunStore
-from .worker_projection import project_work
 
 
 class _ExistingRunCommandError(HarnessProtocolError):
@@ -220,6 +223,11 @@ class SearchMissionHarness:
                 f"terminal Run {manifest.get('run_id')} has no persisted Outcome"
             )
         outcome = copy.deepcopy(stored)
+        if status == "completed":
+            freshness = result_price_freshness(
+                str(stored.get("completed_at") or manifest["updated_at"])
+            )
+            outcome.update(freshness)
         if status == "completed" and "result" not in outcome:
             result_ref = manifest.get("result_ref")
             if not isinstance(result_ref, str):
@@ -232,6 +240,8 @@ class SearchMissionHarness:
                 full_result,
                 full_result_ref=result_ref,
             )
+        if status == "completed" and isinstance(outcome.get("result"), dict):
+            outcome["result"].update(freshness)
         return outcome
 
     def _append_event(
@@ -506,7 +516,6 @@ class SearchMissionHarness:
             "run_id": manifest["run_id"],
             "run_directory": str(self.store.run_directory(manifest["run_id"])),
             "lease_ref": mission["active_lease_ref"],
-            "cache_root": str(self.store.root / "_raw-observation-cache"),
         }
         stop_heartbeat = threading.Event()
 
@@ -803,21 +812,17 @@ class SearchMissionHarness:
             for item in lease["items"]
         }
         entries = []
-        receipt_refs: dict[str, str] = {}
         receipts: dict[str, dict[str, Any]] = {}
-        items: dict[str, dict[str, Any]] = {}
         for raw_receipt in batch["receipts"]:
             identity = (raw_receipt["item_id"], raw_receipt["attempt_number"])
             if identity not in pending:
                 raise HarnessProtocolError("Receipt does not target a pending Work Attempt")
             item = self.missions.read_item(mission, raw_receipt["item_id"])
-            receipt, reference, _ = self.missions.write_raw_receipt(
+            receipt, _, _ = self.missions.write_raw_receipt(
                 mission, raw_receipt
             )
             entries.append({"item": item, "receipt": receipt})
-            receipt_refs[receipt["item_id"]] = reference
             receipts[receipt["item_id"]] = receipt
-            items[receipt["item_id"]] = item
         transition = kernel.advance(
             self.store.product_directory(manifest["run_id"]),
             {"kind": "receipt_batch", "entries": entries},
@@ -830,16 +835,9 @@ class SearchMissionHarness:
             for result in transition.get("receipt_results", [])
             if isinstance(result, dict) and isinstance(result.get("item_id"), str)
         }
-        mission, lease, newly_committed = self.missions.apply_admissions(
-            mission, receipts, receipt_refs, decisions
+        mission, lease = self.missions.apply_admissions(
+            mission, receipts, decisions
         )
-        for identifier in newly_committed:
-            if items[identifier].get("kind") != "choice":
-                self._cache_committed_attempt(
-                    manifest,
-                    items[identifier],
-                    receipts[identifier].get("payload"),
-                )
         checkpoint_id = hashlib.sha256(
             json.dumps(
                 {
@@ -881,36 +879,6 @@ class SearchMissionHarness:
             pass
         return self.missions.load(manifest["run_id"]), step
 
-    def _cache_committed_attempt(
-        self,
-        manifest: dict[str, Any],
-        item: dict[str, Any],
-        payload: Any,
-    ) -> None:
-        if not isinstance(payload, dict) or payload.get("kind") not in {
-            "observations",
-            "observation_bundle",
-        }:
-            return
-        work = item.get("payload", {}).get("work")
-        if not isinstance(work, dict):
-            return
-        execution = project_work(work).get("execution", {})
-        scope = execution.get("cache_scope")
-        fingerprint = execution.get("query_fingerprint")
-        if not isinstance(scope, str) or not isinstance(fingerprint, str):
-            return
-        try:
-            ResearchCache(self.store.root / "_raw-observation-cache").put(
-                f"{scope}:{manifest['product_id']}",
-                fingerprint,
-                payload,
-                ttl_seconds=int(execution.get("freshness_ttl_seconds", 3600)),
-            )
-        except Exception:
-            # Cache is an optional Worker optimization and cannot gate admission.
-            return
-
     def _materialize_effect(
         self,
         manifest: dict[str, Any],
@@ -935,20 +903,11 @@ class SearchMissionHarness:
                 raise HarnessProtocolError("complete effect requires result")
             result_ref = self.store.write_product_final_result(manifest["run_id"], result)
             summary = summarize(manifest["product_id"], result, full_result_ref=result_ref)
-            summary_ref = None
-            try:
-                summary_ref = self.store.write_result_summary(
-                    manifest["run_id"], summary
-                )
-            except Exception:
-                pass
+            freshness = result_price_freshness()
+            summary.update(freshness)
             manifest = self.store.load_manifest(manifest["run_id"])
             manifest["status"] = "completed"
             manifest["result_ref"] = result_ref
-            if summary_ref is not None:
-                manifest["result_summary_ref"] = summary_ref
-            else:
-                manifest.pop("result_summary_ref", None)
             outcome = {
                 "outcome_version": OUTCOME_VERSION,
                 "kind": "completed",
@@ -956,9 +915,8 @@ class SearchMissionHarness:
                 "product_id": manifest["product_id"],
                 "result_ref": result_ref,
                 "result": copy.deepcopy(summary),
+                **freshness,
             }
-            if summary_ref is not None:
-                outcome["result_summary_ref"] = summary_ref
             manifest["last_outcome"] = {
                 key: copy.deepcopy(value)
                 for key, value in outcome.items()

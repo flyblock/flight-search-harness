@@ -17,8 +17,7 @@
     "last_outcome": {"type": ["object", "null"]},
     "mission_ref": {"const": "mission/mission.json"},
     "product_session_ref": {"const": "product/session.json"},
-    "result_ref": {"const": "product/final.json"},
-    "result_summary_ref": {"const": "result/summary.json"}
+    "result_ref": {"const": "product/final.json"}
   },
   "additionalProperties": false
 }

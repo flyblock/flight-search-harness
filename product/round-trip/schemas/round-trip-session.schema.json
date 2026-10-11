@@ -3,7 +3,7 @@
   "$id": "https://example.invalid/flight-search-harness/product/round-trip/schemas/round-trip-session.schema.json",
   "title": "Regional round-trip Session v0.4.0",
   "type": "object",
-  "required": ["session_version", "session_id", "trip_scope", "scenario", "product_revision", "search_round", "hypotheses", "active_hypothesis_id", "research_tasks", "challenger_dispositions", "gateway_candidates", "region_scopes", "structural_exploration", "evidence_bundles", "movements", "offers", "solver_projection", "result", "stop_assessment", "finalization_status"],
+  "required": ["session_version", "session_id", "trip_scope", "scenario", "product_revision", "search_round", "hypotheses", "active_hypothesis_id", "research_tasks", "gateway_candidates", "region_scopes", "evidence_bundles", "movements", "offers", "solver_projection", "result", "finalization_status"],
   "properties": {
     "session_version": {"const": "0.4.0"},
     "session_id": {"type": "string"},
@@ -19,36 +19,14 @@
     "hypothesis_history": {"type": "array", "items": {"type": "object"}, "readOnly": true},
     "hypothesis_tree": {"type": "object", "readOnly": true},
     "research_tasks": {"type": "array", "items": {"$ref": "#/$defs/research_requirement"}},
-    "challenger_dispositions": {"type": "object", "additionalProperties": {"type": "object"}},
     "gateway_candidates": {"type": "object", "required": ["origin", "destination"], "properties": {"origin": {"type": "array"}, "destination": {"type": "array"}}, "additionalProperties": false},
     "region_scopes": {"type": "object", "required": ["origin", "destination"], "properties": {"origin": {"type": "object"}, "destination": {"type": "object"}}, "additionalProperties": false},
-    "structural_exploration": {"type": "object"},
     "solver_projection": {"type": "object"},
     "temporal_signals": {"type": "array", "items": {"type": "object"}},
     "evidence_bundles": {"type": "array", "items": {"type": "object"}},
     "movements": {"type": "array", "items": {"type": "object"}},
     "offers": {"type": "array", "items": {"type": "object"}},
-    "portfolio_challenger_dispositions": {"type": "object", "additionalProperties": {"type": "object"}, "readOnly": true},
-    "portfolio_exploration_archive": {"type": "object", "readOnly": true},
-    "portfolio_exploration_view": {"type": "object", "readOnly": true},
     "result": {"type": "object"},
-    "stop_assessment": {
-      "oneOf": [
-        {"type": "null"},
-        {
-          "type": "object",
-          "required": ["reason", "challenger_hypothesis_ids", "assessed_revision", "search_round", "at"],
-          "properties": {
-            "reason": {"type": "string", "minLength": 1},
-            "challenger_hypothesis_ids": {"type": "array", "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
-            "assessed_revision": {"type": "integer", "minimum": 0},
-            "search_round": {"type": "integer", "minimum": 0},
-            "at": {"type": "string", "format": "date-time"}
-          },
-          "additionalProperties": false
-        }
-      ]
-    },
     "finalization_status": {"enum": ["open", "final"]}
   },
   "additionalProperties": false,

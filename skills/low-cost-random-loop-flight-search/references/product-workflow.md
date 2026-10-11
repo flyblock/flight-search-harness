@@ -8,10 +8,10 @@ Capture these values explicitly before starting the Search Mission:
 
 - departure and return airport pools;
 - `first_departure_window` with offset-aware boundaries;
-- traveler count, baggage policy, overnight permission, and self-transfer policy;
+- adult count, baggage policy, overnight permission, and self-transfer policy;
 - minimum and maximum flight-leg counts;
 - connection buffer, maximum connection wait, and `maximum_total_duration_minutes`;
-- Base Currency and FX rates, with a matching source-attributed `fx_snapshot` current at Run start and completion whenever a non-Base-Currency rate or money value is present;
+- Base Currency; request Provider prices in it and let the Harness own any required system FX normalization;
 - complete-loop distance-per-Base-Currency-unit floor and optional higher target; and
 - an optional exclusive maximum per leg after FX normalization.
 
@@ -25,6 +25,7 @@ Keep the destination open throughout a random-loop search.
 - If a Provider can represent only part of an airport or date scope, return exact, non-overlapping `scope_partitions`. Search the supported remainder first with `source_disposition: "retry_current"`; advance only the unsupported remainder with `source_disposition: "advance_source"`.
 - Use `source_unavailable` and `scope_unsupported` only for technical inability to execute the whole issued scope. Use `no_market_result` for an executed market miss, and use `scope_incomplete` or `research_only` when the question remains unresolved.
 - Submit every field-complete Offer visible in the executed scope so the Product Kernel owns admission and ranking.
+- When a Provider separates recommended results from price ordering, use its lowest-price view or price-sorted API for fare capture. A label advertising a lower fare is only a lead until the corresponding result is opened and inspected.
 
 ## Evidence
 

@@ -35,11 +35,10 @@ SKILL_REQUEST_CONTRACTS = {
 }
 PUBLIC_SHARED_INTENT_FIELDS = {
     "base_currency",
-    "traveler_count",
+    "adult_count",
     "baggage_policy",
     "overnight_allowed",
     "self_transfer_policy",
-    "fx_to_base",
 }
 INTERNAL_PRODUCT_INPUT_FIELDS = {
     "intent_id",
@@ -186,7 +185,7 @@ def _validate_distribution_contracts(
         schema = _read(project_root / schema_ref)
         request_version = schema.get("properties", {}).get("request_version", {}).get("const")
         schema_shape = schema.get("properties", {}).get("journey_shape", {}).get("const")
-        if template.get("request_version") != request_version or request_version != "2.0":
+        if template.get("request_version") != request_version or request_version != "4.0":
             raise SuitePackageError(
                 f"Skill template and public Schema request_version disagree: {skill_name}"
             )

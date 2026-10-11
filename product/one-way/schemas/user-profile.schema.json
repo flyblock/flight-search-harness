@@ -120,7 +120,7 @@
       "description": "Whether explicitly observed required accommodation participates in optimization. Exclusion never removes the observed amount from route audit output."
     },
     "self_transfer_policy": {
-      "enum": ["allow", "avoid", "never"]
+      "enum": ["allow", "never"]
     },
     "scoring_preferences": {
       "type": "object",

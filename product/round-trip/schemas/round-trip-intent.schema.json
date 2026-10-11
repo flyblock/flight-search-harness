@@ -39,8 +39,9 @@
     },
     "budget": {"$ref": "#/$defs/money"},
     "overnight_allowed": {"type": "boolean"},
-    "self_transfer_policy": {"enum": ["allow", "avoid", "never"]},
-    "maximum_total_duration_minutes": {"type": "integer", "minimum": 1},
+    "self_transfer_policy": {"enum": ["allow", "never"]},
+    "maximum_outbound_duration_minutes": {"type": "integer", "minimum": 1},
+    "maximum_return_duration_minutes": {"type": "integer", "minimum": 1},
     "airport_transit_unknown_policy": {"enum": ["allow_with_warning", "reject"], "default": "allow_with_warning"},
     "fx_snapshot": {"type": "object"}
   },
@@ -67,8 +68,8 @@
         "endpoint_policy": {"enum": ["anchor_required", "any_admitted_gateway"], "default": "anchor_required", "description": "Use any_admitted_gateway only when the user named a region rather than a concrete city/station endpoint."},
         "anchor_nodes": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/node"}},
         "seed_gateway_nodes": {"type": "array", "items": {"$ref": "#/$defs/node"}},
-        "max_access_time_minutes": {"type": "integer", "minimum": 0},
-        "max_egress_time_minutes": {"type": "integer", "minimum": 0},
+        "max_access_time_minutes": {"type": ["integer", "null"], "minimum": 0},
+        "max_egress_time_minutes": {"type": ["integer", "null"], "minimum": 0},
         "max_ground_cost": {"oneOf": [{"$ref": "#/$defs/money"}, {"type": "null"}]},
         "allowed_ground_modes": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"$ref": "#/$defs/ground_mode"}},
         "expansion": {"type": "object", "additionalProperties": true}

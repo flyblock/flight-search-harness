@@ -9,61 +9,10 @@ from pathlib import Path
 from typing import Any, Callable
 
 from .contracts import BrowserAdapter, HarnessProtocolError
+from .mission_contracts import RECEIPT_VERSION
 from .research_batch import compile_batches
-from .research_cache import ResearchCache
 from .run_store import read_json
 from .worker_projection import canonical_bytes, digest, project_work
-
-
-def _rebind_cached_payload(
-    payload: dict[str, Any],
-    work: dict[str, Any],
-    *,
-    operation_id: str | None = None,
-) -> dict[str, Any]:
-    rebound = copy.deepcopy(payload)
-    binding = digest({"operation_id": operation_id})[:20] if operation_id else None
-    if binding and rebound.get("kind") == "observation_bundle":
-        rebound["bundle_id"] = f"cache-bundle-{binding}"
-    product_payload = rebound.get("product_payload")
-    if isinstance(product_payload, dict):
-        for key in ("bundle_id", "task_id", "request_id", "query_id"):
-            product_payload.pop(key, None)
-        if binding:
-            product_payload["bundle_id"] = f"cache-bundle-{binding}"
-    if work.get("product_id") != "random_loop":
-        return rebound
-    request = work.get("brief", {}).get("request", {})
-    if not isinstance(request, dict) or not request:
-        request = work.get("query", {})
-    if not isinstance(request, dict):
-        return rebound
-    product_payload = rebound.get("product_payload")
-    groups = (
-        product_payload.get("search_results")
-        if isinstance(product_payload, dict)
-        else None
-    )
-    if not isinstance(groups, list):
-        return rebound
-    for group in groups:
-        if not isinstance(group, dict):
-            continue
-        group["request_id"] = request.get("request_id")
-        group["parent_id"] = request.get("parent_id")
-        if binding:
-            group["query_id"] = f"cache-query-{binding}"
-        else:
-            group.pop("query_id", None)
-        acquisition = group.get("acquisition")
-        if not isinstance(acquisition, dict):
-            acquisition = {}
-        group["acquisition"] = {
-            **copy.deepcopy(acquisition),
-            "method": "cache",
-            "reused_within_freshness_ttl": True,
-        }
-    return rebound
 
 
 class BrowserMissionWorker:
@@ -138,34 +87,7 @@ class BrowserMissionWorker:
         self, items: list[dict[str, Any]], context: dict[str, Any]
     ) -> dict[str, Any]:
         entries: dict[str, dict[str, Any]] = {}
-        pending = []
-        cache = ResearchCache(context["cache_root"]) if context.get("cache_root") else None
-        for item in items:
-            work = item.get("payload", {}).get("work", {})
-            execution = work.get("execution", {}) if isinstance(work, dict) else {}
-            cached = None
-            if cache and isinstance(execution, dict):
-                scope = execution.get("cache_scope")
-                fingerprint = execution.get("query_fingerprint")
-                if isinstance(scope, str) and isinstance(fingerprint, str):
-                    product_scope = f"{scope}:{work.get('product_id')}"
-                    cached = cache.get(product_scope, fingerprint)
-            if cached is not None:
-                cached = _rebind_cached_payload(
-                    cached,
-                    work,
-                    operation_id=_operation_id(item, context),
-                )
-                entries[item["item_id"]] = {
-                    "payload": cached,
-                    "metrics": {
-                        "cache_hit_count": 1,
-                        "work_payload_bytes": len(canonical_bytes(work)),
-                        "receipt_payload_bytes": len(canonical_bytes(cached)),
-                    },
-                }
-            else:
-                pending.append(item)
+        pending = list(items)
         provider_queries = 0
         execute_batch = getattr(self.browser, "execute_batch", None)
         if len(pending) > 1 and callable(execute_batch):
@@ -221,7 +143,7 @@ class BrowserMissionWorker:
                 }
         else:
             for item in pending:
-                payload, item_metrics, queried = self._perform_item_with_metrics(item, context, cache)
+                payload, item_metrics, queried = self._perform_item_with_metrics(item, context)
                 provider_queries += queried
                 entries[item["item_id"]] = {
                     "payload": payload,
@@ -233,7 +155,6 @@ class BrowserMissionWorker:
         self,
         item: dict[str, Any],
         context: dict[str, Any],
-        cache: ResearchCache | None,
     ) -> tuple[dict[str, Any], dict[str, Any], int]:
         payload = item.get("payload", {})
         browser_context = self._browser_context(context)
@@ -345,75 +266,12 @@ class ExternalMissionWorker:
         context: dict[str, Any],
     ) -> dict[str, Any]:
         if self.receipt_batch is None:
-            cache = ResearchCache(context["cache_root"]) if context.get("cache_root") else None
-            cached_receipts = []
-            metrics = _empty_worker_metrics()
-            metrics["worker_calls"] = 1
-            if cache is not None:
-                for item in lease.get("items", []):
-                    work = item.get("payload", {}).get("work", {})
-                    execution = work.get("execution", {}) if isinstance(work, dict) else {}
-                    scope = execution.get("cache_scope") if isinstance(execution, dict) else None
-                    fingerprint = (
-                        execution.get("query_fingerprint")
-                        if isinstance(execution, dict)
-                        else None
-                    )
-                    cached = None
-                    if isinstance(scope, str) and isinstance(fingerprint, str):
-                        cached = cache.get(f"{scope}:{work.get('product_id')}", fingerprint)
-                    if cached is None:
-                        continue
-                    cached = _rebind_cached_payload(
-                        cached,
-                        work,
-                        operation_id=(
-                            f"{lease['lease_id']}:{item['item_id']}:attempt-"
-                            f"{int(item.get('attempt_number', 1))}"
-                        ),
-                    )
-                    cached_receipts.append(
-                        {
-                            "receipt_version": "2.0",
-                            "item_id": item["item_id"],
-                            "attempt_number": int(item["attempt_number"]),
-                            "status": "complete",
-                            "payload": cached,
-                        }
-                    )
-                    _merge_worker_metrics(
-                        metrics,
-                        item["item_id"],
-                        {
-                            "cache_hit_count": 1,
-                            "work_payload_bytes": len(canonical_bytes(work)),
-                            "receipt_payload_bytes": len(canonical_bytes(cached)),
-                        },
-                    )
-            if not cached_receipts:
-                return self._yield(lease, context.get("lease_ref"))
-            next_step = checkpoint(
-                {
-                    "lease_id": lease["lease_id"],
-                    "mission_revision": lease["mission_revision"],
-                    **_claim_fields(lease, self.worker_instance_id),
-                    "receipts": cached_receipts,
-                    "metrics": metrics,
-                }
-            )
-            if next_step.get("kind") == "lease":
-                return self._yield(next_step["lease"], next_step.get("lease_ref"))
-            return next_step
-        batch = copy.deepcopy(self.receipt_batch)
-        if batch.get("lease_id") != lease.get("lease_id"):
-            raise HarnessProtocolError("external receipts target a different lease")
-        if batch.get("mission_revision", lease["mission_revision"]) != lease["mission_revision"]:
-            raise HarnessProtocolError("external receipts target a stale Mission revision")
-        expected_claim = _claim_fields(lease, self.worker_instance_id)
-        if batch.get("claim_id") != expected_claim["claim_id"]:
-            raise HarnessProtocolError("external receipts target a stale Lease claim")
-        if batch.get("worker_instance_id") != expected_claim["worker_instance_id"]:
-            raise HarnessProtocolError("external receipts target a different Worker instance")
+            return self._yield(lease, context.get("lease_ref"))
+        batch = bind_external_receipt_batch(
+            lease,
+            self.receipt_batch,
+            worker_instance_id=self.worker_instance_id,
+        )
         metrics = batch.setdefault("metrics", {})
         if not isinstance(metrics, dict):
             raise HarnessProtocolError("external receipt metrics must be an object")
@@ -464,6 +322,83 @@ class ExternalMissionWorker:
         }
 
 
+def bind_external_receipt_batch(
+    lease: dict[str, Any],
+    submission: dict[str, Any],
+    *,
+    worker_instance_id: str,
+) -> dict[str, Any]:
+    """Bind compact external Receipts to the currently claimed Lease.
+
+    The external caller supplies only Work Item identity, status, payload or
+    reason, and optional metrics. Full protocol batches remain accepted, but
+    every caller-supplied derived field must agree with the current Lease.
+    """
+
+    if not isinstance(submission, dict):
+        raise HarnessProtocolError("external Receipt submission must be an object")
+    expected_claim = _claim_fields(lease, worker_instance_id)
+    batch = copy.deepcopy(submission)
+    for field, expected in (
+        ("lease_id", lease.get("lease_id")),
+        ("mission_revision", lease.get("mission_revision")),
+        ("claim_id", expected_claim["claim_id"]),
+        ("worker_instance_id", expected_claim["worker_instance_id"]),
+    ):
+        _bind_derived_field(batch, field, expected, owner="external Receipt batch")
+
+    raw_receipts = batch.get("receipts")
+    if not isinstance(raw_receipts, list) or not raw_receipts:
+        raise HarnessProtocolError("external Receipt submission requires receipts")
+    pending = {
+        item.get("item_id"): item
+        for item in lease.get("items", [])
+        if isinstance(item, dict) and isinstance(item.get("item_id"), str)
+    }
+    seen: set[str] = set()
+    receipts = []
+    for raw_receipt in raw_receipts:
+        if not isinstance(raw_receipt, dict):
+            raise HarnessProtocolError("external Receipt must be an object")
+        identifier = raw_receipt.get("item_id")
+        if not isinstance(identifier, str) or not identifier:
+            raise HarnessProtocolError("external Receipt requires item_id")
+        if identifier in seen:
+            raise HarnessProtocolError(
+                "external Receipt submission contains a duplicate Work Item"
+            )
+        seen.add(identifier)
+        attempt = pending.get(identifier)
+        if attempt is None:
+            raise HarnessProtocolError(
+                f"external Receipt targets an unknown pending Work Item: {identifier}"
+            )
+        receipt = copy.deepcopy(raw_receipt)
+        _bind_derived_field(
+            receipt,
+            "receipt_version",
+            RECEIPT_VERSION,
+            owner=f"external Receipt {identifier}",
+        )
+        _bind_derived_field(
+            receipt,
+            "attempt_number",
+            attempt.get("attempt_number"),
+            owner=f"external Receipt {identifier}",
+        )
+        receipts.append(receipt)
+    batch["receipts"] = receipts
+    return batch
+
+
+def _bind_derived_field(
+    target: dict[str, Any], field: str, expected: Any, *, owner: str
+) -> None:
+    if field in target and target[field] != expected:
+        raise HarnessProtocolError(f"{owner} has conflicting {field}")
+    target[field] = copy.deepcopy(expected)
+
+
 def _claim_fields(
     lease: dict[str, Any], worker_instance_id: str
 ) -> dict[str, str]:
@@ -495,7 +430,6 @@ def _empty_worker_metrics() -> dict[str, Any]:
     return {
         "worker_calls": 0,
         "provider_query_count": 0,
-        "cache_hit_count": 0,
         "coalesced_item_count": 0,
         "work_payload_bytes": 0,
         "receipt_payload_bytes": 0,

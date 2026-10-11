@@ -69,7 +69,9 @@ Use `low-cost-one-way-travel-flight-search` or `low-cost-random-loop-flight-sear
 
 Normal users can let Codex and the selected Skill manage these commands. The direct CLI is useful for inspecting or integrating the lifecycle.
 
-Prepare a request using `request_version: "2.0"` and the `request_schema_ref` returned by the selected Skill resolver. From the workspace that should own the Run, invoke the installed launcher's path and start live research with the External Worker:
+Prepare a request using `request_version: "4.0"` and the `request_schema_ref` returned by the selected Skill resolver. From the workspace that should own the Run, invoke the installed launcher's path and start live research with the External Worker:
+
+The random-loop Product Adapter reads optional installation-level airport data from `FLIGHT_SEARCH_HARNESS_AIRPORT_CATALOG` and `FLIGHT_SEARCH_HARNESS_AIRPORT_TRANSIT_CATALOG`; these file references never belong in a travel request. The Harness obtains ECB reference rates for internal comparison when possible. If rate acquisition fails, only Offers already quoted in the Base Currency are comparable.
 
 ```powershell
 python <plugin-directory>/scripts/run_flight_harness.py --worker external start --request <request.json>

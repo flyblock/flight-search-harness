@@ -351,7 +351,7 @@
               "additionalProperties": true
             },
             "overnight_allowed": {"type": "boolean"},
-            "self_transfer_policy": {"enum": ["allow", "avoid", "never"]}
+            "self_transfer_policy": {"enum": ["allow", "never"]}
           },
           "additionalProperties": false
         },

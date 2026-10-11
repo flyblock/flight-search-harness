@@ -29,8 +29,8 @@ A Skill is not a solver and the Plugin is not another runtime layer. Installing 
 7. The Harness checkpoints the Run after each transition and returns an Outcome.
 
 `draft` and `blocked` Outcomes are resumable. `failed` is terminal. `completed`
-means the active Product Kernel's finalization criteria passed and the Run
-contains a result summary plus a reference to the sole full result at
+means the active Product Kernel's finalization criteria passed. The Outcome
+contains a small inline projection plus a reference to the sole full result at
 `product/final.json`.
 
 ## Module responsibilities
@@ -40,8 +40,8 @@ contains a result summary plus a reference to the sole full result at
 `flight_search_harness/` owns Run creation, checkpointing, Lease ownership and expiry,
 Receipt persistence, shared Worker execution, result projection, and lifecycle
 Outcomes. `run.json` is the only lifecycle authority. Mission state is only an
-execution cursor, while events, metrics, and cache entries are optional
-sidecars. The Harness does not decide whether a route is valid or whether a
+execution cursor, while events and metrics are optional sidecars. The Harness
+does not decide whether a route is valid or whether a
 product search is complete.
 
 ### Product Kernels
@@ -81,8 +81,8 @@ a Product Kernel can admit a Receipt as Evidence.
 
 The default Store is `runs/` relative to the directory where the Harness is
 launched. A Run keeps its manifest, optional events, Search Mission cursor,
-Work Items, Leases, raw Receipts, admission sidecars, product Session, browser
-artifacts, and result summary in one `runs/<run-id>/` tree. The Product Module
+Work Items, Leases, raw Receipts, product Session, and browser
+artifacts in one `runs/<run-id>/` tree. The Product Module
 owns the only full result. Persisted artifact references are relative to their
 owning Run rather than absolute local paths.
 
@@ -94,7 +94,6 @@ mission/mission.json        revision and execution indexes
 mission/pending-effect.json uncommitted Product effect; never Outcome authority
 mission/leases/*.json       claim and pending Work Attempts
 mission/receipts/raw/*      immutable Worker submissions
-mission/receipts/admissions/* Product Kernel decisions
 product/session.json        Product Session and Evidence
 product/final.json          authoritative full result
 ```

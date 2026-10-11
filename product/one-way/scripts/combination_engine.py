@@ -497,8 +497,8 @@ def validate_profile(raw: Any) -> dict[str, Any]:
     profile["self_transfer_policy"] = str(
         profile.get("self_transfer_policy") or ""
     ).lower()
-    if profile["self_transfer_policy"] not in {"allow", "avoid", "never"}:
-        raise PlannerError("self_transfer_policy must be allow, avoid, or never")
+    if profile["self_transfer_policy"] not in {"allow", "never"}:
+        raise PlannerError("self_transfer_policy must be allow or never")
     entitlements = profile.get("transport_entitlements", [])
     if not isinstance(entitlements, list):
         raise PlannerError("transport_entitlements must be an array")
@@ -544,11 +544,17 @@ def validate_region_pool(raw: Any, field: str, default_currency: str) -> dict[st
     if pool["policy"] not in POOL_POLICIES:
         raise PlannerError(f"{field}.policy must be exact, city_region, or extended_region")
     pool["seed_nodes"] = string_list(pool.get("seed_nodes"), f"{field}.seed_nodes")
-    pool["max_access_time_minutes"] = integer(
-        pool.get("max_access_time_minutes", 0), f"{field}.max_access_time_minutes"
+    access_limit = pool.get("max_access_time_minutes")
+    egress_limit = pool.get("max_egress_time_minutes")
+    pool["max_access_time_minutes"] = (
+        None
+        if access_limit is None
+        else integer(access_limit, f"{field}.max_access_time_minutes")
     )
-    pool["max_egress_time_minutes"] = integer(
-        pool.get("max_egress_time_minutes", 0), f"{field}.max_egress_time_minutes"
+    pool["max_egress_time_minutes"] = (
+        None
+        if egress_limit is None
+        else integer(egress_limit, f"{field}.max_egress_time_minutes")
     )
     if "max_cost" not in pool:
         raise PlannerError(f"{field}.max_cost must be money or null")
@@ -1929,7 +1935,7 @@ def route_pool_audit(
             )
         disallowed = sorted({edge["mode"] for edge in edges} - set(pool["allowed_modes"]))
         time_limit = pool["max_access_time_minutes"] if side == "origin" else pool["max_egress_time_minutes"]
-        if duration > time_limit:
+        if time_limit is not None and duration > time_limit:
             audit["accepted"] = False
             audit["reason_codes"].append(f"{side.upper()}_GROUND_TIME_EXCEEDS_POOL")
         if cost > pool_limit_in_base(pool, config, f"{side}_pool.max_cost"):

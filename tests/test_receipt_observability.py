@@ -25,15 +25,14 @@ def _public_request() -> dict[str, Any]:
         "journey_shape": "random_loop",
         "intent": {
             "base_currency": "XTS",
-            "traveler_count": 1,
+            "adult_count": 1,
             "baggage_policy": {
-                "cabin_baggage": "personal item",
+                "cabin_baggage": "none_required",
                 "checked_bag_count": 0,
                 "paid_baggage_allowed": True,
             },
             "overnight_allowed": True,
             "self_transfer_policy": "allow",
-            "fx_to_base": {"XTS": 1.0},
             "departure_airports": ["AAA"],
             "return_airports": ["AAA"],
             "first_departure_window": {
@@ -47,7 +46,6 @@ def _public_request() -> dict[str, Any]:
             "max_connection_wait_minutes": 1440,
             "quality_gate": {
                 "minimum_complete_loop_efficiency_km_per_base_currency_unit": 1.0,
-                "target_complete_loop_efficiency_km_per_base_currency_unit": 2.0,
             },
         },
     }
@@ -244,31 +242,7 @@ class OptionalArtifactFailureTestCase(unittest.TestCase):
         self.assertEqual(1, kernel.admission_count)
         self.assertEqual("completed", outcome["kind"])
 
-    def test_cache_write_failure_does_not_change_receipt_admission(self) -> None:
-        outcome, kernel = self._run(
-            "optional-cache",
-            lambda harness: patch(
-                "flight_search_harness.mission_runner.ResearchCache.put",
-                side_effect=OSError("cache unavailable"),
-            ),
-        )
-        self.assertEqual(1, kernel.admission_count)
-        self.assertEqual("completed", outcome["kind"])
-
-    def test_summary_write_failure_does_not_change_completion(self) -> None:
-        outcome, kernel = self._run(
-            "optional-summary",
-            lambda harness: patch.object(
-                harness.store,
-                "write_result_summary",
-                side_effect=OSError("summary unavailable"),
-            ),
-        )
-        self.assertEqual(1, kernel.admission_count)
-        self.assertEqual("completed", outcome["kind"])
-        self.assertNotIn("result_summary_ref", outcome)
-
-    def test_completed_resume_rebuilds_summary_from_product_final(self) -> None:
+    def test_completed_resume_rebuilds_inline_result_from_product_final(self) -> None:
         store = RunStore(self.temporary_directory.name)
         kernel = _AdmissionKernel()
         harness = SearchMissionHarness(
@@ -282,8 +256,9 @@ class OptionalArtifactFailureTestCase(unittest.TestCase):
             },
             _ReceiptWorker(),
         )
-        summary_path = store.run_directory("summary-rebuild") / "result/summary.json"
-        summary_path.write_text('{"tampered": true}\n', encoding="utf-8")
+        self.assertFalse(
+            (store.run_directory("summary-rebuild") / "result/summary.json").exists()
+        )
 
         resumed = harness.run(
             {"kind": "resume", "run_id": "summary-rebuild"},
@@ -292,7 +267,6 @@ class OptionalArtifactFailureTestCase(unittest.TestCase):
 
         self.assertEqual("completed", resumed["kind"])
         self.assertEqual(first["result"], resumed["result"])
-        self.assertNotIn("tampered", resumed["result"])
 
 
 if __name__ == "__main__":
