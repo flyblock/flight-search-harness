@@ -1,22 +1,20 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "random-loop-request.schema.json",
-  "title": "Random-loop Flight Search Harness request v2",
+  "title": "Random-loop Flight Search Harness request v4",
   "type": "object",
   "required": ["request_version", "journey_shape", "intent"],
   "properties": {
-    "request_version": {"const": "2.0"},
-    "request_id": {"type": "string", "minLength": 1},
+    "request_version": {"const": "4.0"},
     "journey_shape": {"const": "random_loop"},
     "intent": {
       "type": "object",
       "required": [
         "base_currency",
-        "traveler_count",
+        "adult_count",
         "baggage_policy",
         "overnight_allowed",
         "self_transfer_policy",
-        "fx_to_base",
         "departure_airports",
         "return_airports",
         "first_departure_window",
@@ -29,7 +27,7 @@
       ],
       "properties": {
         "base_currency": {"$ref": "common-defs.schema.json#/$defs/currency_code"},
-        "traveler_count": {"type": "integer", "minimum": 1},
+        "adult_count": {"type": "integer", "minimum": 1, "description": "Number of adult travelers. Child and infant fares are not supported."},
         "baggage_policy": {
           "allOf": [
             {"$ref": "common-defs.schema.json#/$defs/baggage_policy"},
@@ -39,10 +37,13 @@
                 "paid_baggage_allowed": {
                   "const": true,
                   "description": "The current Product Kernel requires permission to price mandatory baggage."
-                }
+                },
+                "cabin_baggage": {"const": "none_required"},
+                "checked_bag_count": {"const": 0}
               }
             }
-          ]
+          ],
+          "description": "The current random-loop Product Kernel supports only no minimum baggage requirement."
         },
         "overnight_allowed": {
           "const": true,
@@ -52,8 +53,6 @@
           "const": "allow",
           "description": "The current independently ticketed Product Kernel requires self-transfer permission."
         },
-        "fx_to_base": {"$ref": "common-defs.schema.json#/$defs/fx_to_base"},
-        "fx_snapshot": {"$ref": "common-defs.schema.json#/$defs/fx_snapshot"},
         "departure_airports": {"$ref": "#/$defs/airport_pool"},
         "return_airports": {"$ref": "#/$defs/airport_pool"},
         "first_departure_window": {"$ref": "common-defs.schema.json#/$defs/offset_datetime_window"},
@@ -66,7 +65,6 @@
           "description": "Must be strictly greater than connection_buffer_minutes."
         },
         "maximum_total_duration_minutes": {"type": "integer", "minimum": 1},
-        "maximum_provider_queries": {"type": ["integer", "null"], "minimum": 1},
         "airport_transit": {
           "type": "object",
           "properties": {
@@ -83,19 +81,14 @@
           "type": "object",
           "required": ["minimum_complete_loop_efficiency_km_per_base_currency_unit"],
           "properties": {
-            "minimum_leg_efficiency_km_per_base_currency_unit": {"type": ["number", "null"], "exclusiveMinimum": 0},
             "minimum_complete_loop_efficiency_km_per_base_currency_unit": {"type": "number", "exclusiveMinimum": 0},
-            "target_complete_loop_efficiency_km_per_base_currency_unit": {"type": "number", "exclusiveMinimum": 0},
             "maximum_leg_price_in_base_currency": {"type": ["number", "null"], "exclusiveMinimum": 0}
           },
           "additionalProperties": false
-        },
-        "airport_catalog_ref": {"type": "string", "minLength": 1},
-        "airport_transit_catalog_ref": {"type": "string", "minLength": 1}
+        }
       },
       "additionalProperties": false
-    },
-    "metadata": {"type": "object"}
+    }
   },
   "additionalProperties": false,
   "$defs": {

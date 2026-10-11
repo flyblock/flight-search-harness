@@ -7,7 +7,6 @@ import hashlib
 import json
 from typing import Any
 
-
 PROJECTION_VERSION = "2.0"
 
 
@@ -54,7 +53,6 @@ def project_item(
         "kind": item["kind"],
         "full_item_ref": full_item_ref,
         "full_item_hash": full_item_hash,
-        "full_item_bytes": len(canonical_bytes(item)),
         "payload": projected_payload,
     }
 
@@ -100,7 +98,6 @@ def project_work(
                     "evidence_role",
                     "admission_policy",
                     "binding",
-                    "advisory_rank",
                 )
                 if source.get(key) is not None
             }
@@ -210,6 +207,7 @@ def project_work(
         "source_options": source_projection,
         "provider_kinds": copy.deepcopy(brief.get("provider_kinds")),
         "price_improvement": copy.deepcopy(brief.get("price_improvement")),
+        "price_ordering": copy.deepcopy(brief.get("price_ordering")),
         "capture_requirements": copy.deepcopy(brief.get("must_capture")),
         "conditional_requirements": copy.deepcopy(
             brief.get("conditional_requirements")
@@ -271,52 +269,10 @@ def execution_metadata(projection: dict[str, Any]) -> dict[str, Any]:
         "temporal_execution": projection.get("temporal_execution"),
         "temporal_research_option": projection.get("temporal_research_option"),
     }
-    cache_scope = (
-        "fixed-route-observation-bundle"
-        if projection.get("product_id")
-        in {
-            "one_way",
-            "round_trip",
-        }
-        else str(projection.get("product_id") or "product")
-    )
-    query_basis = {
-        "cache_scope": cache_scope,
-        "research_kind": research_kind,
-        "task_family": projection.get("task_family"),
-        "request_type": projection.get("request_type"),
-        "journey_scope": projection.get("journey_scope"),
-        "assigned_source": projection.get("assigned_source"),
-        "required_source": projection.get("required_source"),
-        "source_options": projection.get("source_options"),
-        "provider_kinds": projection.get("provider_kinds"),
-        "query": query,
-        "query_scope_ladder": projection.get("query_scope_ladder"),
-        "corridor_context": projection.get("corridor_context"),
-        "frontier_context": projection.get("frontier_context"),
-        "time_window": projection.get("time_window"),
-        "date_search": projection.get("date_search"),
-        "traveler_requirements": projection.get("traveler_requirements"),
-        "price_improvement": projection.get("price_improvement"),
-        "evidence_rule": projection.get("evidence_rule"),
-        "provider_batch_protocol": projection.get("provider_batch_protocol"),
-        "temporal_execution": projection.get("temporal_execution"),
-        "temporal_research_option": projection.get("temporal_research_option"),
-        "capture_requirements": projection.get("capture_requirements"),
-        "conditional_requirements": projection.get("conditional_requirements"),
-        "no_result": projection.get("no_result"),
-        "offer_collection_policy": projection.get("offer_collection_policy"),
-        "admission": projection.get("admission"),
-        "terminal_admission": projection.get("terminal_admission"),
-        "attempt_schema": projection.get("attempt_schema"),
-    }
     return {
         "provider_id": provider_id,
         "batchable": batchable,
         "batch_key": digest(batch_basis) if batchable else None,
-        "query_fingerprint": digest(query_basis),
-        "cache_scope": cache_scope,
-        "freshness_ttl_seconds": 3600,
     }
 
 
@@ -337,7 +293,6 @@ def _objective(brief: dict[str, Any]) -> str:
 def _compact_query(query: dict[str, Any], research_kind: str) -> dict[str, Any]:
     if research_kind in {
         "region_scope_definition",
-        "region_scope_challenge",
         "structural_challenger_definition",
     }:
         return copy.deepcopy(query)

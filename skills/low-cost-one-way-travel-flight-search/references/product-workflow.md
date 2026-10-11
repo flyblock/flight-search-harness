@@ -4,7 +4,7 @@ Use this reference for one-way product decisions. The resolver's `mission_runtim
 
 ## Inputs and constraints
 
-Capture the origin and destination `anchor_nodes` and optional `seed_gateway_nodes`, `departure_window`, traveler count, accepted modes, Base Currency, `fx_to_base`, the shared baggage policy, overnight permission, self-transfer policy, transport entitlements, and any hard budget, duration, connection, or accessibility constraints. Any non-Base-Currency rate or money value requires a matching source-attributed `fx_snapshot` that is current at Run start and completion.
+Capture the origin and destination `anchor_nodes` and optional `seed_gateway_nodes`, `departure_window`, adult count, accepted modes, Base Currency, the shared baggage policy, overnight permission, self-transfer policy, transport entitlements, and any hard budget, duration, connection, or accessibility constraints. Request Provider prices in the Base Currency; the Harness owns any system FX normalization needed for other observed currencies.
 
 When `endpoint_policy` is `anchor_required`, the Product Kernel publishes explicit priced access and egress Research Questions between accepted city anchors and seed gateways. An airport-to-airport fare alone cannot satisfy the complete-journey baseline.
 
@@ -16,6 +16,7 @@ Map date flexibility to `exact_dates`, `bounded_window`, or `fully_flexible` wit
 
 - A complete origin-pool-to-destination-pool quote is the first obligation. Partial suffixes, reverse predecessors, and frontier branches may inform later challengers but do not satisfy product acceptance.
 - The one-way Provider foundation excludes AZair. Google Flights is the binding first flight attempt only when a verified query shape represents the Work Item's actual expanding scope. Otherwise begin with a capability-matched Provider instead of narrowing the question.
+- Before capturing a flight fare, establish the lowest compatible result through the Provider's lowest-price view, ascending price sort, price-sorted API, or comparison of all visible results. Record `price_selection_method`; default recommended ordering does not establish the lowest fare.
 - Preserve every technical scope rejection. Reopen the same Work Item for an untried, capability-matched Provider rather than replacing the Run or converting a technical rejection into a market no-result.
 - After a complete incumbent exists, investigate materially different, Evidence-backed challengers across useful dates, Providers, modes, and corridors. Frontier choices are non-binding research decisions derived from admitted Evidence; they never prove an unknown connection.
 - Select a published `action_key` for each `choice` Work Item and give a concrete reason. Route edges, Provider assignments, and completion state come from the active Product Kernel contract.

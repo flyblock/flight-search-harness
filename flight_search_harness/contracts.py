@@ -3,14 +3,38 @@
 from __future__ import annotations
 
 import copy
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Protocol
 
 
-HARNESS_VERSION = "1.0.0"
-REQUEST_VERSION = "2.0"
+HARNESS_VERSION = "1.1.0"
+REQUEST_VERSION = "4.0"
 OUTCOME_VERSION = "2.0"
 OUTCOME_KINDS = {"draft", "blocked", "failed", "completed"}
+RESULT_FRESHNESS_TTL_SECONDS = 900
+
+
+def result_price_freshness(
+    completed_at: str | None = None,
+    *,
+    now_utc: datetime | None = None,
+) -> dict[str, str]:
+    completed = (
+        datetime.now(timezone.utc)
+        if completed_at is None
+        else datetime.fromisoformat(completed_at.replace("Z", "+00:00"))
+    )
+    if completed.tzinfo is None or completed.utcoffset() is None:
+        raise HarnessProtocolError("completed_at must include a timezone")
+    completed = completed.astimezone(timezone.utc)
+    valid_until = completed + timedelta(seconds=RESULT_FRESHNESS_TTL_SECONDS)
+    current = (now_utc or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    return {
+        "completed_at": completed.isoformat(timespec="seconds"),
+        "price_valid_until": valid_until.isoformat(timespec="seconds"),
+        "price_freshness": "current" if current < valid_until else "expired",
+    }
 
 
 class HarnessError(RuntimeError):

@@ -14,13 +14,17 @@ Use the random-loop Product Kernel through the Flight Search Harness for an open
 3. Read [the random-loop workflow](references/product-workflow.md) and the returned `mission_runtime_ref` for product decisions and the shared Search Mission procedure.
 4. Read the returned public `request_schema_ref` only when uncommon optional constraints or a request-validation failure require fields beyond the template. Product Kernel Schemas are internal and are not Skill request contracts.
 
-The request must state `base_currency`, `traveler_count`, `baggage_policy`, `overnight_allowed`, `self_transfer_policy`, `fx_to_base`, the leg range, connection limits, `maximum_total_duration_minutes`, and the complete-loop efficiency floor. Whenever `fx_to_base` contains a non-Base-Currency rate or any money value uses a non-Base Currency, include a matching source-attributed `fx_snapshot` that is current when the Run starts; refresh it before completion if it expires during the search. The current independently ticketed Product Kernel requires confirmed values `paid_baggage_allowed: true`, `overnight_allowed: true`, and `self_transfer_policy: "allow"`; the template literals are capability constraints, not defaults to infer. If the user does not accept any of them, stop for a focused decision instead of ignoring the conflict.
+The request must state `base_currency`, `adult_count`, `baggage_policy`, `overnight_allowed`, `self_transfer_policy`, the leg range, connection limits, `maximum_total_duration_minutes`, and the complete-loop efficiency floor. This Product supports adult travelers only: treat an unspecified age as adult, but stop with a focused limitation when the user explicitly includes a child or infant. Its current deterministic baggage capability is fixed to `cabin_baggage: "none_required"`, `checked_bag_count: 0`, and `paid_baggage_allowed: true`; this does not exclude fares that include baggage. A stated baggage requirement is currently unsupported and must not be presented as verified. Request Provider prices in the Base Currency; the Harness owns any required system FX normalization. The current independently ticketed Product Kernel also requires `overnight_allowed: true` and `self_transfer_policy: "allow"`; the template literals are capability constraints, not defaults to infer. If the user does not accept any of them, stop for a focused decision instead of ignoring the conflict.
 
 Ask one focused question when any required field is missing or ambiguous. Otherwise preserve the user's explicit constraints in the request.
+
+`airport_transit.unknown_policy: "allow_with_warning"` keeps an explicitly unverified candidate; it never establishes that the adult traveler can legally or practically transit. Disclose the unknown status and do not describe it as verified transit eligibility.
 
 ## Run
 
 Start or resume the Search Mission with the resolved launcher and External Worker. Follow each issued Work Item as the active query, Provider, scope, and payload contract, then submit item-bound Receipts through the same Run. A Worker-directed `blocked` Outcome is an execution instruction, not a result to hand to the user. Resume an actionable `draft` while the active request still authorizes progress.
+
+For a new user search, start a fresh Run and do not inspect or reuse another chat's Run, old Receipt, Session, result, or price. Resume only a Run created earlier in the current task, unless the user explicitly names an older Run to continue.
 
 ## Deliver
 

@@ -146,12 +146,8 @@ Main outputs:
 - `query_budget` and `diversity_quotas`; and
 - `snapshot_audit`, `safe_pruning`, and `trace`.
 
-The broad policy and state contracts are:
-
-- `schemas/residual-budget-policy.schema.json`
-- `schemas/residual-budget-state.schema.json`
-
-The one-way integration maps supported fields into the runtime Product Kernel. Do not describe a field in the broad contract as executed behavior unless the integration consumes it.
+The runtime Product Kernel owns the supported policy and state fields directly;
+there is no broader documentary Schema claiming unimplemented behavior.
 
 ## 9. Live browser-session integration
 

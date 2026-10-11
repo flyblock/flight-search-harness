@@ -753,6 +753,7 @@ def _normalize_verified_observation(
             "departure",
             "arrival",
             "price",
+            "price_selection_method",
             "baggage",
             "flight_identity",
             "operator",
@@ -845,6 +846,10 @@ def _normalize_verified_observation(
             raw.get("entitlement_tags", []), f"{field}.entitlement_tags"
         ),
     }
+    if raw.get("price_selection_method") is not None:
+        normalized["price_selection_method"] = _text(
+            raw["price_selection_method"], f"{field}.price_selection_method"
+        )
     if source.get("expires_at"):
         normalized["expires_at"] = source["expires_at"]
     discovery_provenance = _normalize_discovery_provenance(

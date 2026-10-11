@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import copy
+import contextlib
 import importlib.util
+import io
 import json
 import os
 import tempfile
@@ -9,6 +11,7 @@ import time
 import unittest
 import zipfile
 from pathlib import Path
+from unittest import mock
 
 from flight_search_harness.contracts import HarnessProtocolError
 from flight_search_harness.request_values import validate_public_request
@@ -31,11 +34,10 @@ SKILLS = {
 }
 SHARED_INTENT_FIELDS = {
     "base_currency",
-    "traveler_count",
+    "adult_count",
     "baggage_policy",
     "overnight_allowed",
     "self_transfer_policy",
-    "fx_to_base",
 }
 INTERNAL_ONLY_FIELDS = {
     "intent_id",
@@ -86,21 +88,18 @@ def valid_one_way_request() -> dict:
         }
 
     return {
-        "request_version": "2.0",
-        "request_id": "request-a",
+        "request_version": "4.0",
         "journey_shape": "one_way",
-        "metadata": {"purpose": "contract-test"},
         "intent": {
             "base_currency": "XTS",
-            "traveler_count": 1,
+            "adult_count": 1,
             "baggage_policy": {
-                "cabin_baggage": "personal item",
+                "cabin_baggage": "none_required",
                 "checked_bag_count": 0,
                 "paid_baggage_allowed": True,
             },
             "overnight_allowed": True,
             "self_transfer_policy": "allow",
-            "fx_to_base": {"XTS": 1.0},
             "origin": side("origin", "AAA"),
             "destination": side("destination", "BBB"),
             "departure_window": {
@@ -118,7 +117,7 @@ class PublicRequestContractTests(unittest.TestCase):
         invalid_requests = []
 
         invalid = copy.deepcopy(baseline)
-        invalid["metadata"] = []
+        invalid["metadata"] = {}
         invalid_requests.append(invalid)
         invalid = copy.deepcopy(baseline)
         invalid["request_id"] = ""
@@ -162,7 +161,7 @@ class PublicRequestContractTests(unittest.TestCase):
             )
             self.assertEqual(schema_fields, runtime_fields)
 
-    def test_templates_use_public_v2_shared_semantics(self) -> None:
+    def test_templates_use_current_public_shared_semantics(self) -> None:
         for skill_name, (journey_shape, schema_name) in SKILLS.items():
             with self.subTest(skill=skill_name):
                 template = read_json(
@@ -171,10 +170,10 @@ class PublicRequestContractTests(unittest.TestCase):
                 schema = read_json(
                     ROOT / "flight_search_harness" / "schemas" / "requests" / schema_name
                 )
-                self.assertEqual(template["request_version"], "2.0")
+                self.assertEqual(template["request_version"], "4.0")
                 self.assertEqual(template["journey_shape"], journey_shape)
                 self.assertEqual(
-                    schema["properties"]["request_version"]["const"], "2.0"
+                    schema["properties"]["request_version"]["const"], "4.0"
                 )
                 self.assertEqual(
                     schema["properties"]["journey_shape"]["const"], journey_shape
@@ -196,7 +195,7 @@ class DistributionContractTests(unittest.TestCase):
         assert spec is not None and spec.loader is not None
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
-        self.assertIn("/releases/download/v1.0.0/", module.ARCHIVE_URL)
+        self.assertIn("/releases/download/v1.1.0/", module.ARCHIVE_URL)
         with tempfile.TemporaryDirectory() as raw_directory:
             root = Path(raw_directory)
             archive_path = root / "unsafe.zip"
@@ -265,6 +264,47 @@ class DistributionContractTests(unittest.TestCase):
             action.dest for action in commands["resume"]._actions
         }
         self.assertIn("receipt_batch", resume_destinations)
+
+    def test_cli_reports_malformed_receipt_json_without_traceback(self) -> None:
+        from flight_search_harness.__main__ import main
+
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            receipt_path = Path(temporary_directory) / "receipts.json"
+            receipt_path.write_text('{"receipts": [', encoding="utf-8")
+            stderr = io.StringIO()
+            with contextlib.redirect_stderr(stderr), self.assertRaises(
+                SystemExit
+            ) as raised:
+                main(
+                    [
+                        "--runs-root",
+                        str(Path(temporary_directory) / "runs"),
+                        "--worker",
+                        "external",
+                        "resume",
+                        "--run-id",
+                        "example-run",
+                        "--receipt-batch",
+                        str(receipt_path),
+                    ]
+                )
+
+        self.assertEqual(2, raised.exception.code)
+        self.assertIn("Receipt submission is not valid JSON", stderr.getvalue())
+        self.assertNotIn("Traceback", stderr.getvalue())
+
+    def test_cli_json_output_falls_back_when_console_cannot_encode_yen(self) -> None:
+        from flight_search_harness.__main__ import _print_json
+
+        output = io.BytesIO()
+        console = io.TextIOWrapper(output, encoding="gbk")
+        with mock.patch("sys.stdout", console):
+            _print_json({"price": "¥6,576"})
+            console.flush()
+            rendered = output.getvalue().decode("gbk")
+
+        self.assertIn(r"\u00a5", rendered)
+        self.assertNotIn("¥", rendered)
 
 
 if __name__ == "__main__":

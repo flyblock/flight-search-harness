@@ -54,12 +54,12 @@
           "additionalProperties": false
         },
         "max_access_time_minutes": {
-          "type": "integer",
+          "type": ["integer", "null"],
           "minimum": 0,
           "description": "Maximum ground time from the user's start point to an accepted origin node."
         },
         "max_egress_time_minutes": {
-          "type": "integer",
+          "type": ["integer", "null"],
           "minimum": 0,
           "description": "Maximum ground time from an accepted destination node to the user's final point."
         },

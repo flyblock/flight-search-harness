@@ -36,7 +36,7 @@ DEFAULT_BUFFERS = {
     "surface_to_flight": 120,
     "self_transfer_to_flight": 120,
     "flight_to_flight": 60,
-    "flight_to_surface": 0,
+    "flight_to_surface": 60,
     "surface_to_surface": 0,
 }
 STAY_NIGHT_COUNT_SEMANTICS = "destination_endpoint_local_calendar_date_difference"
@@ -325,14 +325,27 @@ def _validate_bundle(raw: Any) -> dict[str, Any]:
             raise RoundTripError("intent.budget must use base_currency")
         budget = budget_amount
     self_transfer_policy = intent.get("self_transfer_policy")
-    if self_transfer_policy not in {"allow", "avoid", "never"}:
+    if self_transfer_policy not in {"allow", "never"}:
         raise RoundTripError("intent.self_transfer_policy is unsupported")
     overnight_allowed = intent.get("overnight_allowed")
     if not isinstance(overnight_allowed, bool):
         raise RoundTripError("intent.overnight_allowed must be boolean")
-    maximum_total_duration_minutes = intent.get("maximum_total_duration_minutes")
-    if maximum_total_duration_minutes is not None:
-        maximum_total_duration_minutes = _integer(maximum_total_duration_minutes, "intent.maximum_total_duration_minutes", minimum=1)
+    maximum_outbound_duration_minutes = intent.get(
+        "maximum_outbound_duration_minutes"
+    )
+    if maximum_outbound_duration_minutes is not None:
+        maximum_outbound_duration_minutes = _integer(
+            maximum_outbound_duration_minutes,
+            "intent.maximum_outbound_duration_minutes",
+            minimum=1,
+        )
+    maximum_return_duration_minutes = intent.get("maximum_return_duration_minutes")
+    if maximum_return_duration_minutes is not None:
+        maximum_return_duration_minutes = _integer(
+            maximum_return_duration_minutes,
+            "intent.maximum_return_duration_minutes",
+            minimum=1,
+        )
     minimum_stay_nights = intent.get("minimum_stay_nights")
     if minimum_stay_nights is not None:
         minimum_stay_nights = _integer(minimum_stay_nights, "intent.minimum_stay_nights")
@@ -373,7 +386,8 @@ def _validate_bundle(raw: Any) -> dict[str, Any]:
         "budget": budget,
         "self_transfer_policy": self_transfer_policy,
         "overnight_allowed": overnight_allowed,
-        "maximum_total_duration_minutes": maximum_total_duration_minutes,
+        "maximum_outbound_duration_minutes": maximum_outbound_duration_minutes,
+        "maximum_return_duration_minutes": maximum_return_duration_minutes,
         "minimum_stay_nights": minimum_stay_nights,
         "maximum_stay_nights": maximum_stay_nights,
         "airport_transit_unknown_policy": airport_transit_unknown_policy,
@@ -567,7 +581,15 @@ def _validate_bundle(raw: Any) -> dict[str, Any]:
             constraints = item.get("pool_constraints")
             if not isinstance(constraints, dict):
                 raise RoundTripError(f"{field}.pool_constraints is required for surface")
-            max_time = _integer(constraints.get("max_time_minutes"), f"{field}.pool_constraints.max_time_minutes")
+            raw_max_time = constraints.get("max_time_minutes")
+            max_time = (
+                None
+                if raw_max_time is None
+                else _integer(
+                    raw_max_time,
+                    f"{field}.pool_constraints.max_time_minutes",
+                )
+            )
             max_cost = None
             if constraints.get("max_cost") is not None:
                 max_cost, max_cost_currency = _money(constraints.get("max_cost"), f"{field}.pool_constraints.max_cost")
@@ -578,7 +600,10 @@ def _validate_bundle(raw: Any) -> dict[str, Any]:
                 raise RoundTripError(f"{field} uses a surface mode outside its regional pool")
             first = min(movements[movement_id]["_departure"] for movement_id in movement_ids)
             last = max(movements[movement_id]["_arrival"] for movement_id in movement_ids)
-            if int((last - first).total_seconds() // 60) > max_time:
+            if (
+                max_time is not None
+                and int((last - first).total_seconds() // 60) > max_time
+            ):
                 raise RoundTripError(f"{field} exceeds regional pool time limit")
             if max_cost is not None and effective_cost > max_cost:
                 raise RoundTripError(f"{field} exceeds regional pool effective-cost limit")
@@ -685,6 +710,15 @@ def _complete_itinerary(selected: list[dict[str, Any]], context: dict[str, Any])
         outbound_set = set(outbound)
         remaining = movement_ids - outbound_set
         outbound_arrival = movements[outbound[-1]]["_arrival"]
+        outbound_duration_minutes = int(
+            (outbound_arrival - first_departure).total_seconds() // 60
+        )
+        if (
+            context["maximum_outbound_duration_minutes"] is not None
+            and outbound_duration_minutes
+            > context["maximum_outbound_duration_minutes"]
+        ):
+            continue
         for return_path in _paths(remaining, movements, movement_offer, context["destinations"], context["origins"], context["return_window"], context, not_before=outbound_arrival):
             if outbound_set | set(return_path) != movement_ids:
                 continue
@@ -700,9 +734,16 @@ def _complete_itinerary(selected: list[dict[str, Any]], context: dict[str, Any])
                 continue
             stay_duration_minutes = int((return_departure - outbound_arrival).total_seconds() // 60)
             final_arrival = movements[return_path[-1]]["_arrival"]
-            total_elapsed_minutes = int((final_arrival - first_departure).total_seconds() // 60)
-            if context["maximum_total_duration_minutes"] is not None and total_elapsed_minutes > context["maximum_total_duration_minutes"]:
+            return_duration_minutes = int(
+                (final_arrival - return_departure).total_seconds() // 60
+            )
+            if (
+                context["maximum_return_duration_minutes"] is not None
+                and return_duration_minutes
+                > context["maximum_return_duration_minutes"]
+            ):
                 continue
+            total_elapsed_minutes = int((final_arrival - first_departure).total_seconds() // 60)
             self_transfer_count = 0
             unknown_transit_connections = []
             overnight_connection_count = 0
@@ -726,6 +767,8 @@ def _complete_itinerary(selected: list[dict[str, Any]], context: dict[str, Any])
                 "return_departure": return_departure.isoformat(),
                 "arrival": final_arrival.isoformat(),
                 "total_elapsed_minutes": total_elapsed_minutes,
+                "outbound_duration_minutes": outbound_duration_minutes,
+                "return_duration_minutes": return_duration_minutes,
                 "destination_stay": {
                     "arrival_at_destination": outbound_arrival.isoformat(),
                     "return_departure_from_destination": return_departure.isoformat(),

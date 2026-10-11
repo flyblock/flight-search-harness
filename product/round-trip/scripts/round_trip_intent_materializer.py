@@ -18,7 +18,7 @@ DEFAULT_BUFFERS = {
     "surface_to_flight": 120,
     "self_transfer_to_flight": 120,
     "flight_to_flight": 60,
-    "flight_to_surface": 0,
+    "flight_to_surface": 60,
     "surface_to_surface": 0,
 }
 
@@ -110,8 +110,12 @@ def _side(raw: Any, field: str, currency: str) -> dict[str, Any]:
         "endpoint_policy": endpoint_policy,
         "anchor_nodes": anchors,
         "seed_gateway_nodes": gateways,
-        "max_access_time_minutes": int(raw.get("max_access_time_minutes", 360)),
-        "max_egress_time_minutes": int(raw.get("max_egress_time_minutes", 360)),
+        "max_access_time_minutes": _optional_nonnegative_integer(
+            raw.get("max_access_time_minutes"), f"{field}.max_access_time_minutes"
+        ),
+        "max_egress_time_minutes": _optional_nonnegative_integer(
+            raw.get("max_egress_time_minutes"), f"{field}.max_egress_time_minutes"
+        ),
         "max_ground_cost": max_ground_cost,
         "allowed_ground_modes": ground_modes,
         "expansion": {
@@ -291,14 +295,27 @@ def materialize_intent(raw: Any) -> dict[str, Any]:
         raise MaterializationError("traveler_count must be a positive integer")
     baggage_policy = _baggage_policy(raw.get("baggage_policy"))
     self_transfer_policy = raw.get("self_transfer_policy")
-    if self_transfer_policy not in {"allow", "avoid", "never"}:
+    if self_transfer_policy not in {"allow", "never"}:
         raise MaterializationError("self_transfer_policy is unsupported")
     overnight_allowed = raw.get("overnight_allowed")
     if not isinstance(overnight_allowed, bool):
         raise MaterializationError("overnight_allowed must be boolean")
-    maximum_total_duration_minutes = raw.get("maximum_total_duration_minutes")
-    if maximum_total_duration_minutes is not None and (isinstance(maximum_total_duration_minutes, bool) or not isinstance(maximum_total_duration_minutes, int) or maximum_total_duration_minutes <= 0):
-        raise MaterializationError("maximum_total_duration_minutes must be a positive integer")
+    maximum_outbound_duration_minutes = _optional_nonnegative_integer(
+        raw.get("maximum_outbound_duration_minutes"),
+        "maximum_outbound_duration_minutes",
+    )
+    maximum_return_duration_minutes = _optional_nonnegative_integer(
+        raw.get("maximum_return_duration_minutes"),
+        "maximum_return_duration_minutes",
+    )
+    if maximum_outbound_duration_minutes == 0:
+        raise MaterializationError(
+            "maximum_outbound_duration_minutes must be a positive integer"
+        )
+    if maximum_return_duration_minutes == 0:
+        raise MaterializationError(
+            "maximum_return_duration_minutes must be a positive integer"
+        )
     airport_transit_unknown_policy = raw.get("airport_transit_unknown_policy", "allow_with_warning")
     if airport_transit_unknown_policy not in {"allow_with_warning", "reject"}:
         raise MaterializationError("airport_transit_unknown_policy is unsupported")
@@ -320,7 +337,8 @@ def materialize_intent(raw: Any) -> dict[str, Any]:
             "budget": _optional_money(raw.get("budget"), "budget", currency),
             "overnight_allowed": overnight_allowed,
             "self_transfer_policy": self_transfer_policy,
-            "maximum_total_duration_minutes": maximum_total_duration_minutes,
+            "maximum_outbound_duration_minutes": maximum_outbound_duration_minutes,
+            "maximum_return_duration_minutes": maximum_return_duration_minutes,
             "airport_transit_unknown_policy": airport_transit_unknown_policy,
             "allowed_modes": allowed_modes,
             "mode_transition_buffers_minutes": buffers,

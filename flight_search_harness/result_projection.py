@@ -33,8 +33,8 @@ def summarize(product_id: str, result: dict[str, Any], *, full_result_ref: str) 
                 "arrival": portfolio.get("arrival"),
                 "movement_ids": copy.deepcopy(portfolio.get("return_movement_ids", [])),
             },
+            "movements": copy.deepcopy(result.get("journey_movements", [])),
             "finalization_audit": copy.deepcopy(result.get("finalization_audit")),
-            "stop_assessment": copy.deepcopy(result.get("stop_assessment")),
         }
     if product_id == "one_way":
         incumbent = result.get("active_incumbent") or {}

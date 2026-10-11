@@ -1,7 +1,7 @@
 {
   "schema_version": "1.0.0",
   "product_id": "one_way",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "package_files": [
     "PRODUCT-MANIFEST.json",
     "data/source-registry.json",
@@ -22,11 +22,7 @@
     "schemas/provider-query-shapes.schema.json",
     "schemas/region-node.schema.json",
     "schemas/region-pool.schema.json",
-    "schemas/residual-budget-policy.schema.json",
-    "schemas/residual-budget-state.schema.json",
     "schemas/scenario-intent.schema.json",
-    "schemas/search-policy.schema.json",
-    "schemas/search-trace.schema.json",
     "schemas/temporal-corridor-policy.schema.json",
     "schemas/travel-edge.schema.json",
     "schemas/user-profile.schema.json",

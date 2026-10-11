@@ -1,22 +1,20 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "round-trip-request.schema.json",
-  "title": "Round-trip Flight Search Harness request v2",
+  "title": "Round-trip Flight Search Harness request v4",
   "type": "object",
   "required": ["request_version", "journey_shape", "intent"],
   "properties": {
-    "request_version": {"const": "2.0"},
-    "request_id": {"type": "string", "minLength": 1},
+    "request_version": {"const": "4.0"},
     "journey_shape": {"const": "round_trip"},
     "intent": {
       "type": "object",
       "required": [
         "base_currency",
-        "traveler_count",
+        "adult_count",
         "baggage_policy",
         "overnight_allowed",
         "self_transfer_policy",
-        "fx_to_base",
         "origin",
         "destination",
         "outbound_departure_window",
@@ -24,12 +22,10 @@
       ],
       "properties": {
         "base_currency": {"$ref": "common-defs.schema.json#/$defs/currency_code"},
-        "traveler_count": {"type": "integer", "minimum": 1},
+        "adult_count": {"type": "integer", "minimum": 1, "description": "Number of adult travelers. Child and infant fares are not supported."},
         "baggage_policy": {"$ref": "common-defs.schema.json#/$defs/baggage_policy"},
-        "overnight_allowed": {"type": "boolean"},
+        "overnight_allowed": {"type": "boolean", "description": "Whether a connection wait may cross a local calendar day; destination stay nights are controlled separately."},
         "self_transfer_policy": {"$ref": "common-defs.schema.json#/$defs/self_transfer_policy"},
-        "fx_to_base": {"$ref": "common-defs.schema.json#/$defs/fx_to_base"},
-        "fx_snapshot": {"$ref": "common-defs.schema.json#/$defs/fx_snapshot"},
         "origin": {"$ref": "common-defs.schema.json#/$defs/fixed_region_side"},
         "destination": {"$ref": "common-defs.schema.json#/$defs/fixed_region_side"},
         "outbound_departure_window": {
@@ -40,23 +36,29 @@
           "$ref": "common-defs.schema.json#/$defs/date_or_datetime_window",
           "description": "Date-only boundaries require utc_offset on every destination anchor node."
         },
-        "outbound_date_flexibility": {"$ref": "common-defs.schema.json#/$defs/date_flexibility"},
-        "return_date_flexibility": {"$ref": "common-defs.schema.json#/$defs/date_flexibility"},
-        "minimum_stay_nights": {"type": "integer", "minimum": 0},
-        "maximum_stay_nights": {"type": "integer", "minimum": 0},
+        "outbound_exact_departure_dates": {"$ref": "common-defs.schema.json#/$defs/exact_departure_dates"},
+        "return_exact_departure_dates": {"$ref": "common-defs.schema.json#/$defs/exact_departure_dates"},
+        "minimum_stay_nights": {"type": "integer", "minimum": 0, "description": "Minimum difference between the destination-local arrival date and first return-departure date."},
+        "maximum_stay_nights": {"type": "integer", "minimum": 0, "description": "Maximum difference between the destination-local arrival date and first return-departure date."},
         "budget": {
+          "description": "Optional inclusive hard ceiling for the complete mandatory round-trip price; null means no ceiling.",
           "oneOf": [
             {"$ref": "common-defs.schema.json#/$defs/money"},
             {"type": "null"}
           ]
         },
-        "allowed_modes": {"$ref": "common-defs.schema.json#/$defs/allowed_modes"},
-        "maximum_total_duration_minutes": {"type": "integer", "minimum": 1},
-        "airport_transit_unknown_policy": {"enum": ["allow_with_warning", "reject"]}
+        "allowed_modes": {
+          "allOf": [
+            {"$ref": "common-defs.schema.json#/$defs/allowed_modes"},
+            {"contains": {"const": "flight"}}
+          ]
+        },
+        "maximum_outbound_duration_minutes": {"type": "integer", "minimum": 1, "description": "Inclusive elapsed-time ceiling for the complete outbound journey."},
+        "maximum_return_duration_minutes": {"type": "integer", "minimum": 1, "description": "Inclusive elapsed-time ceiling for the complete return journey."},
+        "airport_transit_unknown_policy": {"enum": ["allow_with_warning", "reject"], "description": "Unknown transit feasibility may remain an explicitly unverified candidate or be rejected; it is never confirmed transit eligibility."}
       },
       "additionalProperties": false
-    },
-    "metadata": {"type": "object"}
+    }
   },
   "additionalProperties": false
 }

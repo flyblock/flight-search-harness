@@ -9,11 +9,41 @@
     "bundle_id": {"type": "string", "minLength": 1},
     "task_id": {"type": "string", "minLength": 1},
     "coverage_complete": {"type": "boolean", "default": true},
+    "submitted_scope": {"type": ["object", "null"]},
     "observations": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/observation"}}
   },
   "additionalProperties": false,
   "$defs": {
-    "identity": {"type": "object", "required": ["observation_id", "evidence_status"], "properties": {"observation_id": {"type": "string"}, "source_id": {"type": "string"}, "evidence_status": {"enum": ["ai_proposed", "verified_observed", "research_observed", "no_result", "rejected"]}, "provider": {"type": "string"}, "url": {"type": "string", "format": "uri"}, "observed_at": {"type": "string", "format": "date-time"}, "proposal_type": {"enum": ["region_scope", "region_scope_challenge", "structural_challengers"]}, "proposed_by": {"const": "ai"}, "proposed_at": {"type": "string", "format": "date-time"}}},
+    "identity": {"type": "object", "required": ["observation_id", "evidence_status"], "properties": {"observation_id": {"type": "string"}, "source_id": {"type": "string"}, "evidence_status": {"enum": ["ai_proposed", "verified_observed", "research_observed", "no_result", "rejected"]}, "provider": {"type": "string"}, "url": {"type": "string", "format": "uri"}, "observed_at": {"type": "string", "format": "date-time"}, "price_selection_method": {"enum": ["lowest_price_view", "price_ascending", "price_sorted_api", "all_visible_compared"]}, "proposal_type": {"const": "region_scope"}, "proposed_by": {"const": "ai"}, "proposed_at": {"type": "string", "format": "date-time"}}},
+    "money": {"type": "object", "required": ["amount", "currency"], "properties": {"amount": {"type": "number", "minimum": 0}, "currency": {"type": "string", "pattern": "^[A-Za-z]{3}$"}}, "additionalProperties": false},
+    "gateway_signal_input": {
+      "type": "object",
+      "properties": {
+        "kind": {"type": "string", "minLength": 1},
+        "signal_kind": {"type": "string", "minLength": 1},
+        "dated_fare_amount": {"oneOf": [{"type": "number", "minimum": 0}, {"$ref": "#/$defs/money"}]},
+        "lowest_displayed_total": {"oneOf": [{"type": "number", "minimum": 0}, {"$ref": "#/$defs/money"}]},
+        "date_coverage": {"enum": ["sampled_date_pair", "exact_dates", "bounded_window"]},
+        "complete_cost_lower_bound": {"oneOf": [{"type": "number", "minimum": 0}, {"$ref": "#/$defs/money"}]},
+        "access_cost": {"oneOf": [{"type": "number", "minimum": 0}, {"$ref": "#/$defs/money"}]},
+        "opposite_gateway_node_id": {"type": "string", "minLength": 1},
+        "origin_gateway_node_id": {"type": "string", "minLength": 1},
+        "destination_gateway_node_id": {"type": "string", "minLength": 1}
+      },
+      "anyOf": [{"required": ["kind"]}, {"required": ["signal_kind"]}],
+      "allOf": [{"if": {"required": ["date_coverage"]}, "then": {"anyOf": [{"required": ["dated_fare_amount"]}, {"required": ["lowest_displayed_total"]}]}}],
+      "additionalProperties": true
+    },
+    "gateway_candidate_input": {
+      "type": "object",
+      "required": ["candidate_id", "side", "node", "signal"],
+      "properties": {"candidate_id": {"type": "string", "minLength": 1}, "side": {"enum": ["origin", "destination"]}, "node": {"type": "object"}, "signal": {"$ref": "#/$defs/gateway_signal_input"}},
+      "allOf": [
+        {"if": {"properties": {"side": {"const": "origin"}, "signal": {"anyOf": [{"required": ["dated_fare_amount"]}, {"required": ["lowest_displayed_total"]}, {"required": ["complete_cost_lower_bound"]}]}}}, "then": {"properties": {"signal": {"anyOf": [{"required": ["opposite_gateway_node_id"]}, {"required": ["destination_gateway_node_id"]}]}}}},
+        {"if": {"properties": {"side": {"const": "destination"}, "signal": {"anyOf": [{"required": ["dated_fare_amount"]}, {"required": ["lowest_displayed_total"]}, {"required": ["complete_cost_lower_bound"]}]}}}, "then": {"properties": {"signal": {"anyOf": [{"required": ["opposite_gateway_node_id"]}, {"required": ["origin_gateway_node_id"]}]}}}}
+      ],
+      "additionalProperties": true
+    },
     "observation": {
       "allOf": [
         {"$ref": "#/$defs/identity"},
@@ -21,10 +51,11 @@
           "type": "object",
           "properties": {
             "reason": {"type": "string"},
+            "date_coverage": {"enum": ["sampled_date_pair", "exact_dates", "bounded_window"]},
             "nodes": {"type": "array", "items": {"type": "object"}},
             "movements": {"type": "array", "items": {"type": "object"}},
             "offer": {"type": "object"},
-            "gateway_candidates": {"type": "array", "items": {"type": "object"}},
+            "gateway_candidates": {"type": "array", "items": {"$ref": "#/$defs/gateway_candidate_input"}},
             "temporal_signals": {"type": "array", "items": {"type": "object"}},
             "discovery_provenance": {"type": "array", "items": {"type": "object"}}
             ,"proposal": {"type": "object"}

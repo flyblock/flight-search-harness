@@ -119,7 +119,7 @@
       "default": "include_required",
       "description": "Exclude only explicitly observed required accommodation from optimization when the user treats a stop as a discretionary visit."
     },
-    "self_transfer_policy": {"enum": ["allow", "avoid", "never"]},
+    "self_transfer_policy": {"enum": ["allow", "never"]},
     "mode_transition_buffers_minutes": {"$ref": "#/$defs/mode_transition_buffers_minutes"}
   },
   "additionalProperties": false,
@@ -178,8 +178,8 @@
           "minItems": 1,
           "items": {"$ref": "region-node.schema.json"}
         },
-        "max_access_time_minutes": {"type": "integer", "minimum": 0},
-        "max_egress_time_minutes": {"type": "integer", "minimum": 0},
+        "max_access_time_minutes": {"type": ["integer", "null"], "minimum": 0},
+        "max_egress_time_minutes": {"type": ["integer", "null"], "minimum": 0},
         "max_ground_cost": {
           "oneOf": [
             {"type": "null"},

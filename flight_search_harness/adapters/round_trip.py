@@ -20,6 +20,7 @@ from ..contracts import (
 )
 from ..observation_bundle import normalize_attempt
 from .. import fixed_route_provider as provider_foundation
+from ..fx_rates import system_fx_context
 from ..request_values import (
     canonical_region_side,
     canonical_shared_intent,
@@ -27,7 +28,6 @@ from ..request_values import (
     derived_intent_id,
     money_in_base_currency,
     round_trip_baggage,
-    validate_fx_snapshot_freshness,
 )
 from ..suite_layout import SuiteLayout
 
@@ -184,25 +184,12 @@ class RoundTripProductAdapter:
         intent = request.get("intent")
         if not isinstance(intent, dict):
             raise HarnessProtocolError("round-trip request.intent must be an object")
-        validate_fx_snapshot_freshness(intent.get("fx_snapshot"))
         shared = canonical_shared_intent(intent)
-        non_base_rates = set(shared["fx_to_base"]) - {shared["base_currency"]}
-        if non_base_rates:
-            snapshot = intent.get("fx_snapshot")
-            if not isinstance(snapshot, dict):
-                raise HarnessProtocolError(
-                    "round-trip non-base FX rates require source-attributed FX Evidence "
-                    "in intent.fx_snapshot"
-                )
-            if snapshot.get("base_currency") != shared["base_currency"]:
-                raise HarnessProtocolError(
-                    "intent.fx_snapshot.base_currency must equal intent.base_currency"
-                )
-            if snapshot.get("rates") != shared["fx_to_base"]:
-                raise HarnessProtocolError(
-                    "intent.fx_snapshot.rates must equal intent.fx_to_base"
-                )
+        fx_context = system_fx_context(shared["base_currency"])
+        shared["fx_to_base"] = fx_context["rates"]
         product_intent = copy.deepcopy(intent)
+        if fx_context["snapshot"] is not None:
+            product_intent["fx_snapshot"] = copy.deepcopy(fx_context["snapshot"])
         origin = canonical_region_side(intent, "origin")
         destination = canonical_region_side(intent, "destination")
         for field, side in (("origin", origin), ("destination", destination)):
@@ -215,13 +202,11 @@ class RoundTripProductAdapter:
             )
         product_intent.update(
             {
-                "intent_id": derived_intent_id(
-                    self.journey_shape, intent, request.get("request_id")
-                ),
+                "intent_id": derived_intent_id(self.journey_shape, intent),
                 "trip_scope": "round_trip",
                 "trip_mode": "fixed_destination",
                 "currency": shared["base_currency"],
-                "traveler_count": shared["traveler_count"],
+                "traveler_count": shared["adult_count"],
                 "baggage_policy": round_trip_baggage(shared["baggage_policy"]),
                 "overnight_allowed": shared["overnight_allowed"],
                 "self_transfer_policy": shared["self_transfer_policy"],
@@ -235,16 +220,14 @@ class RoundTripProductAdapter:
                 ),
             }
         )
-        outbound_flexibility = intent.get("outbound_date_flexibility")
-        return_flexibility = intent.get("return_date_flexibility")
-        if outbound_flexibility is not None or return_flexibility is not None:
-            product_intent["date_flexibility"] = self._round_trip_date_flexibility(
-                outbound_flexibility, return_flexibility
-            )
-        for public_field in ("base_currency", "fx_to_base"):
+        product_intent["date_flexibility"] = self._round_trip_date_flexibility(
+            intent.get("outbound_exact_departure_dates"),
+            intent.get("return_exact_departure_dates"),
+        )
+        for public_field in ("adult_count", "base_currency", "fx_to_base"):
             product_intent.pop(public_field, None)
-        product_intent.pop("outbound_date_flexibility", None)
-        product_intent.pop("return_date_flexibility", None)
+        product_intent.pop("outbound_exact_departure_dates", None)
+        product_intent.pop("return_exact_departure_dates", None)
         scenario = self.materializer.materialize_intent(product_intent)
         state = self.session.initialize_session(scenario)
         _write_json_atomic(self._session_path(product_directory), state)
@@ -258,24 +241,17 @@ class RoundTripProductAdapter:
         def normalize(value: Any, field: str) -> dict[str, Any]:
             if value is None:
                 return {"mode": "bounded_window"}
-            if not isinstance(value, dict):
-                raise HarnessProtocolError(f"intent.{field} must be an object")
-            mode = value.get("mode")
-            if mode not in {"exact_dates", "bounded_window", "fully_flexible"}:
-                raise HarnessProtocolError(f"intent.{field}.mode is unsupported")
-            result = {"mode": mode}
-            if mode == "exact_dates":
-                dates = value.get("exact_departure_dates")
-                if not isinstance(dates, list) or not dates:
-                    raise HarnessProtocolError(
-                        f"intent.{field}.exact_departure_dates must be a "
-                        "non-empty array"
-                    )
-                result["exact_departure_dates"] = copy.deepcopy(dates)
-            return result
+            if not isinstance(value, list) or not value:
+                raise HarnessProtocolError(
+                    f"intent.{field} must be a non-empty array"
+                )
+            return {
+                "mode": "exact_dates",
+                "exact_departure_dates": copy.deepcopy(value),
+            }
 
-        outbound_value = normalize(outbound, "outbound_date_flexibility")
-        return_value = normalize(returning, "return_date_flexibility")
+        outbound_value = normalize(outbound, "outbound_exact_departure_dates")
+        return_value = normalize(returning, "return_exact_departure_dates")
         result: dict[str, Any] = {
             "mode": (
                 outbound_value["mode"]
@@ -373,7 +349,7 @@ class RoundTripProductAdapter:
                 side = "origin" if active_id == self.session.ORIGIN_GATEWAY_HYPOTHESIS else "destination"
                 admitted = any(
                     candidate.get("evidence_status")
-                    in {"research_observed", "exact_anchor"}
+                    in {"ai_proposed", "research_observed", "exact_anchor"}
                     for candidate in state["gateway_candidates"][side]
                 )
                 unresolved_scope = any(
@@ -389,13 +365,6 @@ class RoundTripProductAdapter:
                     disposition = "hard_dead"
                 else:
                     disposition = None
-            elif (
-                node["hypothesis_kind"] == "structural_challenger_discovery"
-                and not unfinished
-                and state.get("structural_exploration", {}).get("status")
-                in {"proposed", "complete_no_proposal", "legacy_complete"}
-            ):
-                disposition = "complete"
             elif not unfinished and self.session._supporting_portfolio_exists(state, active_id):
                 disposition = "complete"
             elif not investigations:
@@ -414,7 +383,14 @@ class RoundTripProductAdapter:
                     action["automatic"] = True
                 disposition_actions.append(action)
                 actions.append(action)
-            if not mandatory_joint_task_ids and disposition != "complete":
+            screen_backed = bool(
+                (node.get("advisory_basis") or {}).get("screen_signal_id")
+            )
+            if (
+                not mandatory_joint_task_ids
+                and disposition != "complete"
+                and not screen_backed
+            ):
                 actions.append(
                     {
                         "kind": "dispose",
@@ -425,52 +401,19 @@ class RoundTripProductAdapter:
                 )
 
         if active_id is None:
-            actions.extend(
-                copy.deepcopy(
-                    state.get("portfolio_exploration_view", {}).get(
-                        "challenger_actions", []
-                    )
-                )
-            )
-            for challenger_id in self.session.unresolved_recommended_challenger_ids(
-                state
-            ):
-                challenger = self.session.PORTFOLIO_EXPLORATION.challenger_by_id(
-                    state["portfolio_exploration_archive"], challenger_id
-                )
-                if challenger.get("registration_state") != "suggested":
-                    continue
-                actions.append(
-                    {
-                        "kind": "dismiss_portfolio_challenger",
-                        "action_key": f"dismiss_portfolio_challenger:{challenger_id}",
-                        "challenger_id": challenger_id,
-                        "hypothesis_id": challenger.get("hypothesis_id"),
-                        "route_shape": challenger.get("route_shape"),
-                        "question": "Does this recommended complete-portfolio challenger merit activation, or should it receive an explicit evidence-based dismissal?",
-                    }
-                )
-            for proposal_id in self.session.AI_EXPLORATION.unresolved_structural_proposal_ids(
-                state
-            ):
-                proposal = next(
-                    item
-                    for item in state.get("structural_exploration", {}).get(
-                        "proposals", []
-                    )
-                    if item.get("proposal_id") == proposal_id
-                )
-                actions.append(
-                    {
-                        "kind": "dismiss_structural_challenger",
-                        "action_key": f"dismiss_structural_challenger:{proposal_id}",
-                        "proposal_id": proposal_id,
-                        "hypothesis_id": proposal.get("hypothesis_id"),
-                        "route_shape": proposal.get("route_shape"),
-                        "mechanism": proposal.get("mechanism"),
-                        "question": "Does this AI-proposed structural corridor merit payable research, or should it be explicitly dismissed with a reason?",
-                    }
-                )
+            suggestions = catalog.get("route_hypothesis_suggestions", [])
+            if suggestions:
+                baseline = {
+                    "kind": "activate_route_hypothesis",
+                    "action_key": "activate_route_hypothesis:baseline",
+                    "hypothesis_spec": copy.deepcopy(suggestions[0]),
+                    "automatic": True,
+                    "reason": (
+                    "ProductKernel registered the first complete journey from "
+                    "the admitted gateway baseline."
+                    ),
+                }
+                actions.append(baseline)
 
         if active_id:
             for task in state["research_tasks"]:
@@ -511,22 +454,13 @@ class RoundTripProductAdapter:
                     )
 
         blockers = list(audit.get("blockers", []))
-        if (
-            state["result"].get("best_portfolio") is not None
-            and active_id is None
-            and blockers == ["fresh challenger stop assessment missing"]
-            and not self.session.AI_EXPLORATION.unresolved_structural_proposal_ids(
-                state
+        pending_route_suggestions = catalog.get("route_hypothesis_suggestions", [])
+        can_finalize = bool(audit["can_finalize"] and not pending_route_suggestions)
+        if audit["can_finalize"] and pending_route_suggestions:
+            blockers.append(
+                "unverified regional fare-screen candidates may still beat the incumbent"
             )
-        ):
-            actions.append(
-                {
-                    "kind": "assess_stop",
-                    "action_key": "assess_stop",
-                    "challenger_hypothesis_ids": [],
-                }
-            )
-        if audit["can_finalize"]:
+        if can_finalize:
             actions = [
                 {
                     "kind": "finalize",
@@ -543,13 +477,10 @@ class RoundTripProductAdapter:
             "active_hypothesis_id": active_id,
             "next_candidate_id": state["hypothesis_tree"].get("next_candidate_id"),
             "has_complete_result": state["result"].get("best_portfolio") is not None,
-            "can_finalize": bool(audit["can_finalize"]),
+            "can_finalize": can_finalize,
             "finalization_issues": blockers,
             "investigation_actions": investigations,
             "disposition_actions": disposition_actions,
-            "portfolio_exploration_view": copy.deepcopy(
-                state.get("portfolio_exploration_view", {})
-            ),
             "actions": actions,
         }
 
@@ -630,8 +561,6 @@ class RoundTripProductAdapter:
                 if research_kind
                 in {
                     "region_scope_definition",
-                    "region_scope_challenge",
-                    "structural_challenger_definition",
                 }
                 else "browser_research"
             )
@@ -670,9 +599,7 @@ class RoundTripProductAdapter:
         first_task = self._task_by_id(state, str(first["task_id"]))
         research_kind = first_task.get("research_kind")
         journey_scope = first_task.get("journey_scope")
-        if research_kind == "gateway_discovery":
-            limit = 3
-        elif research_kind == "priced_offer" and journey_scope == "one_way":
+        if research_kind == "priced_offer" and journey_scope == "one_way":
             limit = 2
         else:
             limit = 1
@@ -777,6 +704,7 @@ class RoundTripProductAdapter:
                     "required_source"
                 ],
             )
+            provider_foundation.validate_price_ordering(attempt)
         payload = copy.deepcopy(attempt["product_payload"])
         payload.setdefault("observation_version", self.session.SESSION_VERSION)
         payload["bundle_id"] = (
@@ -845,10 +773,10 @@ class RoundTripProductAdapter:
                     str(action.get("disposition")),
                     reason=reason,
                 )
-            elif kind == "activate_portfolio_challenger":
-                state = self.session.activate_portfolio_challenger(
+            elif kind == "activate_route_hypothesis":
+                state = self.session.activate_route_hypothesis(
                     state,
-                    str(action.get("challenger_id") or ""),
+                    copy.deepcopy(action.get("hypothesis_spec")),
                     reason,
                 )
             elif kind == "select_temporal":
@@ -867,29 +795,6 @@ class RoundTripProductAdapter:
                     selection,
                     reason,
                 )
-            elif kind == "assess_stop":
-                assessment = state.get("stop_assessment")
-                if assessment and assessment.get("assessed_revision") == state.get(
-                    "product_revision"
-                ):
-                    return state
-                state = self.session.record_stop_assessment(
-                    state,
-                    reason,
-                    list(action.get("challenger_hypothesis_ids", [])),
-                )
-            elif kind == "dismiss_structural_challenger":
-                state = self.session.dismiss_structural_challenger(
-                    state,
-                    str(action.get("proposal_id") or ""),
-                    reason,
-                )
-            elif kind == "dismiss_portfolio_challenger":
-                state = self.session.dismiss_portfolio_challenger(
-                    state,
-                    str(action.get("challenger_id") or ""),
-                    reason,
-                )
             else:
                 raise HarnessProtocolError(f"unsupported round-trip control action: {kind}")
         except self.session.RoundTripSessionError as exc:
@@ -903,9 +808,6 @@ class RoundTripProductAdapter:
             return self._materialize_final_result(
                 product_directory, state, reason
             )
-        validate_fx_snapshot_freshness(
-            state.get("scenario", {}).get("fx_snapshot")
-        )
         self._remember_finalization_reason(product_directory, reason)
         try:
             state, result = self.session.finalize_session(state, reason)

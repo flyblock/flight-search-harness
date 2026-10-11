@@ -112,6 +112,15 @@ SOURCE_CATEGORIES = {
 
 CAPTURE_FIELDS = [
     {
+        "field": "price_selection_method",
+        "required_when": "fare-bearing flight observation",
+        "rule": (
+            "Record lowest_price_view, price_ascending, price_sorted_api, or "
+            "all_visible_compared. A default recommended view is not "
+            "lowest-price evidence."
+        ),
+    },
+    {
         "field": "operator",
         "required_when": "non_flight",
         "rule": "Name the rail, coach, ferry, or other non-flight transport operator.",

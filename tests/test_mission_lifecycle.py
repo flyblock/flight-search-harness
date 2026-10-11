@@ -36,15 +36,14 @@ def request() -> dict[str, Any]:
         "journey_shape": JOURNEY_SHAPE,
         "intent": {
             "base_currency": "XTS",
-            "traveler_count": 1,
+            "adult_count": 1,
             "baggage_policy": {
-                "cabin_baggage": "personal item",
+                "cabin_baggage": "none_required",
                 "checked_bag_count": 0,
                 "paid_baggage_allowed": True,
             },
             "overnight_allowed": True,
             "self_transfer_policy": "allow",
-            "fx_to_base": {"XTS": 1.0},
             "departure_airports": ["AAA"],
             "return_airports": ["AAA"],
             "first_departure_window": {
@@ -58,7 +57,6 @@ def request() -> dict[str, Any]:
             "max_connection_wait_minutes": 1440,
             "quality_gate": {
                 "minimum_complete_loop_efficiency_km_per_base_currency_unit": 1.0,
-                "target_complete_loop_efficiency_km_per_base_currency_unit": 2.0,
             },
         },
     }
@@ -487,10 +485,28 @@ class SearchMissionHarnessTestCase(unittest.TestCase):
         second = harness.run(self.resume_command(run_id), NoopWorker())
 
         self.assert_outcome(first, "completed", run_id)
+        self.assertEqual("current", first["price_freshness"])
+        self.assertEqual(first["completed_at"], first["result"]["completed_at"])
+        self.assertEqual(
+            first["price_valid_until"], first["result"]["price_valid_until"]
+        )
         self.assertEqual(first, second)
         self.assertEqual(advance_calls, kernel.advance_calls)
         self.assertEqual(events, self.store.read_events(run_id))
         self.assertEqual("completed", self.store.load_manifest(run_id)["status"])
+
+        expired_freshness = {
+            "completed_at": first["completed_at"],
+            "price_valid_until": first["price_valid_until"],
+            "price_freshness": "expired",
+        }
+        with patch(
+            "flight_search_harness.mission_runner.result_price_freshness",
+            return_value=expired_freshness,
+        ):
+            expired = harness.run(self.resume_command(run_id), NoopWorker())
+        self.assertEqual("expired", expired["price_freshness"])
+        self.assertEqual("expired", expired["result"]["price_freshness"])
 
     def test_stale_lease_and_revision_are_rejected_before_product_admission(self) -> None:
         for mutation in ("lease", "revision"):
@@ -512,7 +528,7 @@ class SearchMissionHarnessTestCase(unittest.TestCase):
                 self.assertEqual(0, kernel.receipt_batch_calls)
                 mission = self.harness(kernel).missions.load(run_id)
                 self.assertNotIn(
-                    "last_admission_ref", mission["work_items"]["research-1"]
+                    "last_decision_attempt", mission["work_items"]["research-1"]
                 )
                 self.assertIsNotNone(mission["active_lease_ref"])
                 self.assertEqual("running", self.store.load_manifest(run_id)["status"])
@@ -567,7 +583,7 @@ class SearchMissionHarnessTestCase(unittest.TestCase):
         self.assertEqual("running", self.store.load_manifest(run_id)["status"])
         self.assertEqual(0, kernel.admission_count(self.store.product_directory(run_id)))
         self.assertNotIn(
-            "last_admission_ref",
+            "last_decision_attempt",
             harness.missions.load(run_id)["work_items"]["research-1"],
         )
         raw_receipts = list(

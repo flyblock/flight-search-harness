@@ -9,7 +9,7 @@
     "task_id": {"type": "string"},
     "task_status": {"enum": ["candidate", "pending"]},
     "hypothesis": {"type": "object"},
-    "research_kind": {"enum": ["region_scope_definition", "region_scope_challenge", "gateway_discovery", "structural_challenger_definition", "priced_offer"]},
+    "research_kind": {"enum": ["region_scope_definition", "region_pool_fare_screen", "priced_offer"]},
     "query_shape": {"type": "object"},
     "traveler_count": {"type": "integer", "minimum": 1},
     "baggage_policy": {"type": "object", "required": ["required_items", "paid_baggage_allowed"], "properties": {"required_items": {"type": "array", "uniqueItems": true, "items": {"type": "string", "minLength": 1}}, "paid_baggage_allowed": {"type": "boolean"}}, "additionalProperties": false},

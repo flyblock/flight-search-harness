@@ -1,19 +1,16 @@
 {
-  "request_version": "2.0",
+  "request_version": "4.0",
   "journey_shape": "random_loop",
   "intent": {
     "base_currency": "REPLACE_WITH_BASE_CURRENCY_CODE",
-    "traveler_count": "REPLACE_WITH_TRAVELER_COUNT",
+    "adult_count": "REPLACE_WITH_ADULT_COUNT",
     "baggage_policy": {
-      "cabin_baggage": "REPLACE_WITH_CABIN_BAGGAGE_REQUIREMENT",
-      "checked_bag_count": "REPLACE_WITH_CHECKED_BAG_COUNT",
+      "cabin_baggage": "none_required",
+      "checked_bag_count": 0,
       "paid_baggage_allowed": true
     },
     "overnight_allowed": true,
     "self_transfer_policy": "allow",
-    "fx_to_base": {
-      "REPLACE_WITH_BASE_CURRENCY_CODE": 1.0
-    },
     "departure_airports": ["REPLACE_WITH_DEPARTURE_IATA_CODE"],
     "return_airports": ["REPLACE_WITH_RETURN_IATA_CODE"],
     "first_departure_window": {
@@ -26,9 +23,7 @@
     "max_connection_wait_minutes": "REPLACE_WITH_MAXIMUM_CONNECTION_WAIT_MINUTES",
     "maximum_total_duration_minutes": "REPLACE_WITH_MAXIMUM_ELAPSED_MINUTES",
     "quality_gate": {
-      "minimum_leg_efficiency_km_per_base_currency_unit": null,
       "minimum_complete_loop_efficiency_km_per_base_currency_unit": "REPLACE_WITH_MINIMUM_DISTANCE_PER_BASE_CURRENCY_UNIT",
-      "target_complete_loop_efficiency_km_per_base_currency_unit": "REPLACE_WITH_TARGET_DISTANCE_PER_BASE_CURRENCY_UNIT",
       "maximum_leg_price_in_base_currency": "REPLACE_WITH_MAXIMUM_LEG_PRICE_OR_NULL"
     }
   }

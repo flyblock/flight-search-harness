@@ -33,8 +33,7 @@ def _display_path(path: str | Path) -> str:
         return resolved.name
     return Path(relative).as_posix()
 
-# These presets intentionally cover only parameters consumed by this module.
-# They are not a claim to implement every field of a wider search-policy schema.
+# These presets contain only parameters consumed by this module.
 SEARCH_INTENSITY_PRESETS: dict[str, dict[str, int]] = {
     "standard": {
         "max_hops": 4,

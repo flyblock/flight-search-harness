@@ -1,19 +1,16 @@
 {
-  "request_version": "2.0",
+  "request_version": "4.0",
   "journey_shape": "one_way",
   "intent": {
     "base_currency": "REPLACE_WITH_BASE_CURRENCY_CODE",
-    "traveler_count": "REPLACE_WITH_TRAVELER_COUNT",
+    "adult_count": "REPLACE_WITH_ADULT_COUNT",
     "baggage_policy": {
-      "cabin_baggage": "REPLACE_WITH_CABIN_BAGGAGE_REQUIREMENT",
-      "checked_bag_count": "REPLACE_WITH_CHECKED_BAG_COUNT",
-      "paid_baggage_allowed": "REPLACE_WITH_TRUE_OR_FALSE"
+      "cabin_baggage": "none_required",
+      "checked_bag_count": 0,
+      "paid_baggage_allowed": true
     },
     "overnight_allowed": "REPLACE_WITH_TRUE_OR_FALSE",
-    "self_transfer_policy": "REPLACE_WITH_ALLOW_AVOID_OR_NEVER",
-    "fx_to_base": {
-      "REPLACE_WITH_BASE_CURRENCY_CODE": 1.0
-    },
+    "self_transfer_policy": "REPLACE_WITH_ALLOW_OR_NEVER",
     "budget": null,
     "origin": {
       "region_id": "REPLACE_WITH_ORIGIN_REGION_ID",

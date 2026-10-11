@@ -20,6 +20,7 @@ from ..contracts import (
 )
 from ..observation_bundle import normalize_attempt
 from .. import fixed_route_provider as provider_foundation
+from ..fx_rates import system_fx_context
 from ..request_values import (
     canonical_region_side,
     canonical_shared_intent,
@@ -27,7 +28,6 @@ from ..request_values import (
     derived_intent_id,
     money_in_base_currency,
     one_way_baggage,
-    validate_fx_snapshot_freshness,
 )
 from ..suite_layout import SuiteLayout
 
@@ -174,8 +174,16 @@ class OneWayProductAdapter:
         intent = request.get("intent")
         if not isinstance(intent, dict):
             raise HarnessProtocolError("one-way request.intent must be an object")
-        validate_fx_snapshot_freshness(intent.get("fx_snapshot"))
         shared = canonical_shared_intent(intent)
+        shared["fx_to_base"] = system_fx_context(shared["base_currency"])["rates"]
+        if shared["baggage_policy"] != {
+            "cabin_baggage": "none_required",
+            "checked_bag_count": 0,
+            "paid_baggage_allowed": True,
+        }:
+            raise HarnessProtocolError(
+                "one-way currently supports only no minimum baggage requirement"
+            )
         origin = canonical_region_side(intent, "origin")
         destination = canonical_region_side(intent, "destination")
         for field, side in (("origin", origin), ("destination", destination)):
@@ -189,14 +197,12 @@ class OneWayProductAdapter:
             )
         product_intent.update(
             {
-                "intent_id": derived_intent_id(
-                    self.journey_shape, intent, request.get("request_id")
-                ),
+                "intent_id": derived_intent_id(self.journey_shape, intent),
                 "trip_scope": "one_way",
                 "trip_mode": "fixed_destination",
                 "currency": shared["base_currency"],
                 "currency_decimal_places": 2,
-                "traveler_count": shared["traveler_count"],
+                "traveler_count": shared["adult_count"],
                 "baggage": one_way_baggage(shared["baggage_policy"]),
                 "overnight_allowed": shared["overnight_allowed"],
                 "self_transfer_policy": shared["self_transfer_policy"],
@@ -204,16 +210,24 @@ class OneWayProductAdapter:
                 "origin": self._one_way_region_side(copy.deepcopy(origin)),
                 "destination": self._one_way_region_side(copy.deepcopy(destination)),
                 "date_window": canonical_window(intent, "departure_window"),
+                "date_flexibility": (
+                    {
+                        "mode": "exact_dates",
+                        "exact_departure_dates": copy.deepcopy(
+                            intent["exact_departure_dates"]
+                        ),
+                    }
+                    if "exact_departure_dates" in intent
+                    else {"mode": "bounded_window"}
+                ),
             }
         )
-        if "maximum_provider_queries" in product_intent:
-            product_intent["query_budget"] = product_intent.pop(
-                "maximum_provider_queries"
-            )
         for public_field in (
+            "adult_count",
             "base_currency",
             "baggage_policy",
             "departure_window",
+            "exact_departure_dates",
         ):
             product_intent.pop(public_field, None)
         artifacts = self.materializer.materialize_intent(product_intent)
@@ -858,6 +872,7 @@ class OneWayProductAdapter:
                 "required_source"
             ],
         )
+        provider_foundation.validate_price_ordering(attempt)
         task_contract = copy.deepcopy(task)
         task_contract["status"] = "pending"
         raw_payload = {
@@ -1072,7 +1087,6 @@ class OneWayProductAdapter:
             return self._materialize_final_result(
                 product_directory, state, reason
             )
-        validate_fx_snapshot_freshness(state.get("config", {}).get("fx_snapshot"))
         self._remember_finalization_reason(product_directory, reason)
         try:
             state, result = self.live.finalize_result(state, reason)

@@ -19,9 +19,9 @@ TRIP_SCOPE = "round_trip"
 ROOT_HYPOTHESIS = "hypothesis-root"
 ORIGIN_GATEWAY_HYPOTHESIS = "hypothesis-gateway-origin"
 DESTINATION_GATEWAY_HYPOTHESIS = "hypothesis-gateway-destination"
-STRUCTURAL_DISCOVERY_HYPOTHESIS = "hypothesis-structural-challenger-discovery"
 TERMINAL_HYPOTHESIS_STATUSES = {"complete", "hard_dead", "deferred_low_value"}
 REQUIREMENT_STATUSES = {"open", "satisfied", "exhausted", "superseded"}
+SURFACE_DISCOVERY_HORIZON_MINUTES = 1440
 
 
 def _display_path(path: str | Path) -> str:
@@ -55,20 +55,6 @@ def _load_projection():
 
 
 PROJECTION = _load_projection()
-
-
-def _load_portfolio_exploration():
-    path = Path(__file__).with_name("round_trip_portfolio_exploration.py")
-    spec = importlib.util.spec_from_file_location(
-        "round_trip_portfolio_exploration", path
-    )
-    module = importlib.util.module_from_spec(spec)
-    assert spec.loader is not None
-    spec.loader.exec_module(module)
-    return module
-
-
-PORTFOLIO_EXPLORATION = _load_portfolio_exploration()
 
 
 def _load_ai_exploration():
@@ -246,31 +232,6 @@ def _task(
     }
 
 
-def _gateway_task(side: str, scenario: dict[str, Any]) -> dict[str, Any]:
-    intent = scenario["intent"]
-    pool = intent[f"{side}_pool"]
-    anchor_ids = intent[f"{side}_anchor_nodes"]
-    return _task(
-        f"task-gateway-{side}-g1",
-        f"hypothesis-gateway-{side}",
-        "gateway_discovery",
-        f"{side}_regional_gateway_pool",
-        "gateway_discovery",
-        f"Which materially useful gateways are reachable from the declared {side} city/region anchor within its pool constraints?",
-        {
-            "trip_type": "gateway_discovery",
-            "side": side,
-            "anchor_node_ids": anchor_ids,
-            "pool": copy.deepcopy(pool),
-            "travel_windows": {
-                "outbound": intent["outbound_departure_window"],
-                "return": intent["return_departure_window"],
-            },
-            "date_flexibility": copy.deepcopy(intent["date_flexibility"]),
-        },
-    )
-
-
 def _region_scope_task(side: str, scenario: dict[str, Any]) -> dict[str, Any]:
     spec = AI_EXPLORATION.region_scope_task_spec(side, scenario)
     return _task(
@@ -317,7 +278,7 @@ def _tree_node(hypothesis_id: str, kind: str, route_shape: str, order: int, stat
     }
 
 
-def _initial_control_plane(scenario: dict[str, Any]) -> tuple[list[dict[str, Any]], dict[str, Any], dict[str, list[dict[str, Any]]], dict[str, dict[str, Any]], dict[str, Any]]:
+def _initial_control_plane(scenario: dict[str, Any]) -> tuple[list[dict[str, Any]], dict[str, Any], dict[str, list[dict[str, Any]]], dict[str, dict[str, Any]]]:
     tasks: list[dict[str, Any]] = []
     nodes = {ROOT_HYPOTHESIS: _tree_node(ROOT_HYPOTHESIS, "root", "round_trip", 0, "active")}
     gateway_candidates = {"origin": [], "destination": []}
@@ -341,26 +302,13 @@ def _initial_control_plane(scenario: dict[str, Any]) -> tuple[list[dict[str, Any
             gateway_candidates[side].append({"candidate_id": f"exact-{side}-{node_id}", "side": side, "node": node, "signal": {"kind": "exact_anchor"}, "evidence_status": "exact_anchor"})
         if not auto_complete:
             tasks.append(_region_scope_task(side, scenario))
-    nodes[STRUCTURAL_DISCOVERY_HYPOTHESIS] = _tree_node(
-        STRUCTURAL_DISCOVERY_HYPOTHESIS,
-        "structural_challenger_discovery",
-        "ai_structural_corridor_scope",
-        3,
-        "dormant",
-    )
     tree = {
         "tree_version": SESSION_VERSION,
         "root_hypothesis_id": ROOT_HYPOTHESIS,
         "nodes": nodes,
         "next_candidate_id": next((hid for hid in (ORIGIN_GATEWAY_HYPOTHESIS, DESTINATION_GATEWAY_HYPOTHESIS) if nodes[hid]["status"] == "candidate"), None),
     }
-    return (
-        tasks,
-        tree,
-        gateway_candidates,
-        region_scopes,
-        AI_EXPLORATION.initial_structural_exploration(),
-    )
+    return tasks, tree, gateway_candidates, region_scopes
 
 
 def _synchronize_canonical_state(state: dict[str, Any]) -> None:
@@ -397,40 +345,6 @@ def _synchronize_canonical_state(state: dict[str, Any]) -> None:
         state["active_requirement_id"] = None
         state["active_hypothesis_reason"] = None
 
-    dispositions = copy.deepcopy(state.get("challenger_dispositions", {}))
-    structural = state.get("structural_exploration", {})
-    structural_history = {
-        str(item.get("proposal_id")): item
-        for item in structural.get("disposition_history", [])
-        if isinstance(item, dict) and item.get("proposal_id")
-    }
-    for proposal_id, status in structural.get("dispositions", {}).items():
-        key = f"structural:{proposal_id}"
-        existing = dispositions.get(key, {})
-        history = structural_history.get(str(proposal_id), {})
-        dispositions[key] = {
-            "challenger_kind": "structural",
-            "challenger_id": str(proposal_id),
-            "status": status,
-            "reason": history.get("reason", existing.get("reason")),
-            "hypothesis_id": history.get(
-                "hypothesis_id", existing.get("hypothesis_id")
-            ),
-            "at": history.get("at", existing.get("at")),
-        }
-    for challenger_id, disposition in state.get(
-        "portfolio_challenger_dispositions", {}
-    ).items():
-        key = f"portfolio:{challenger_id}"
-        value = copy.deepcopy(disposition)
-        value.update(
-            {
-                "challenger_kind": "portfolio",
-                "challenger_id": str(challenger_id),
-            }
-        )
-        dispositions[key] = value
-    state["challenger_dispositions"] = dispositions
     _refresh_requirement_status_projection(state)
 
 
@@ -470,42 +384,6 @@ def _rebuild_compatibility_projections(state: dict[str, Any]) -> None:
         if node.get("was_selected")
     ]
 
-    dispositions = state.get("challenger_dispositions", {})
-    structural = state.get("structural_exploration", {})
-    if isinstance(structural, dict):
-        projected_structural = structural.get("dispositions", {})
-        proposal_ids = {
-            str(item.get("proposal_id"))
-            for item in structural.get("proposals", [])
-            if isinstance(item, dict) and item.get("proposal_id")
-        }
-        structural["dispositions"] = {
-            proposal_id: dispositions.get(
-                f"structural:{proposal_id}",
-                {"status": projected_structural.get(proposal_id, "pending")},
-            ).get("status", projected_structural.get(proposal_id, "pending"))
-            for proposal_id in sorted(proposal_ids | set(projected_structural))
-        }
-        structural["disposition_history"] = [
-            {
-                "proposal_id": value.get("challenger_id"),
-                "hypothesis_id": value.get("hypothesis_id"),
-                "disposition": value.get("status"),
-                "reason": value.get("reason"),
-                "at": value.get("at"),
-            }
-            for key, value in sorted(dispositions.items())
-            if key.startswith("structural:") and value.get("status") != "pending"
-        ]
-    state["portfolio_challenger_dispositions"] = {
-        str(value.get("challenger_id")): {
-            key: copy.deepcopy(item)
-            for key, item in value.items()
-            if key not in {"challenger_kind", "challenger_id"}
-        }
-        for key, value in sorted(dispositions.items())
-        if key.startswith("portfolio:")
-    }
     _refresh_requirement_status_projection(state)
 
 
@@ -579,17 +457,10 @@ def _compact_session(state: dict[str, Any]) -> dict[str, Any]:
         "hypothesis_history",
         "hypothesis_tree",
         "evidence_bundle_ids",
-        "portfolio_challenger_dispositions",
-        "portfolio_exploration_archive",
-        "portfolio_exploration_view",
     ):
         state.pop(field, None)
     for task in state.get("research_tasks", []):
         task.pop("status", None)
-    structural = state.get("structural_exploration")
-    if isinstance(structural, dict):
-        structural.pop("dispositions", None)
-        structural.pop("disposition_history", None)
     return state
 
 
@@ -624,21 +495,9 @@ def _advance_product_revision(state: dict[str, Any]) -> int:
     return revision
 
 
-def _refresh_portfolio_exploration(state: dict[str, Any]) -> None:
-    try:
-        archive = PORTFOLIO_EXPLORATION.build_archive(state)
-        view = PORTFOLIO_EXPLORATION.build_view(state, archive)
-    except PORTFOLIO_EXPLORATION.PortfolioExplorationError as exc:
-        raise RoundTripSessionError(f"portfolio exploration failed: {exc}") from exc
-    state["portfolio_exploration_archive"] = archive
-    state["portfolio_exploration_view"] = view
-
-
 def initialize_session(raw_scenario: Any) -> dict[str, Any]:
     scenario = _validate_scenario(raw_scenario)
-    tasks, tree, gateway_candidates, region_scopes, structural_exploration = (
-        _initial_control_plane(scenario)
-    )
+    tasks, tree, gateway_candidates, region_scopes = _initial_control_plane(scenario)
     token = hashlib.sha256(json.dumps(scenario, sort_keys=True).encode("utf-8")).hexdigest()[:16]
     state = {
         "session_version": SESSION_VERSION,
@@ -652,7 +511,6 @@ def initialize_session(raw_scenario: Any) -> dict[str, Any]:
         "research_tasks": tasks,
         "gateway_candidates": gateway_candidates,
         "region_scopes": region_scopes,
-        "structural_exploration": structural_exploration,
         "temporal_signals": [],
         "evidence_bundles": [],
         "movements": [],
@@ -668,16 +526,11 @@ def initialize_session(raw_scenario: Any) -> dict[str, Any]:
             "selection_reasons": {},
             "coverage_claim": "solver result is complete only within selected_offer_ids; excluded ledger evidence remains persisted",
         },
-        "portfolio_challenger_dispositions": {},
-        "portfolio_exploration_archive": {},
-        "portfolio_exploration_view": {},
         "result": _empty_result(scenario["base_currency"]),
-        "stop_assessment": None,
         "finalization_status": "open",
     }
     _synchronize_canonical_state(state)
     _rebuild_compatibility_projections(state)
-    _refresh_portfolio_exploration(state)
     return _compact_session(state)
 
 
@@ -705,18 +558,16 @@ def migrate_session(raw: Any) -> dict[str, Any]:
     state.setdefault("product_revision", 0)
     state.setdefault("temporal_signals", [])
     state.setdefault("solver_projection", {"pinned_offer_ids": []})
-    state.setdefault("portfolio_challenger_dispositions", {})
-    missing_portfolio_views = (
-        "portfolio_exploration_archive" not in state
-        or "portfolio_exploration_view" not in state
-    )
-    state.setdefault("portfolio_exploration_archive", {})
-    state.setdefault("portfolio_exploration_view", {})
+    for field in (
+        "portfolio_challenger_dispositions",
+        "portfolio_exploration_archive",
+        "portfolio_exploration_view",
+    ):
+        state.pop(field, None)
     if "hypothesis_tree" not in state:
         state.setdefault("active_hypothesis_id", None)
         state.setdefault("active_requirement_id", None)
         state.setdefault("active_hypothesis_reason", None)
-        state.setdefault("challenger_dispositions", {})
         _rebuild_compatibility_projections(state)
     if "region_scopes" not in state:
         migrated = True
@@ -753,26 +604,23 @@ def migrate_session(raw: Any) -> dict[str, Any]:
                         },
                     }
                 )
-    if "structural_exploration" not in state:
-        migrated = True
-        state["structural_exploration"] = AI_EXPLORATION.initial_structural_exploration()
-        if state.get("finalization_status") == "final":
-            state["structural_exploration"].update(
-                {
-                    "status": "legacy_complete",
-                    "no_material_challenger_reason": "Migrated finalized Session predates the structural exploration contract.",
-                }
-            )
-    if STRUCTURAL_DISCOVERY_HYPOTHESIS not in state["hypothesis_tree"]["nodes"]:
-        migrated = True
-        structural_node = _tree_node(
-            STRUCTURAL_DISCOVERY_HYPOTHESIS,
-            "structural_challenger_discovery",
-            "ai_structural_corridor_scope",
-            3,
-            "complete" if state.get("finalization_status") == "final" else "dormant",
-        )
-        state["hypothesis_tree"]["nodes"][STRUCTURAL_DISCOVERY_HYPOTHESIS] = structural_node
+    structural_id = "hypothesis-structural-challenger-discovery"
+    state["hypothesis_tree"]["nodes"].pop(structural_id, None)
+    state["research_tasks"] = [
+        task
+        for task in state["research_tasks"]
+        if task.get("hypothesis_id") != structural_id
+        and task.get("research_kind") != "structural_challenger_definition"
+    ]
+    active = state.get("active_hypothesis")
+    if isinstance(active, dict) and active.get("hypothesis_id") == structural_id:
+        state["active_hypothesis"] = None
+    for field in (
+        "structural_exploration",
+        "challenger_dispositions",
+        "stop_assessment",
+    ):
+        state.pop(field, None)
     for task in state["research_tasks"]:
         task.setdefault(
             "temporal_state",
@@ -814,20 +662,21 @@ def migrate_session(raw: Any) -> dict[str, Any]:
                         task["status"] = "superseded"
                         task["terminal_reason"] = node["terminal_reason"]
         scope = state.get("region_scopes", {}).get(side, {})
-        challenge_task_id = f"task-region-scope-challenge-{side}-g1"
-        if (
-            state.get("finalization_status") != "final"
-            and pool.get("policy") != "exact"
-            and scope.get("status") == "defined"
-            and not scope.get("challenge_history")
-            and not any(
-                task.get("task_id") == challenge_task_id
-                for task in state["research_tasks"]
-            )
-        ):
+        if scope.get("status") == "defined_pending_challenge":
             migrated = True
-            scope["status"] = "defined_pending_challenge"
-            _publish_region_scope_challenge_task(state, side, scope)
+            scope["status"] = "defined"
+            for task in state["research_tasks"]:
+                if (
+                    task.get("research_kind") == "region_scope_challenge"
+                    and task.get("query_shape", {}).get("side") == side
+                    and task.get("requirement_status") == "open"
+                ):
+                    _set_requirement_state(task, "superseded")
+                    task["status"] = "superseded"
+                    task["terminal_reason"] = (
+                        "Regional scope now uses one bounded semantic pass."
+                    )
+            _publish_region_pool_fare_screen_if_ready(state, side)
     state["hypothesis_tree"]["next_candidate_id"] = _next_hypothesis(state)
     if "hypotheses" not in state:
         _synchronize_canonical_state(state)
@@ -835,7 +684,6 @@ def migrate_session(raw: Any) -> dict[str, Any]:
         state.setdefault("active_hypothesis_id", None)
         state.setdefault("active_requirement_id", None)
         state.setdefault("active_hypothesis_reason", None)
-        state.setdefault("challenger_dispositions", {})
         _rebuild_compatibility_projections(state)
     for field in (
         "query_ledger",
@@ -844,8 +692,6 @@ def migrate_session(raw: Any) -> dict[str, Any]:
         "finalization_history",
     ):
         state.pop(field, None)
-    if migrated or missing_portfolio_views:
-        _refresh_portfolio_exploration(state)
     return state
 
 
@@ -862,11 +708,7 @@ def validate_session(raw: Any) -> dict[str, Any]:
         "product_revision",
         "hypotheses",
         "active_hypothesis_id",
-        "challenger_dispositions",
         "region_scopes",
-        "structural_exploration",
-        "portfolio_exploration_archive",
-        "portfolio_exploration_view",
         "temporal_signals",
         "solver_projection",
     ]
@@ -877,14 +719,6 @@ def validate_session(raw: Any) -> dict[str, Any]:
     if isinstance(revision, bool) or not isinstance(revision, int) or revision < 0:
         raise RoundTripSessionError("product_revision must be a non-negative integer")
     _validate_canonical_state(state)
-    return state
-
-
-def derive_session_views(raw_state: Any) -> dict[str, Any]:
-    """Rebuild disposable portfolio projections without changing source state."""
-
-    state = validate_session(raw_state)
-    _refresh_portfolio_exploration(state)
     return state
 
 
@@ -977,7 +811,6 @@ def record_temporal_selection(raw_state: Any, task_id: str, raw_spec: Any, reaso
     temporal.setdefault("selection_history", []).append(copy.deepcopy(selection))
     temporal["phase"] = "exact_verification"
     _invalidate_finalization(state)
-    state["stop_assessment"] = None
     _commit_product_mutation(state)
     return state
 
@@ -1103,12 +936,23 @@ def _exact_surface_schedule(
     if return_first is None or return_last is None:
         return None
     intent = state["scenario"]["intent"]
-    buffer_minutes = int(intent["mode_transition_buffers_minutes"].get("surface_to_flight", 120))
+    access_buffer_minutes = int(
+        intent["mode_transition_buffers_minutes"].get("surface_to_flight", 120)
+    )
+    egress_buffer_minutes = int(
+        intent["mode_transition_buffers_minutes"].get("flight_to_surface", 60)
+    )
 
     def access_window(flight: dict[str, Any], pool: dict[str, Any]) -> dict[str, str]:
         departure = datetime.fromisoformat(flight["departure"].replace("Z", "+00:00"))
-        deadline = departure - timedelta(minutes=buffer_minutes)
-        start = deadline - timedelta(minutes=int(pool["max_access_time_minutes"]))
+        deadline = departure - timedelta(minutes=access_buffer_minutes)
+        hard_limit = pool.get("max_access_time_minutes")
+        horizon = (
+            int(hard_limit)
+            if hard_limit is not None
+            else SURFACE_DISCOVERY_HORIZON_MINUTES
+        )
+        start = deadline - timedelta(minutes=horizon)
         return {
             "departure_window": {"start": start.isoformat(), "end": deadline.isoformat()},
             "must_arrive_by": deadline.isoformat(),
@@ -1117,8 +961,15 @@ def _exact_surface_schedule(
         }
 
     def egress_window(flight: dict[str, Any], pool: dict[str, Any]) -> dict[str, str]:
-        start = datetime.fromisoformat(flight["arrival"].replace("Z", "+00:00"))
-        end = start + timedelta(minutes=int(pool["max_egress_time_minutes"]))
+        arrival = datetime.fromisoformat(flight["arrival"].replace("Z", "+00:00"))
+        start = arrival + timedelta(minutes=egress_buffer_minutes)
+        hard_limit = pool.get("max_egress_time_minutes")
+        horizon = (
+            int(hard_limit)
+            if hard_limit is not None
+            else SURFACE_DISCOVERY_HORIZON_MINUTES
+        )
+        end = start + timedelta(minutes=horizon)
         return {
             "departure_window": {"start": start.isoformat(), "end": end.isoformat()},
             "not_before": start.isoformat(),
@@ -1208,28 +1059,48 @@ def add_route_hypothesis(raw_state: Any, raw_spec: Any) -> dict[str, Any]:
                 "research_kind": "priced_offer",
                 "journey_scope": "joint_round_trip",
                 "question": "Research multiple useful joint date-pair signals in the allowed windows, then verify payable atomic round-trip quotes selected by the AI for this gateway hypothesis.",
-                "query_shape": {"trip_type": "round_trip", "origins": origin_gateways, "destinations": destination_gateways, "outbound_departure_window": intent["outbound_departure_window"], "return_departure_window": intent["return_departure_window"], "date_search": _joint_date_search(intent)},
-                "required": True,
-            },
-            {
-                "task_id": f"task-{hypothesis_id.removeprefix('hypothesis-')}-outbound",
-                "research_kind": "priced_offer",
-                "journey_scope": "one_way",
-                "direction": "outbound",
-                "question": "Research multiple useful outbound date signals, then verify payable outbound one-way quotes selected by the AI for this gateway hypothesis.",
-                "query_shape": {"trip_type": "one_way", "direction": "outbound", "origins": origin_gateways, "destinations": destination_gateways, "departure_window": intent["outbound_departure_window"], "date_search": _date_search(intent, "outbound")},
-                "required": True,
-            },
-            {
-                "task_id": f"task-{hypothesis_id.removeprefix('hypothesis-')}-return",
-                "research_kind": "priced_offer",
-                "journey_scope": "one_way",
-                "direction": "return",
-                "question": "Research multiple useful return date signals, then verify payable return one-way quotes selected by the AI for this gateway hypothesis.",
-                "query_shape": {"trip_type": "one_way", "direction": "return", "origins": destination_gateways, "destinations": origin_gateways, "departure_window": intent["return_departure_window"], "date_search": _date_search(intent, "return")},
+                "query_shape": {
+                    "trip_type": "round_trip",
+                    "origins": origin_gateways,
+                    "destinations": destination_gateways,
+                    "outbound_departure_window": intent["outbound_departure_window"],
+                    "return_departure_window": intent["return_departure_window"],
+                    "date_search": _joint_date_search(intent),
+                    **(
+                        {"screen_candidate": copy.deepcopy(raw_spec["screen_candidate"])}
+                        if raw_spec.get("screen_candidate") is not None
+                        else {}
+                    ),
+                },
                 "required": True,
             },
         ]
+        advisory_basis = raw_spec.get("advisory_basis")
+        if isinstance(advisory_basis, dict) and advisory_basis.get(
+            "split_verification_indicated"
+        ) is True:
+            task_specs.extend(
+                [
+                    {
+                        "task_id": f"task-{hypothesis_id.removeprefix('hypothesis-')}-outbound",
+                        "research_kind": "priced_offer",
+                        "journey_scope": "one_way",
+                        "direction": "outbound",
+                        "question": "Research multiple useful outbound date signals, then verify payable outbound one-way quotes selected by the AI for this gateway hypothesis.",
+                        "query_shape": {"trip_type": "one_way", "direction": "outbound", "origins": origin_gateways, "destinations": destination_gateways, "departure_window": intent["outbound_departure_window"], "date_search": _date_search(intent, "outbound")},
+                        "required": True,
+                    },
+                    {
+                        "task_id": f"task-{hypothesis_id.removeprefix('hypothesis-')}-return",
+                        "research_kind": "priced_offer",
+                        "journey_scope": "one_way",
+                        "direction": "return",
+                        "question": "Research multiple useful return date signals, then verify payable return one-way quotes selected by the AI for this gateway hypothesis.",
+                        "query_shape": {"trip_type": "one_way", "direction": "return", "origins": destination_gateways, "destinations": origin_gateways, "departure_window": intent["return_departure_window"], "date_search": _date_search(intent, "return")},
+                        "required": True,
+                    },
+                ]
+            )
     if not isinstance(task_specs, list) or not task_specs:
         raise RoundTripSessionError("task_specs must be a non-empty array")
     for index, spec in enumerate(task_specs):
@@ -1257,38 +1128,30 @@ def add_route_hypothesis(raw_state: Any, raw_spec: Any) -> dict[str, Any]:
         state["research_tasks"].append(new_task)
     state["hypothesis_tree"]["next_candidate_id"] = _next_hypothesis(state)
     _invalidate_finalization(state)
-    state["stop_assessment"] = None
-    _refresh_portfolio_exploration(state)
     _commit_product_mutation(state)
     return state
 
 
-def activate_portfolio_challenger(
-    raw_state: Any, challenger_id: str, reason: str
+def activate_route_hypothesis(
+    raw_state: Any, raw_spec: Any, reason: str
 ) -> dict[str, Any]:
-    """Lazily register and select one AI-chosen complete-portfolio challenger."""
+    """Register and select one complete-journey hypothesis."""
 
     state = validate_session(raw_state)
     reason = _text(reason, "reason")
     if state.get("active_hypothesis") is not None:
         raise RoundTripSessionError(
-            "portfolio challenger activation requires no active hypothesis"
+            "route activation requires no active hypothesis"
         )
-    try:
-        challenger = PORTFOLIO_EXPLORATION.challenger_by_id(
-            state["portfolio_exploration_archive"], challenger_id
-        )
-    except PORTFOLIO_EXPLORATION.PortfolioExplorationError as exc:
-        raise RoundTripSessionError(str(exc)) from exc
-    hypothesis_id = str(challenger["hypothesis_id"])
-    if challenger["registration_state"] == "suggested":
-        state = validate_session(
-            add_route_hypothesis(state, challenger["hypothesis_spec"])
-        )
+    if not isinstance(raw_spec, dict):
+        raise RoundTripSessionError("route activation requires a hypothesis spec")
+    hypothesis_id = _text(raw_spec.get("hypothesis_id"), "hypothesis_id")
+    if hypothesis_id not in state["hypothesis_tree"]["nodes"]:
+        state = validate_session(add_route_hypothesis(state, raw_spec))
     node = state["hypothesis_tree"]["nodes"].get(hypothesis_id)
     if not isinstance(node, dict) or node.get("status") != "candidate":
         raise RoundTripSessionError(
-            "portfolio challenger must identify a candidate complete-journey hypothesis"
+            "route activation requires a candidate complete-journey hypothesis"
         )
     actionable = [
         task
@@ -1310,144 +1173,13 @@ def activate_portfolio_challenger(
         default=None,
     )
     if selected_task is None:
-        raise RoundTripSessionError(
-            "portfolio challenger has no actionable research task"
-        )
-    state = validate_session(
-        record_hypothesis_decision(
-            state,
-            "select",
-            task_id=str(selected_task["task_id"]),
-            reason=reason,
-        )
+        raise RoundTripSessionError("route hypothesis has no actionable research task")
+    return record_hypothesis_decision(
+        state,
+        "select",
+        task_id=str(selected_task["task_id"]),
+        reason=reason,
     )
-    state.setdefault("portfolio_challenger_dispositions", {})[challenger_id] = {
-        "status": "activated",
-        "reason": reason,
-        "hypothesis_id": hypothesis_id,
-        "search_round": state["search_round"],
-        "at": _now(),
-    }
-    proposal_id = (challenger.get("advisory_basis") or {}).get("proposal_id")
-    if proposal_id in state.get("structural_exploration", {}).get(
-        "dispositions", {}
-    ):
-        state["structural_exploration"]["dispositions"][proposal_id] = "activated"
-    _refresh_portfolio_exploration(state)
-    _commit_product_mutation(state)
-    return state
-
-
-def dismiss_portfolio_challenger(
-    raw_state: Any, challenger_id: str, reason: str
-) -> dict[str, Any]:
-    """Persist an explicit disposition for one recommended portfolio challenger."""
-
-    state = validate_session(raw_state)
-    challenger_id = _text(challenger_id, "challenger_id")
-    reason = _text(reason, "reason")
-    try:
-        challenger = PORTFOLIO_EXPLORATION.challenger_by_id(
-            state["portfolio_exploration_archive"], challenger_id
-        )
-    except PORTFOLIO_EXPLORATION.PortfolioExplorationError as exc:
-        raise RoundTripSessionError(str(exc)) from exc
-    dispositions = state.setdefault("portfolio_challenger_dispositions", {})
-    existing = dispositions.get(challenger_id)
-    if isinstance(existing, dict) and existing.get("status") == "dismissed":
-        return _compact_session(state)
-    if challenger.get("registration_state") != "suggested":
-        raise RoundTripSessionError(
-            "only an unregistered suggested portfolio challenger may be dismissed"
-        )
-    dispositions[challenger_id] = {
-        "status": "dismissed",
-        "reason": reason,
-        "hypothesis_id": challenger.get("hypothesis_id"),
-        "search_round": state["search_round"],
-        "at": _now(),
-    }
-    _invalidate_finalization(state)
-    state["stop_assessment"] = None
-    _refresh_portfolio_exploration(state)
-    _commit_product_mutation(state)
-    return state
-
-
-def unresolved_recommended_challenger_ids(raw_state: Any) -> list[str]:
-    state = validate_session(raw_state)
-    archive = state.get("portfolio_exploration_archive", {})
-    view = state.get("portfolio_exploration_view", {})
-    incumbent_id = (state.get("result", {}).get("best_portfolio") or {}).get(
-        "portfolio_id"
-    )
-    dispositions = state.get("portfolio_challenger_dispositions", {})
-    unresolved = []
-    for challenger_id in view.get("recommended_challenger_ids", []):
-        challenger = PORTFOLIO_EXPLORATION.challenger_by_id(archive, challenger_id)
-        if incumbent_id and incumbent_id in challenger.get("portfolio_ids", []):
-            continue
-        if challenger.get("portfolio_ids"):
-            continue
-        equivalent_complete = any(
-            other.get("portfolio_ids")
-            and other.get("route_shape") == challenger.get("route_shape")
-            and set(other.get("origin_gateway_nodes", []))
-            == set(challenger.get("origin_gateway_nodes", []))
-            and set(other.get("destination_gateway_nodes", []))
-            == set(challenger.get("destination_gateway_nodes", []))
-            for other in archive.get("challengers", [])
-            if other.get("challenger_id") != challenger_id
-        )
-        if equivalent_complete:
-            continue
-        disposition = dispositions.get(challenger_id, {})
-        status = disposition.get("status") if isinstance(disposition, dict) else None
-        if status == "dismissed":
-            continue
-        if status == "activated":
-            hypothesis = state["hypothesis_tree"]["nodes"].get(
-                challenger.get("hypothesis_id"), {}
-            )
-            if hypothesis.get("status") in TERMINAL_HYPOTHESIS_STATUSES:
-                continue
-        unresolved.append(str(challenger_id))
-    return sorted(unresolved)
-
-
-def dismiss_structural_challenger(
-    raw_state: Any, proposal_id: str, reason: str
-) -> dict[str, Any]:
-    """Persist an explicit AI rejection; silent structural omission is forbidden."""
-
-    state = validate_session(raw_state)
-    proposal_id = _text(proposal_id, "proposal_id")
-    reason = _text(reason, "reason")
-    dispositions = state.get("structural_exploration", {}).get("dispositions", {})
-    if proposal_id not in dispositions:
-        raise RoundTripSessionError(f"unknown structural proposal {proposal_id}")
-    if dispositions[proposal_id] != "pending":
-        return _compact_session(state)
-    dispositions[proposal_id] = "dismissed"
-    proposal = next(
-        item
-        for item in state["structural_exploration"]["proposals"]
-        if item["proposal_id"] == proposal_id
-    )
-    state["structural_exploration"].setdefault("disposition_history", []).append(
-        {
-            "proposal_id": proposal_id,
-            "hypothesis_id": proposal["hypothesis_id"],
-            "disposition": "dismissed",
-            "reason": reason,
-            "at": _now(),
-        }
-    )
-    _invalidate_finalization(state)
-    state["stop_assessment"] = None
-    _refresh_portfolio_exploration(state)
-    _commit_product_mutation(state)
-    return state
 
 
 def _supporting_portfolio_exists(state: dict[str, Any], hypothesis_id: str) -> bool:
@@ -1509,31 +1241,11 @@ def record_hypothesis_decision(raw_state: Any, action: str, *, task_id: str | No
                     candidate
                     for candidate in state["gateway_candidates"][side]
                     if candidate.get("evidence_status")
-                    in {"research_observed", "exact_anchor"}
+                    in {"ai_proposed", "research_observed", "exact_anchor"}
                 ]
                 if not admitted:
                     raise RoundTripSessionError(
-                        "gateway hypothesis complete requires an observed or exact candidate"
-                    )
-            elif node["hypothesis_kind"] == "structural_challenger_discovery":
-                unfinished_required = [
-                    task["task_id"]
-                    for task in state["research_tasks"]
-                    if task["hypothesis_id"] == hypothesis_id
-                    and task.get("required", True)
-                    and task.get("requirement_status") == "open"
-                ]
-                if unfinished_required:
-                    raise RoundTripSessionError(
-                        f"structural discovery has unfinished research {unfinished_required}"
-                    )
-                if state.get("structural_exploration", {}).get("status") not in {
-                    "proposed",
-                    "complete_no_proposal",
-                    "legacy_complete",
-                }:
-                    raise RoundTripSessionError(
-                        "structural discovery complete requires an AI proposal outcome"
+                        "gateway hypothesis complete requires a defined or exact candidate"
                     )
             else:
                 unfinished_required = [
@@ -1562,8 +1274,6 @@ def record_hypothesis_decision(raw_state: Any, action: str, *, task_id: str | No
         raise RoundTripSessionError("unsupported hypothesis action")
     state["hypothesis_tree"]["next_candidate_id"] = _next_hypothesis(state)
     _invalidate_finalization(state)
-    state["stop_assessment"] = None
-    _refresh_portfolio_exploration(state)
     _commit_product_mutation(state)
     return state
 
@@ -1581,49 +1291,41 @@ def _merge_unique(existing: list[dict[str, Any]], incoming: list[dict[str, Any]]
     return result
 
 
-def _publish_region_gateway_tasks(
-    state: dict[str, Any], side: str, scope: dict[str, Any]
+def _publish_region_pool_fare_screen_if_ready(
+    state: dict[str, Any], owner_side: str
 ) -> None:
-    hypothesis_id = f"hypothesis-gateway-{side}"
-    existing = {str(task.get("task_id")) for task in state["research_tasks"]}
-    active = state.get("active_hypothesis")
-    for spec in AI_EXPLORATION.gateway_task_specs(scope, state["scenario"]):
-        if spec["task_id"] in existing:
-            continue
-        task = _task(
-            spec["task_id"],
-            hypothesis_id,
-            "gateway_discovery",
-            f"{side}_regional_gateway_pool",
-            spec["research_kind"],
-            spec["question"],
-            spec["query_shape"],
-        )
-        if isinstance(active, dict) and active.get("hypothesis_id") == hypothesis_id:
-            task["status"] = "pending"
-        state["research_tasks"].append(task)
-        existing.add(task["task_id"])
-
-
-def _publish_region_scope_challenge_task(
-    state: dict[str, Any], side: str, scope: dict[str, Any]
-) -> None:
-    spec = AI_EXPLORATION.region_scope_challenge_task_spec(
-        side, state["scenario"], scope
-    )
-    if any(task.get("task_id") == spec["task_id"] for task in state["research_tasks"]):
+    ready_statuses = {"defined", "not_required", "legacy_complete"}
+    scopes = state.get("region_scopes", {})
+    if any(scopes.get(side, {}).get("status") not in ready_statuses for side in ("origin", "destination")):
         return
-    hypothesis_id = f"hypothesis-gateway-{side}"
+    origin_records = scopes["origin"].get("candidate_records", [])
+    destination_records = scopes["destination"].get("candidate_records", [])
+    if not origin_records or not destination_records:
+        return
+    if (
+        len(origin_records) == 1
+        and len(destination_records) == 1
+        and scopes["origin"].get("status") == "not_required"
+        and scopes["destination"].get("status") == "not_required"
+    ):
+        return
+    hypothesis_id = f"hypothesis-gateway-{owner_side}"
+    existing = {str(task.get("task_id")) for task in state["research_tasks"]}
+    spec = AI_EXPLORATION.region_pool_fare_screen_spec(
+        scopes["origin"], scopes["destination"], state["scenario"]
+    )
+    if spec["task_id"] in existing:
+        return
+    active = state.get("active_hypothesis")
     task = _task(
         spec["task_id"],
         hypothesis_id,
         "gateway_discovery",
-        f"{side}_regional_gateway_pool",
+        "regional_airport_pool_fare_screen",
         spec["research_kind"],
         spec["question"],
         spec["query_shape"],
     )
-    active = state.get("active_hypothesis")
     if isinstance(active, dict) and active.get("hypothesis_id") == hypothesis_id:
         task["status"] = "pending"
     state["research_tasks"].append(task)
@@ -1682,118 +1384,7 @@ def _apply_region_scope_proposal(
     state["gateway_candidates"][side] = _merge_unique(
         state["gateway_candidates"][side], ai_candidates, "candidate_id"
     )
-    _publish_region_scope_challenge_task(state, side, normalized)
-
-
-def _apply_region_scope_challenge(
-    state: dict[str, Any], task: dict[str, Any], proposal: dict[str, Any]
-) -> None:
-    side = str(task["query_shape"]["side"])
-    current = state["region_scopes"][side]
-    try:
-        challenge = AI_EXPLORATION.normalize_region_scope_challenge(
-            proposal, state["scenario"], side, current
-        )
-        merged = AI_EXPLORATION.merge_region_scope_challenge(current, challenge)
-    except AI_EXPLORATION.AIExplorationError as exc:
-        raise RoundTripSessionError(str(exc)) from exc
-    state["region_scopes"][side] = merged
-    node_map = {
-        _node_id(node, "scenario.nodes[]"): node for node in state["scenario"]["nodes"]
-    }
-    additions = []
-    for record in challenge["additional_candidates"]:
-        node = record["node"]
-        node_id = node["node_id"]
-        if node_id in node_map and node_map[node_id] != node:
-            raise RoundTripSessionError(f"conflicting challenged region node {node_id}")
-        if node_id not in node_map:
-            state["scenario"]["nodes"].append(copy.deepcopy(node))
-            node_map[node_id] = node
-        additions.append(
-            {
-                "candidate_id": record["candidate_id"],
-                "side": side,
-                "node": copy.deepcopy(node),
-                "signal": {
-                    "kind": "ai_region_scope_challenge",
-                    "roles": list(record["roles"]),
-                    "inclusion_reason": record["inclusion_reason"],
-                },
-                "evidence_status": "ai_proposed",
-            }
-        )
-    state["gateway_candidates"][side] = _merge_unique(
-        state["gateway_candidates"][side], additions, "candidate_id"
-    )
-    _publish_region_gateway_tasks(state, side, merged)
-
-
-def _apply_structural_proposal(
-    state: dict[str, Any], proposal: dict[str, Any]
-) -> None:
-    try:
-        normalized = AI_EXPLORATION.normalize_structural_proposal(proposal, state)
-    except AI_EXPLORATION.AIExplorationError as exc:
-        raise RoundTripSessionError(str(exc)) from exc
-    previous = state.get("structural_exploration", {})
-    normalized["proposal_history"] = [
-        *copy.deepcopy(previous.get("proposal_history", [])),
-        {
-            "at": _now(),
-            "proposal_ids": [item["proposal_id"] for item in normalized["proposals"]],
-            "no_material_challenger_reason": normalized.get(
-                "no_material_challenger_reason"
-            ),
-        },
-    ]
-    node_map = {
-        _node_id(node, "scenario.nodes[]"): node for node in state["scenario"]["nodes"]
-    }
-    for item in normalized["proposals"]:
-        for node in item.get("intermediate_nodes", []):
-            node_id = node["node_id"]
-            if node_id in node_map and node_map[node_id] != node:
-                raise RoundTripSessionError(
-                    f"conflicting structural intermediate node {node_id}"
-                )
-            if node_id not in node_map:
-                state["scenario"]["nodes"].append(copy.deepcopy(node))
-                node_map[node_id] = node
-    state["structural_exploration"] = normalized
-
-
-def _ensure_structural_exploration_task(state: dict[str, Any]) -> None:
-    exploration = state.get("structural_exploration", {})
-    if (
-        state.get("result", {}).get("best_portfolio") is None
-        or exploration.get("status") != "waiting_for_incumbent"
-    ):
-        return
-    if any(
-        task.get("hypothesis_id") == STRUCTURAL_DISCOVERY_HYPOTHESIS
-        for task in state["research_tasks"]
-    ):
-        return
-    exploration["minimum_proposals"] = AI_EXPLORATION.structural_minimum_proposals(
-        state
-    )
-    spec = AI_EXPLORATION.structural_task_spec(state)
-    task = _task(
-        spec["task_id"],
-        STRUCTURAL_DISCOVERY_HYPOTHESIS,
-        "structural_challenger_discovery",
-        "ai_structural_corridor_scope",
-        spec["research_kind"],
-        spec["question"],
-        spec["query_shape"],
-    )
-    state["research_tasks"].append(task)
-    state["hypothesis_tree"]["nodes"][STRUCTURAL_DISCOVERY_HYPOTHESIS][
-        "status"
-    ] = "candidate"
-    exploration["status"] = "awaiting_ai"
-    state["hypothesis_tree"]["next_candidate_id"] = _next_hypothesis(state)
+    _publish_region_pool_fare_screen_if_ready(state, side)
 
 
 def _derive_offer_sets(offers: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
@@ -1860,8 +1451,6 @@ def _recompute(state: dict[str, Any]) -> None:
         state["result"] = SOLVER.solve_bundle(bundle)
     except SOLVER.RoundTripError as exc:
         raise RoundTripSessionError(str(exc)) from exc
-    _ensure_structural_exploration_task(state)
-    _refresh_portfolio_exploration(state)
 
 
 def _refresh_time_sensitive_state(state: dict[str, Any]) -> bool:
@@ -1880,7 +1469,6 @@ def _refresh_time_sensitive_state(state: dict[str, Any]) -> bool:
     if state == before:
         return False
     _invalidate_finalization(state)
-    state["stop_assessment"] = None
     _commit_product_mutation(state)
     return True
 
@@ -1914,31 +1502,28 @@ def ingest_evidence(raw_state: Any, raw_evidence: Any) -> dict[str, Any]:
     if active is None or active["hypothesis_id"] != task["hypothesis_id"]:
         raise RoundTripSessionError("evidence task must belong to the active hypothesis")
     status = raw_evidence.get("evidence_status")
-    ai_proposal = status == "ai_proposed" and task["research_kind"] in {
-        "region_scope_definition",
-        "region_scope_challenge",
-        "structural_challenger_definition",
-    }
+    ai_proposal = (
+        status == "ai_proposed"
+        and task["research_kind"] == "region_scope_definition"
+    )
     temporal_research = status == "research_observed" and task["research_kind"] == "priced_offer" and task.get("journey_scope") in {"joint_round_trip", "one_way"}
-    gateway_research = status == "research_observed" and task["research_kind"] == "gateway_discovery"
+    pool_screen_task = task["research_kind"] == "region_pool_fare_screen"
+    pool_screen_research = (
+        status == "research_observed"
+        and pool_screen_task
+    )
     payable = status == "verified_observed" and task["research_kind"] == "priced_offer"
-    if status not in {"no_result", "rejected"} and not (ai_proposal or temporal_research or gateway_research or payable):
-        if task["research_kind"] in {"region_scope_definition", "region_scope_challenge", "structural_challenger_definition"}:
+    if status not in {"no_result", "rejected"} and not (ai_proposal or temporal_research or pool_screen_research or payable):
+        if task["research_kind"] == "region_scope_definition":
             expected = "ai_proposed"
-        elif task["research_kind"] == "gateway_discovery":
+        elif task["research_kind"] == "region_pool_fare_screen":
             expected = "research_observed"
         else:
             expected = "verified_observed or nonterminal temporal research_observed"
         raise RoundTripSessionError(f"task expects {expected} or scoped terminal evidence")
     ai_proposals = raw_evidence.get("ai_proposals", [])
     if ai_proposal:
-        expected_type = (
-            "region_scope"
-            if task["research_kind"] == "region_scope_definition"
-            else "region_scope_challenge"
-            if task["research_kind"] == "region_scope_challenge"
-            else "structural_challengers"
-        )
+        expected_type = "region_scope"
         if (
             not isinstance(ai_proposals, list)
             or len(ai_proposals) != 1
@@ -1951,28 +1536,6 @@ def ingest_evidence(raw_state: Any, raw_evidence: Any) -> dict[str, Any]:
             raise RoundTripSessionError("AI proposal task must be coverage_complete=true")
     elif ai_proposals:
         raise RoundTripSessionError("ai_proposals are allowed only for AI definition tasks")
-    if gateway_research:
-        expected_side = task.get("query_shape", {}).get("side")
-        wrong_side = [
-            candidate.get("candidate_id")
-            for candidate in raw_evidence.get("gateway_candidates", [])
-            if candidate.get("side") != expected_side
-        ]
-        if wrong_side:
-            raise RoundTripSessionError(
-                f"gateway evidence exceeds the active task side: {wrong_side}"
-            )
-        required_node_id = task.get("query_shape", {}).get(
-            "required_candidate_node_id"
-        )
-        observed_node_ids = {
-            candidate.get("node", {}).get("node_id")
-            for candidate in raw_evidence.get("gateway_candidates", [])
-        }
-        if required_node_id and observed_node_ids != {required_node_id}:
-            raise RoundTripSessionError(
-                "gateway evidence must match the task's required candidate node"
-            )
     if payable:
         expected_scope = task.get("journey_scope")
         wrong_scope = [
@@ -1995,6 +1558,95 @@ def ingest_evidence(raw_state: Any, raw_evidence: Any) -> dict[str, Any]:
                     f"one-way offers do not match the active task direction: {wrong_direction}"
                 )
     temporal_signals = raw_evidence.get("temporal_signals", [])
+    if pool_screen_task:
+        expected_scope = task.get("query_shape", {}).get("submitted_scope")
+        if raw_evidence.get("submitted_scope") != expected_scope:
+            raise RoundTripSessionError(
+                "region pool fare screen must preserve the complete submitted_scope"
+            )
+        if raw_evidence.get("coverage_complete") is not True:
+            raise RoundTripSessionError(
+                "region pool fare screen must be coverage_complete=true"
+            )
+        if status == "research_observed" and not raw_evidence.get("observations"):
+            raise RoundTripSessionError(
+                "region pool fare screen requires an observed bounded_window record"
+            )
+        if status == "research_observed" and any(
+            observation.get("date_coverage") != "bounded_window"
+            for observation in raw_evidence.get("observations", [])
+        ):
+            raise RoundTripSessionError(
+                "sampled dates cannot complete the region pool fare screen"
+            )
+        if status in {"no_result", "rejected"} and not any(
+            observation.get("date_coverage") == "bounded_window"
+            for observation in raw_evidence.get("observations", [])
+        ):
+            raise RoundTripSessionError(
+                "terminal region pool fare screen requires bounded_window coverage"
+            )
+    if pool_screen_research:
+        query_shape = task.get("query_shape", {})
+        if not isinstance(temporal_signals, list) or not temporal_signals:
+            raise RoundTripSessionError(
+                "region pool fare screen requires dated pair signals"
+            )
+        if raw_evidence.get("movements") or raw_evidence.get("offers") or raw_evidence.get("gateway_candidates"):
+            raise RoundTripSessionError(
+                "region pool fare screen cannot create gateways, movements, or offers"
+            )
+        origin_ids = set(query_shape.get("origin_gateway_node_ids", []))
+        destination_ids = set(query_shape.get("destination_gateway_node_ids", []))
+        outbound_window = query_shape.get("outbound_departure_window", {})
+        return_window = query_shape.get("return_departure_window", {})
+        outbound_start = datetime.fromisoformat(
+            str(outbound_window.get("start")).replace("Z", "+00:00")
+        ).date()
+        outbound_end = datetime.fromisoformat(
+            str(outbound_window.get("end")).replace("Z", "+00:00")
+        ).date()
+        return_start = datetime.fromisoformat(
+            str(return_window.get("start")).replace("Z", "+00:00")
+        ).date()
+        return_end = datetime.fromisoformat(
+            str(return_window.get("end")).replace("Z", "+00:00")
+        ).date()
+        minimum_stay = query_shape.get("minimum_stay_nights")
+        maximum_stay = query_shape.get("maximum_stay_nights")
+        for signal in temporal_signals:
+            if signal.get("signal_kind") != "joint_date_pair":
+                raise RoundTripSessionError(
+                    "region pool fare screen accepts only joint_date_pair signals"
+                )
+            if (
+                signal.get("outbound_origin_gateway_node_id") not in origin_ids
+                or signal.get("return_destination_gateway_node_id") not in origin_ids
+                or signal.get("outbound_destination_gateway_node_id") not in destination_ids
+                or signal.get("return_origin_gateway_node_id") not in destination_ids
+            ):
+                raise RoundTripSessionError(
+                    "region pool fare signal exceeds the submitted airport pools"
+                )
+            outbound_date = datetime.fromisoformat(signal["outbound_date"]).date()
+            return_date = datetime.fromisoformat(signal["return_date"]).date()
+            if not (outbound_start <= outbound_date <= outbound_end):
+                raise RoundTripSessionError(
+                    "region pool fare signal outbound date is outside the submitted window"
+                )
+            if not (return_start <= return_date <= return_end):
+                raise RoundTripSessionError(
+                    "region pool fare signal return date is outside the submitted window"
+                )
+            stay_nights = (return_date - outbound_date).days
+            if minimum_stay is not None and stay_nights < int(minimum_stay):
+                raise RoundTripSessionError(
+                    "region pool fare signal is below minimum_stay_nights"
+                )
+            if maximum_stay is not None and stay_nights > int(maximum_stay):
+                raise RoundTripSessionError(
+                    "region pool fare signal exceeds maximum_stay_nights"
+                )
     if temporal_research:
         if raw_evidence.get("coverage_complete") is not False:
             raise RoundTripSessionError("temporal research evidence must keep the priced task pending with coverage_complete=false")
@@ -2007,7 +1659,7 @@ def ingest_evidence(raw_state: Any, raw_evidence: Any) -> dict[str, Any]:
             raise RoundTripSessionError(f"task expects {expected_kind} temporal signals")
         if expected_kind == "directional_date" and any(signal.get("direction") != task.get("direction") for signal in temporal_signals):
             raise RoundTripSessionError("directional temporal signal must match the priced task direction")
-    elif temporal_signals:
+    elif temporal_signals and not pool_screen_research:
         raise RoundTripSessionError("temporal_signals are allowed only as nonterminal research evidence for a priced flight task")
     next_state = copy.deepcopy(state)
     next_task = _task_by_id(next_state, task["task_id"])
@@ -2029,40 +1681,31 @@ def ingest_evidence(raw_state: Any, raw_evidence: Any) -> dict[str, Any]:
     next_state["evidence_bundles"].append(copy.deepcopy(raw_evidence))
     if status == "ai_proposed":
         proposal = ai_proposals[0]["proposal"]
-        if task["research_kind"] == "region_scope_definition":
-            _apply_region_scope_proposal(next_state, next_task, proposal)
-        elif task["research_kind"] == "region_scope_challenge":
-            _apply_region_scope_challenge(next_state, next_task, proposal)
-        else:
-            _apply_structural_proposal(next_state, proposal)
+        _apply_region_scope_proposal(next_state, next_task, proposal)
     elif status == "research_observed":
-        if temporal_research:
+        if temporal_research or pool_screen_research:
             annotated_signals = [
                 {**copy.deepcopy(signal), "research_task_id": task["task_id"], "hypothesis_id": task["hypothesis_id"]}
                 for signal in temporal_signals
             ]
             next_state["temporal_signals"] = _merge_unique(next_state.get("temporal_signals", []), annotated_signals, "signal_id")
-            next_temporal = next_task["temporal_state"]
-            for signal in annotated_signals:
-                if signal["signal_id"] not in next_temporal["signal_refs"]:
-                    next_temporal["signal_refs"].append(signal["signal_id"])
-            next_temporal["phase"] = "surface_discovery"
-        else:
-            for candidate in raw_evidence.get("gateway_candidates", []):
-                side = candidate["side"]
-                next_state["gateway_candidates"][side] = _merge_unique(next_state["gateway_candidates"][side], [{**candidate, "evidence_status": status}], "candidate_id")
-                node_id = str(candidate["node"]["node_id"])
-                if node_id in next_state.get("region_scopes", {}).get(side, {}).get("coverage", {}):
-                    next_state["region_scopes"][side]["coverage"][node_id] = status
-            incoming_nodes = raw_evidence.get("nodes", [])
-            node_map = {_node_id(node, "scenario.nodes[]"): node for node in next_state["scenario"]["nodes"]}
-            for node in incoming_nodes:
-                node_id = _node_id(node, "evidence.nodes[]")
-                if node_id in node_map and node_map[node_id] != node:
-                    raise RoundTripSessionError(f"conflicting node {node_id}")
-                if node_id not in node_map:
-                    next_state["scenario"]["nodes"].append(copy.deepcopy(node))
-                    node_map[node_id] = node
+            if temporal_research:
+                next_temporal = next_task["temporal_state"]
+                for signal in annotated_signals:
+                    if signal["signal_id"] not in next_temporal["signal_refs"]:
+                        next_temporal["signal_refs"].append(signal["signal_id"])
+                next_temporal["phase"] = "surface_discovery"
+            else:
+                for side in ("origin", "destination"):
+                    for candidate in next_state["gateway_candidates"][side]:
+                        if candidate.get("evidence_status") == "ai_proposed":
+                            candidate["evidence_status"] = "research_observed"
+                            candidate["signal"] = {
+                                "kind": "region_pool_screen_covered"
+                            }
+                    coverage = next_state.get("region_scopes", {}).get(side, {}).get("coverage", {})
+                    for node_id in list(coverage):
+                        coverage[node_id] = "research_observed"
     elif status == "verified_observed":
         node_map = {_node_id(node, "scenario.nodes[]"): node for node in next_state["scenario"]["nodes"]}
         for node in raw_evidence.get("nodes", []):
@@ -2098,59 +1741,13 @@ def ingest_evidence(raw_state: Any, raw_evidence: Any) -> dict[str, Any]:
         _publish_exact_surface_tasks(next_state, task["hypothesis_id"])
         if next_task.get("temporal_state", {}).get("phase") != "not_applicable" and coverage_complete:
             next_task["temporal_state"]["phase"] = "terminal"
-    if status in {"no_result", "rejected"} and task["research_kind"] == "gateway_discovery":
-        side = str(task.get("query_shape", {}).get("side"))
-        node_id = task.get("query_shape", {}).get("required_candidate_node_id")
-        if node_id in next_state.get("region_scopes", {}).get(side, {}).get("coverage", {}):
-            next_state["region_scopes"][side]["coverage"][str(node_id)] = status
     if status in {"no_result", "rejected"} and coverage_complete and next_task.get("temporal_state", {}).get("phase") != "not_applicable":
         next_task["temporal_state"]["phase"] = "terminal"
     next_state["search_round"] += 1
     _recompute(next_state)
     _invalidate_finalization(next_state)
-    next_state["stop_assessment"] = None
     _commit_product_mutation(next_state)
     return next_state
-
-
-def record_stop_assessment(raw_state: Any, reason: str, challenger_hypothesis_ids: list[str] | None = None) -> dict[str, Any]:
-    state = validate_session(raw_state)
-    if state["result"].get("best_portfolio") is None:
-        raise RoundTripSessionError("stop assessment requires a complete incumbent")
-    structural_node = state["hypothesis_tree"]["nodes"].get(
-        STRUCTURAL_DISCOVERY_HYPOTHESIS, {}
-    )
-    if structural_node.get("status") not in TERMINAL_HYPOTHESIS_STATUSES:
-        raise RoundTripSessionError(
-            "stop assessment requires terminal structural challenger discovery"
-        )
-    unresolved_structural = AI_EXPLORATION.unresolved_structural_proposal_ids(state)
-    if unresolved_structural:
-        raise RoundTripSessionError(
-            f"stop assessment has unresolved structural proposals {unresolved_structural}"
-        )
-    unresolved_portfolio = unresolved_recommended_challenger_ids(state)
-    if unresolved_portfolio:
-        raise RoundTripSessionError(
-            f"stop assessment has unresolved recommended portfolio challengers {unresolved_portfolio}"
-        )
-    challengers = challenger_hypothesis_ids or []
-    nodes = state["hypothesis_tree"]["nodes"]
-    unknown = [item for item in challengers if item not in nodes]
-    if unknown:
-        raise RoundTripSessionError(f"unknown challenger hypotheses {unknown}")
-    unfinished = [item for item in challengers if nodes[item]["status"] not in TERMINAL_HYPOTHESIS_STATUSES]
-    if unfinished:
-        raise RoundTripSessionError(f"challenger hypotheses are unfinished {unfinished}")
-    revision = _commit_product_mutation(state)
-    state["stop_assessment"] = {
-        "reason": _text(reason, "reason"),
-        "challenger_hypothesis_ids": challengers,
-        "assessed_revision": revision,
-        "search_round": state["search_round"],
-        "at": _now(),
-    }
-    return state
 
 
 def resolve_region_endpoints(
@@ -2197,7 +1794,6 @@ def resolve_region_endpoints(
     }
     _recompute(state)
     _invalidate_finalization(state)
-    state["stop_assessment"] = None
     _commit_product_mutation(state)
     return state
 
@@ -2229,8 +1825,6 @@ def dispose_inactive_hypothesis(
             task["terminal_reason"] = reason
     state["hypothesis_tree"]["next_candidate_id"] = _next_hypothesis(state)
     _invalidate_finalization(state)
-    state["stop_assessment"] = None
-    _refresh_portfolio_exploration(state)
     _commit_product_mutation(state)
     return state
 
@@ -2248,7 +1842,6 @@ def record_solver_projection_pins(
     except PROJECTION.SolverProjectionError as exc:
         raise RoundTripSessionError(str(exc)) from exc
     _invalidate_finalization(state)
-    state["stop_assessment"] = None
     _commit_product_mutation(state)
     return state
 
@@ -2276,21 +1869,6 @@ def _finalization_audit(state: dict[str, Any]) -> dict[str, Any]:
         )
         if unresolved:
             blockers.append(f"{side} region scope has unresearched gateways: {unresolved}")
-    structural_node = nodes.get(STRUCTURAL_DISCOVERY_HYPOTHESIS, {})
-    if state["result"].get("best_portfolio") is not None and structural_node.get(
-        "status"
-    ) not in TERMINAL_HYPOTHESIS_STATUSES:
-        blockers.append("structural challenger discovery lacks terminal disposition")
-    unresolved_structural = AI_EXPLORATION.unresolved_structural_proposal_ids(state)
-    if unresolved_structural:
-        blockers.append(
-            f"structural proposals lack activation or dismissal: {unresolved_structural}"
-        )
-    unresolved_portfolio = unresolved_recommended_challenger_ids(state)
-    if unresolved_portfolio:
-        blockers.append(
-            f"recommended portfolio challengers lack activation or dismissal: {unresolved_portfolio}"
-        )
     selected = {
         hypothesis_id
         for hypothesis_id, node in state.get("hypotheses", {}).items()
@@ -2309,12 +1887,54 @@ def _finalization_audit(state: dict[str, Any]) -> dict[str, Any]:
     ]
     if pending:
         blockers.append(f"unexplained pending tasks: {pending}")
-    assessment = state.get("stop_assessment")
-    if (
-        assessment is None
-        or assessment.get("assessed_revision") != state["product_revision"]
-    ):
-        blockers.append("fresh challenger stop assessment missing")
+    incumbent = (
+        (state.get("result", {}).get("best_portfolio") or {})
+        .get("total_mandatory_cost", {})
+        .get("amount")
+    )
+    if isinstance(incumbent, (int, float)) and not isinstance(incumbent, bool):
+        screen_task_ids = {
+            str(task.get("task_id"))
+            for task in state.get("research_tasks", [])
+            if task.get("research_kind") == "region_pool_fare_screen"
+        }
+        resolved_signal_ids = {
+            (node.get("advisory_basis") or {}).get("screen_signal_id")
+            for node in nodes.values()
+            if node.get("hypothesis_kind") == "complete_journey"
+            and node.get("status") in {"complete", "hard_dead"}
+        }
+        base_currency = state.get("scenario", {}).get("base_currency")
+        rates = (
+            state.get("scenario", {}).get("fx_snapshot", {}).get("rates", {})
+        )
+        competitive = []
+        for signal in state.get("temporal_signals", []):
+            if (
+                signal.get("research_task_id") not in screen_task_ids
+                or signal.get("signal_kind") != "joint_date_pair"
+                or signal.get("signal_id") in resolved_signal_ids
+            ):
+                continue
+            money = signal.get("atomic_total", {})
+            amount = money.get("amount")
+            currency = money.get("currency")
+            if not isinstance(amount, (int, float)) or isinstance(amount, bool):
+                continue
+            normalized = (
+                float(amount)
+                if currency == base_currency
+                else float(amount) * float(rates[currency])
+                if currency in rates
+                else None
+            )
+            if normalized is None or normalized < float(incumbent):
+                competitive.append(str(signal.get("signal_id")))
+        if competitive:
+            blockers.append(
+                "unverified regional fare-screen candidates may beat the incumbent: "
+                + ", ".join(sorted(competitive))
+            )
     return {"can_finalize": not blockers, "blockers": blockers}
 
 
@@ -2323,6 +1943,43 @@ def export_result(raw_state: Any, *, search_status: str, reason: str | None = No
     audit = _finalization_audit(state)
     if search_status == "final" and not audit["can_finalize"]:
         raise RoundTripSessionError(f"cannot finalize: {audit['blockers']}")
+    best_portfolio = copy.deepcopy(state["result"].get("best_portfolio"))
+    selected_movements = []
+    if isinstance(best_portfolio, dict):
+        movement_by_id = {
+            movement["movement_id"]: movement
+            for movement in state.get("movements", [])
+            if isinstance(movement, dict) and movement.get("movement_id")
+        }
+        for direction, field in (
+            ("outbound", "outbound_movement_ids"),
+            ("return", "return_movement_ids"),
+        ):
+            for movement_id in best_portfolio.get(field, []):
+                movement = movement_by_id.get(movement_id)
+                if movement is None:
+                    continue
+                selected_movements.append(
+                    {
+                        key: copy.deepcopy(value)
+                        for key, value in {
+                            "movement_id": movement.get("movement_id"),
+                            "direction": direction,
+                            "from_node": movement.get("from_node"),
+                            "to_node": movement.get("to_node"),
+                            "departure": movement.get("departure"),
+                            "arrival": movement.get("arrival"),
+                            "mode": movement.get("mode"),
+                            "operator": movement.get("operator"),
+                            "service_id": movement.get("service_id"),
+                            "distance_km": movement.get("distance_km"),
+                            "transfer_from_previous": movement.get(
+                                "transfer_from_previous"
+                            ),
+                        }.items()
+                        if value is not None
+                    }
+                )
     return {
         "result_version": SESSION_VERSION,
         "session_id": state["session_id"],
@@ -2330,14 +1987,12 @@ def export_result(raw_state: Any, *, search_status: str, reason: str | None = No
         "search_status": search_status,
         "incomplete": search_status != "final",
         "reason": reason,
-        "best_portfolio": copy.deepcopy(state["result"].get("best_portfolio")),
+        "best_portfolio": best_portfolio,
+        "journey_movements": selected_movements,
         "portfolios": copy.deepcopy(state["result"].get("portfolios", [])),
         "portfolio_kind_counts": copy.deepcopy(state["result"].get("portfolio_kind_counts", {})),
         "gateway_candidates": copy.deepcopy(state["gateway_candidates"]),
         "region_scopes": copy.deepcopy(state.get("region_scopes", {})),
-        "structural_exploration": copy.deepcopy(
-            state.get("structural_exploration", {})
-        ),
         "temporal_research": {
             "signal_count": len(state.get("temporal_signals", [])),
             "signals": copy.deepcopy(state.get("temporal_signals", [])),
@@ -2350,26 +2005,7 @@ def export_result(raw_state: Any, *, search_status: str, reason: str | None = No
         },
         "offer_sets": _derive_offer_sets(state["offers"]),
         "solver_projection": copy.deepcopy(state.get("solver_projection", {})),
-        "portfolio_exploration": {
-            "archive": copy.deepcopy(
-                state.get("portfolio_exploration_archive", {})
-            ),
-            "research_view": copy.deepcopy(
-                state.get("portfolio_exploration_view", {})
-            ),
-            "selection_history": [
-                copy.deepcopy(value)
-                for key, value in sorted(
-                    state.get("challenger_dispositions", {}).items()
-                )
-                if key.startswith("portfolio:")
-            ],
-            "dispositions": copy.deepcopy(
-                state.get("portfolio_challenger_dispositions", {})
-            ),
-        },
         "hypothesis_outcomes": _derive_hypothesis_outcomes(state),
-        "stop_assessment": copy.deepcopy(state.get("stop_assessment")),
         "finalization_audit": audit,
         "unsearched_scope": "Any route, Provider, gateway, date-pair cell, or atomic offer portfolio not represented by completed evidence remains unsearched. Temporal advice does not imply date-pair exhaustion.",
     }
@@ -2379,9 +2015,6 @@ def finalize_session(raw_state: Any, reason: str) -> tuple[dict[str, Any], dict[
     state = validate_session(raw_state)
     _refresh_time_sensitive_state(state)
     state["finalization_status"] = "final"
-    assessment = state.get("stop_assessment")
-    if isinstance(assessment, dict):
-        assessment["assessed_revision"] = int(state.get("product_revision", 0)) + 1
     _commit_product_mutation(state)
     result = export_result(state, search_status="final", reason=_text(reason, "reason"))
     return state, result
@@ -2428,29 +2061,7 @@ def _summary(state: dict[str, Any]) -> dict[str, Any]:
             }
             for side, scope in state.get("region_scopes", {}).items()
         },
-        "structural_exploration": {
-            "status": state.get("structural_exploration", {}).get("status"),
-            "proposal_count": len(
-                state.get("structural_exploration", {}).get("proposals", [])
-            ),
-            "unresolved_proposal_ids": AI_EXPLORATION.unresolved_structural_proposal_ids(
-                state
-            ),
-        },
         "best_portfolio": state["result"].get("best_portfolio"),
-        "portfolio_exploration": {
-            "challenger_count": state.get("portfolio_exploration_archive", {}).get(
-                "challenger_count", 0
-            ),
-            "quality_cell_count": state.get(
-                "portfolio_exploration_archive", {}
-            ).get("quality_cell_count", 0),
-            "actionable_count": len(
-                state.get("portfolio_exploration_view", {}).get(
-                    "challenger_actions", []
-                )
-            ),
-        },
         "finalization_status": state["finalization_status"],
     }
 
@@ -2464,10 +2075,6 @@ def build_parser() -> argparse.ArgumentParser:
     add = sub.add_parser("add-hypothesis")
     add.add_argument("--state", required=True)
     add.add_argument("--spec", required=True)
-    activate = sub.add_parser("activate-challenger")
-    activate.add_argument("--state", required=True)
-    activate.add_argument("--challenger-id", required=True)
-    activate.add_argument("--reason", required=True)
     decision = sub.add_parser("hypothesis")
     decision.add_argument("--state", required=True)
     decision.add_argument("--action", required=True, choices=["select", "complete", "hard_dead", "deferred_low_value", "pause"])
@@ -2485,10 +2092,6 @@ def build_parser() -> argparse.ArgumentParser:
     projection.add_argument("--state", required=True)
     projection.add_argument("--offer-id", action="append", default=[])
     projection.add_argument("--reason", required=True)
-    stop = sub.add_parser("stop-assessment")
-    stop.add_argument("--state", required=True)
-    stop.add_argument("--reason", required=True)
-    stop.add_argument("--challenger-hypothesis-id", action="append", default=[])
     draft = sub.add_parser("export-draft")
     draft.add_argument("--state", required=True)
     draft.add_argument("--output", required=True)
@@ -2510,12 +2113,6 @@ def main(argv: list[str] | None = None) -> int:
             state = add_route_hypothesis(read_json(args.state), read_json(args.spec))
             write_json_atomic(args.state, state)
             print(json.dumps(_summary(state), ensure_ascii=False))
-        elif args.command == "activate-challenger":
-            state = activate_portfolio_challenger(
-                read_json(args.state), args.challenger_id, args.reason
-            )
-            write_json_atomic(args.state, state)
-            print(json.dumps(_summary(state), ensure_ascii=False))
         elif args.command == "hypothesis":
             state = record_hypothesis_decision(read_json(args.state), args.action, task_id=args.task_id, reason=args.reason)
             write_json_atomic(args.state, state)
@@ -2532,10 +2129,6 @@ def main(argv: list[str] | None = None) -> int:
             state = record_solver_projection_pins(
                 read_json(args.state), args.offer_id, args.reason
             )
-            write_json_atomic(args.state, state)
-            print(json.dumps(_summary(state), ensure_ascii=False))
-        elif args.command == "stop-assessment":
-            state = record_stop_assessment(read_json(args.state), args.reason, args.challenger_hypothesis_id)
             write_json_atomic(args.state, state)
             print(json.dumps(_summary(state), ensure_ascii=False))
         elif args.command == "export-draft":

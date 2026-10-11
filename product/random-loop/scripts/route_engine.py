@@ -1832,17 +1832,17 @@ def expand_session(
                     actual_price = float(segment["normalized_price"]) / float(
                         config["fx_to_base"][cap_currency]
                     )
-                    if actual_price >= maximum_leg_price:
+                    if actual_price > maximum_leg_price:
                         record = rejection_record(
                             parent_id,
                             offer,
-                            "leg_price_at_or_above_hard_cap",
+                            "leg_price_above_hard_cap",
                             state,
                             source,
                         )
                         record["quality_gate_audit"] = {
                             "scope": "leg_price",
-                            "comparison": "strictly_less_than",
+                            "comparison": "less_than_or_equal",
                             "actual_price": actual_price,
                             "maximum_price": maximum_leg_price,
                             "currency": cap_currency,

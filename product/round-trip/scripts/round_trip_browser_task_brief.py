@@ -56,8 +56,6 @@ class BrowserBriefError(ValueError):
 
 SEMANTIC_RESEARCH_KINDS = {
     "region_scope_definition",
-    "region_scope_challenge",
-    "structural_challenger_definition",
 }
 
 
@@ -65,25 +63,24 @@ def read_json(path: str | Path) -> Any:
     return json.loads(Path(path).read_text(encoding="utf-8"))
 
 
-def _registry(path: str | Path | None = None, policy_path: str | Path | None = None) -> dict[str, Any]:
+def _registry(path: str | Path | None = None) -> dict[str, Any]:
     try:
-        registry, _ = ADVISOR.load_contract(path, policy_path)
-        return registry
+        return ADVISOR.load_registry(path)
     except ADVISOR.ProviderAdvisorError as exc:
         raise BrowserBriefError(str(exc)) from exc
 
 
-def _source_advice(state: dict[str, Any], task: dict[str, Any], registry_path: str | Path | None = None, policy_path: str | Path | None = None) -> dict[str, Any]:
+def _source_advice(state: dict[str, Any], task: dict[str, Any], registry_path: str | Path | None = None) -> dict[str, Any]:
     try:
-        return ADVISOR.recommend_sources(state, task, registry_path, policy_path)
+        return ADVISOR.recommend_sources(state, task, registry_path)
     except ADVISOR.ProviderAdvisorError as exc:
         raise BrowserBriefError(str(exc)) from exc
 
 
-def _source_options(state: dict[str, Any], task: dict[str, Any], registry_path: str | Path | None = None, policy_path: str | Path | None = None) -> list[dict[str, Any]]:
+def _source_options(state: dict[str, Any], task: dict[str, Any], registry_path: str | Path | None = None) -> list[dict[str, Any]]:
     if task.get("research_kind") in SEMANTIC_RESEARCH_KINDS:
         return []
-    advice = _source_advice(state, task, registry_path, policy_path)
+    advice = _source_advice(state, task, registry_path)
     return [
         {
             "source_id": "ai-choice",
@@ -91,13 +88,9 @@ def _source_options(state: dict[str, Any], task: dict[str, Any], registry_path: 
             "url": None,
             "source_type": "open_ai_choice",
             "evidence_role": "depends_on_actual_source",
-            "advisory_rank": 0,
-            "advisory_score": None,
-            "fit_reasons": ["AI authority is broader than the catalog"],
-            "browser_notes": ["Record the actual source, seller when payable, and URL used."],
             "binding": False,
         },
-        *copy.deepcopy(advice["suggestions"]),
+        *copy.deepcopy(advice["suggestions"][:2]),
     ]
 
 
@@ -109,9 +102,9 @@ def _actionable(state: dict[str, Any]) -> list[dict[str, Any]]:
     return tasks
 
 
-def build_catalog(raw_state: Any, registry_path: str | Path | None = None, policy_path: str | Path | None = None) -> dict[str, Any]:
+def build_catalog(raw_state: Any, registry_path: str | Path | None = None) -> dict[str, Any]:
     state = SESSION.validate_session(raw_state)
-    _registry(registry_path, policy_path)
+    _registry(registry_path)
     actionable = _actionable(state)
     hypotheses = []
     nodes = state["hypothesis_tree"]["nodes"]
@@ -132,8 +125,8 @@ def build_catalog(raw_state: Any, registry_path: str | Path | None = None, polic
                         "research_kind": task["research_kind"],
                         "journey_scope": task.get("journey_scope"),
                         "temporal_phase": task.get("temporal_state", {}).get("phase", "not_applicable"),
-                        "source_option_count": len(_source_options(state, task, registry_path, policy_path)),
-                        "source_suggestion_ids": [item["source_id"] for item in _source_options(state, task, registry_path, policy_path)[:3]],
+                        "source_option_count": len(_source_options(state, task, registry_path)),
+                        "source_suggestion_ids": [item["source_id"] for item in _source_options(state, task, registry_path)[:3]],
                     }
                     for task in tasks
                 ],
@@ -153,49 +146,62 @@ def build_catalog(raw_state: Any, registry_path: str | Path | None = None, polic
         "hypotheses": hypotheses,
         "route_hypothesis_suggestions": copy.deepcopy(route_suggestions["suggestions"]),
         "route_suggestion_instruction": route_suggestions["selection_instruction"],
-        "portfolio_exploration_view": copy.deepcopy(
-            state.get("portfolio_exploration_view", {})
-        ),
         "selection_instruction": "Choose any actionable task. Gateway discovery precedes route locking; examples never define the airport pool. Continue a selected hypothesis until terminal disposition or pause.",
     }
 
 
-def task_to_brief(raw_state: Any, task_id: str, registry_path: str | Path | None = None, policy_path: str | Path | None = None) -> dict[str, Any]:
+def task_to_brief(raw_state: Any, task_id: str, registry_path: str | Path | None = None) -> dict[str, Any]:
     state = SESSION.validate_session(raw_state)
-    _registry(registry_path, policy_path)
+    _registry(registry_path)
     task = next((item for item in state["research_tasks"] if item["task_id"] == task_id), None)
     if task is None or task["status"] not in {"candidate", "pending"}:
         raise BrowserBriefError("task must be an AI-actionable candidate or pending task")
-    gateway = task["research_kind"] == "gateway_discovery"
+    pool_screen = task["research_kind"] == "region_pool_fare_screen"
     semantic = task["research_kind"] in SEMANTIC_RESEARCH_KINDS
     temporal_state = copy.deepcopy(task.get("temporal_state", {}))
     temporal_applicable = temporal_state.get("phase") not in {None, "not_applicable", "terminal"}
-    contract = (
-        {
+    if semantic:
+        contract = {
             "evidence_status": "ai_proposed",
-            "proposal_type": (
-                "region_scope"
-                if task["research_kind"] == "region_scope_definition"
-                else "region_scope_challenge"
-                if task["research_kind"] == "region_scope_challenge"
-                else "structural_challengers"
-            ),
+            "proposal_type": "region_scope",
             "rule": (
                 "Use AI semantic judgment and return a bounded structured proposal. This is "
                 "persisted AI state, not live Provider evidence and not a priced offer."
             ),
         }
-        if semantic
-        else
-        {
+    elif pool_screen:
+        contract = {
             "evidence_status": "research_observed",
-            "gateway_candidate_fields": ["candidate_id", "side", "node", "signal"],
-            "rule": "A gateway signal may create a candidate but never a priced movement. Do not collapse a city anchor to the nearest airport without evidence-backed comparison.",
+            "coverage_complete": True,
+            "date_coverage": "bounded_window",
+            "submitted_scope": copy.deepcopy(task["query_shape"]["submitted_scope"]),
+            "signal_kind": "joint_date_pair",
+            "required_signal_fields": [
+                "origin_gateway_node_id",
+                "destination_gateway_node_id",
+                "outbound_origin_gateway_node_id",
+                "outbound_destination_gateway_node_id",
+                "return_origin_gateway_node_id",
+                "return_destination_gateway_node_id",
+                "outbound_date",
+                "return_date",
+                "atomic_total",
+            ],
+            "price_selection_method": (
+                "Required: lowest_price_view, price_ascending, price_sorted_api, "
+                "or all_visible_compared."
+            ),
+            "rule": (
+                "Search the complete submitted airport pools, departure windows, and "
+                "stay range. Preserve the actual airports used in both directions and the dates returned by the "
+                "Provider. A sampled date pair never completes this screen; screen signals "
+                "are research only and require later payable Offer verification."
+            ),
         }
-        if gateway
-        else {
+    else:
+        contract = {
             "evidence_status": "verified_observed",
-            "observation_identity": ["observation_id", "source_id", "provider", "url", "observed_at"],
+            "observation_identity": ["observation_id", "source_id", "provider", "url", "observed_at", "price_selection_method"],
             "movement_fields": ["movement_id", "from_node", "to_node", "departure", "arrival", "mode", "operator", "service_id", "flight_identity for flight", "transfer_from_previous with status and connection_protection when researched"],
             "offer_fields": ["offer_id", "provider_offer_id", "source_id", "pricing_scope=atomic_offer", "journey_scope", "direction when one_way", "movement_ids", "price", "mandatory_baggage_cost", "required_accommodation_cost when unavoidable", "included_baggage", "provider", "seller", "url", "observed_at", "expires_at when visible", "ticket_context for planned exit", "evidence_status=verified_observed"],
             "rule": "Preserve every atomic ticket or surface quote whole. The price and mandatory baggage cost must cover the brief's traveler_count and baggage_policy. A required item missing from included_baggage is admissible only when paid_baggage_allowed=true and the Offer records a positive mandatory_baggage_cost. Never invent component prices; include RegionNode objects for newly observed movement endpoints. Mark connection_protection=carrier_protected only when the payable itinerary or seller explicitly establishes a protected through-ticket; atomic pricing alone is not proof.",
@@ -212,14 +218,13 @@ def task_to_brief(raw_state: Any, task_id: str, registry_path: str | Path | None
                 else None
             ),
         }
-    )
     advice = (
         {
             "dynamic_source_rules": [],
             "task_family": "ai_semantic_exploration",
         }
         if semantic
-        else _source_advice(state, task, registry_path, policy_path)
+        else _source_advice(state, task, registry_path)
     )
     query_shape = copy.deepcopy(task["query_shape"])
     if temporal_state.get("active_selection") is not None:
@@ -233,9 +238,9 @@ def task_to_brief(raw_state: Any, task_id: str, registry_path: str | Path | None
         "query_shape": query_shape,
         "traveler_count": state["scenario"]["intent"]["traveler_count"],
         "baggage_policy": copy.deepcopy(state["scenario"]["intent"]["baggage_policy"]),
-        "source_options": _source_options(state, task, registry_path, policy_path),
+        "source_options": _source_options(state, task, registry_path),
         "dynamic_source_rules": advice["dynamic_source_rules"],
-        "source_policy": {"decision_owner": "ai", "registry_is_whitelist": False, "registry_order_is_preference": False, "one_task_per_research_question": True, "source_fan_out": False, "task_family": advice["task_family"], "research_only_source_requires_payable_offer_verification": not gateway and not semantic},
+        "source_policy": {"decision_owner": "ai", "registry_is_whitelist": False, "registry_order_is_preference": False, "one_task_per_research_question": True, "source_fan_out": False, "task_family": advice["task_family"], "research_only_source_requires_payable_offer_verification": not semantic},
         "temporal_execution": {
             **temporal_state,
             "decision_owner": "ai",
@@ -244,15 +249,53 @@ def task_to_brief(raw_state: Any, task_id: str, registry_path: str | Path | None
             "same_task_id_for_surface_and_exact_verification": True,
         },
         "evidence_contract": contract,
-        "terminal_evidence_contract": {"fields": ["observation_id", "source_id", "evidence_status=no_result|rejected", "provider", "url", "observed_at", "reason"]} if not semantic else None,
+        "terminal_evidence_contract": (
+            {
+                "fields": [
+                    "submitted_scope",
+                    "observation_id",
+                    "source_id",
+                    "evidence_status=no_result|rejected",
+                    "provider",
+                    "url",
+                    "observed_at",
+                    "reason",
+                    "date_coverage=bounded_window",
+                ]
+            }
+            if pool_screen
+            else {
+                "fields": [
+                    "observation_id",
+                    "source_id",
+                    "evidence_status=no_result|rejected",
+                    "provider",
+                    "url",
+                    "observed_at",
+                    "reason",
+                    "date_coverage when the Provider exposes a date scope",
+                ]
+            }
+            if not semantic
+            else None
+        ),
         "observations_template": {
             "observation_version": SESSION.SESSION_VERSION,
             "bundle_id": "<stable-unique-bundle-id>",
             "task_id": task["task_id"],
-            "coverage_complete": False if temporal_state.get("phase") == "surface_discovery" else True,
+            **(
+                {"submitted_scope": copy.deepcopy(task["query_shape"]["submitted_scope"])}
+                if pool_screen
+                else {}
+            ),
+            "coverage_complete": False
+            if temporal_state.get("phase") == "surface_discovery"
+            else True,
             "observations": [
-                "<one ai_proposed region_scope or structural_challengers proposal>"
+                "<one ai_proposed region_scope proposal>"
                 if semantic
+                else "<pool-wide joint date-pair signals>"
+                if pool_screen
                 else "<research-only temporal signals, verified payable offer, or scoped terminal observation>"
             ],
         },
@@ -268,7 +311,7 @@ def catalog_markdown(catalog: dict[str, Any]) -> str:
         f"- Gateway candidates: {catalog['gateway_candidate_counts']}",
         f"- Actionable tasks: {catalog['actionable_task_count']}",
         "- Source registry is not a whitelist; AI owns source and route choice.",
-        "- Source suggestions are capability-scored; registry file order is ignored.",
+        "- Work Items carry at most three source hints; registry file order is ignored.",
     ]
     for hypothesis in catalog["hypotheses"]:
         lines.extend(["", f"## {hypothesis['hypothesis_id']}", f"- Kind: {hypothesis['hypothesis_kind']}", f"- Shape: {hypothesis['route_shape']}", f"- Status: {hypothesis['status']}"])
@@ -279,18 +322,6 @@ def catalog_markdown(catalog: dict[str, Any]) -> str:
         for suggestion in catalog["route_hypothesis_suggestions"]:
             lines.append(f"- `{suggestion['hypothesis_id']}` {suggestion['route_shape']}: {suggestion['origin_gateway_nodes']} -> {suggestion['destination_gateway_nodes']} — joint atomic quote is the first baseline")
         lines.append(catalog["route_suggestion_instruction"])
-    if catalog.get("portfolio_exploration_view"):
-        lines.extend(
-            [
-                "",
-                "## Portfolio exploration",
-                json.dumps(
-                    catalog["portfolio_exploration_view"],
-                    ensure_ascii=False,
-                    sort_keys=True,
-                ),
-            ]
-        )
     lines.extend(["", catalog["selection_instruction"]])
     return "\n".join(lines) + "\n"
 
@@ -309,9 +340,7 @@ def brief_markdown(brief: dict[str, Any]) -> str:
         "## Source options",
     ]
     for source in brief["source_options"]:
-        score = "AI choice" if source.get("advisory_score") is None else f"score {source['advisory_score']}"
-        reasons = "; ".join(source.get("fit_reasons", []))
-        lines.append(f"- {source['name']} (`{source['source_id']}`): {score}; {source['evidence_role']} — {source['url'] or 'AI-selected URL'} — {reasons}")
+        lines.append(f"- {source['name']} (`{source['source_id']}`): {source['evidence_role']} — {source['url'] or 'AI-selected URL'}")
     active_dynamic = [item for item in brief.get("dynamic_source_rules", []) if item.get("activation_state") == "applicable"]
     if active_dynamic:
         lines.extend(["", "## Triggered dynamic sources"])
@@ -326,12 +355,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--state", required=True)
     parser.add_argument("--task-id")
     parser.add_argument("--registry")
-    parser.add_argument("--policy")
     parser.add_argument("--format", choices=["json", "markdown"], default="markdown")
     args = parser.parse_args(argv)
     try:
         state = read_json(args.state)
-        value = task_to_brief(state, args.task_id, args.registry, args.policy) if args.task_id else build_catalog(state, args.registry, args.policy)
+        value = task_to_brief(state, args.task_id, args.registry) if args.task_id else build_catalog(state, args.registry)
         output = json.dumps(value, ensure_ascii=False, indent=2) if args.format == "json" else (brief_markdown(value) if args.task_id else catalog_markdown(value))
         print(output, end="" if output.endswith("\n") else "\n")
         return 0

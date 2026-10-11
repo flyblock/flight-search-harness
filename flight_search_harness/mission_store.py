@@ -86,7 +86,6 @@ class MissionStore:
             "items",
             "leases",
             "receipts/raw",
-            "receipts/admissions",
             "metrics/checkpoints",
         ):
             (root / relative).mkdir(parents=True, exist_ok=True)
@@ -114,7 +113,6 @@ class MissionStore:
             "leases",
             "receipts",
             "receipts/raw",
-            "receipts/admissions",
             "metrics",
             "metrics/checkpoints",
         }
@@ -236,7 +234,8 @@ class MissionStore:
             index = mission["work_items"].get(attempt["item_id"], {})
             decided = (
                 index.get("last_decision_attempt") == attempt["attempt_number"]
-                and isinstance(index.get("last_admission_ref"), str)
+                and index.get("last_decision")
+                in {"committed", "retry_required", "blocked"}
             )
             if decided:
                 changed = True
@@ -478,16 +477,14 @@ class MissionStore:
         self,
         mission: dict[str, Any],
         receipts: dict[str, dict[str, Any]],
-        receipt_refs: dict[str, str],
         decisions: dict[str, dict[str, Any]],
-    ) -> tuple[dict[str, Any], dict[str, Any], set[str]]:
-        """Persist decisions, then update the Lease once for the whole batch."""
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        """Index Product decisions, then update the Lease once for the whole batch."""
 
         mission = self._validate(mission)
         lease = self.active_lease(mission)
         if lease is None:
             raise HarnessProtocolError("admission requires an active Search Mission Lease")
-        newly_committed: set[str] = set()
         processed: set[tuple[str, int]] = set()
         for identifier, receipt in receipts.items():
             decision = decisions.get(identifier)
@@ -506,38 +503,18 @@ class MissionStore:
                 raise HarnessProtocolError(
                     f"unsupported Product Kernel Receipt decision: {decision}"
                 )
-            admission = {
-                "admission_version": "1.0",
-                "receipt_id": receipt["receipt_id"],
-                "receipt_ref": receipt_refs[identifier],
-                "item_id": identifier,
-                "attempt_number": receipt["attempt_number"],
-                "decision": normalized,
-            }
-            if normalized != "committed":
-                admission["error"] = str(
-                    decision.get("error") or "Product Kernel did not admit the Receipt"
-                )
-            target = self.mission_directory(mission["run_id"]) / "receipts" / "admissions" / f"{self._token(receipt['receipt_id'])}.json"
-            relative = target.relative_to(self.runs.run_directory(mission["run_id"])).as_posix()
-            existed = target.exists()
-            if existed:
-                if read_json(target) != admission:
-                    raise HarnessProtocolError("Receipt admission identity collision")
-            else:
-                write_json_atomic(target, admission)
             index = mission["work_items"].get(identifier)
             if not isinstance(index, dict):
                 raise HarnessProtocolError(f"unknown Search Mission Work Item {identifier}")
-            index["last_admission_ref"] = relative
             index["last_decision"] = normalized
             index["last_decision_attempt"] = receipt["attempt_number"]
             if normalized == "retry_required":
-                index["last_error"] = admission["error"]
+                index["last_error"] = str(
+                    decision.get("error")
+                    or "Product Kernel did not admit the Receipt"
+                )
             else:
                 index.pop("last_error", None)
-            if normalized == "committed" and not existed:
-                newly_committed.add(identifier)
             processed.add((identifier, receipt["attempt_number"]))
         # Persist the recovery index before removing attempts from the Lease.
         self.save(mission)
@@ -547,7 +524,7 @@ class MissionStore:
             if (attempt["item_id"], attempt["attempt_number"]) not in processed
         ]
         self._write_lease(mission, lease)
-        return mission, lease, newly_committed
+        return mission, lease
 
     def record_metrics(
         self,

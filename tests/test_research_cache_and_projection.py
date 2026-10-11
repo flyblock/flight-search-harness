@@ -1,4 +1,4 @@
-"""Research Cache safety and compact Worker projection specifications."""
+"""Result freshness, price ordering, and compact Worker projection specifications."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ import copy
 import json
 import tempfile
 import unittest
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -14,154 +14,64 @@ from flight_search_harness.adapters.codex_app_server import CodexAppServerBrowse
 from flight_search_harness.adapters.one_way import OneWayProductAdapter
 from flight_search_harness.adapters.random_loop import RandomLoopProductAdapter
 from flight_search_harness.adapters.round_trip import RoundTripProductAdapter
-from flight_search_harness.mission_workers import ExternalMissionWorker, _rebind_cached_payload
-from flight_search_harness.research_cache import ResearchCache
+from flight_search_harness.contracts import HarnessProtocolError, result_price_freshness
+from flight_search_harness.fixed_route_provider import validate_price_ordering
 from flight_search_harness.worker_projection import project_item, project_work
 
 
-ONE_WAY = "one_way"
-ROUND_TRIP = "round_trip"
-RANDOM_LOOP = "random_loop"
 ROOT = Path(__file__).resolve().parents[1]
 
 
-class ResearchCacheTestCase(unittest.TestCase):
-    def setUp(self) -> None:
-        self.temporary_directory = tempfile.TemporaryDirectory()
-        self.addCleanup(self.temporary_directory.cleanup)
-        self.root = Path(self.temporary_directory.name)
-        self.cache = ResearchCache(self.root)
-
-    def _cache_path(self, scope: str, fingerprint: str) -> Path:
-        return self.root / f"{self.cache._token(scope, fingerprint)}.json"
-
-    def test_cache_hash_mismatch_and_expiry_are_misses(self) -> None:
-        scope = f"provider-observation:{RANDOM_LOOP}"
-        fingerprint = "query-a"
-        payload = {"kind": "observations", "product_payload": {"offers": [1]}}
-        self.cache.put(scope, fingerprint, payload, ttl_seconds=60)
-        self.assertEqual(payload, self.cache.get(scope, fingerprint))
-
-        target = self._cache_path(scope, fingerprint)
-        persisted = json.loads(target.read_text(encoding="utf-8"))
-        persisted["payload"]["product_payload"]["offers"] = [2]
-        target.write_text(json.dumps(persisted), encoding="utf-8")
-        self.assertIsNone(self.cache.get(scope, fingerprint))
-
-        self.cache.put(scope, fingerprint, payload, ttl_seconds=60)
-        persisted = json.loads(target.read_text(encoding="utf-8"))
-        persisted["expires_at"] = (
-            datetime.now(timezone.utc) - timedelta(seconds=1)
-        ).isoformat(timespec="seconds")
-        target.write_text(json.dumps(persisted), encoding="utf-8")
-        self.assertIsNone(self.cache.get(scope, fingerprint))
-
-    def test_external_worker_does_not_fall_back_to_another_products_cache(self) -> None:
-        shared_scope = "fixed-route-observation-bundle"
-        fingerprint = "identical-query"
-        self.cache.put(
-            shared_scope,
-            fingerprint,
-            {
-                "kind": "observation_bundle",
-                "product_payload": {"bundle_id": "one-way-bundle"},
-            },
-            ttl_seconds=60,
+class ResultFreshnessTestCase(unittest.TestCase):
+    def test_completed_result_expires_after_900_seconds(self) -> None:
+        expired = result_price_freshness(
+            "2026-10-11T08:00:00+00:00",
+            now_utc=datetime(2026, 10, 11, 8, 15, tzinfo=timezone.utc),
         )
-        lease = {
-            "lease_id": "lease-a",
-            "mission_revision": 0,
-            "claim": {
-                "claim_id": "claim-a",
-                "worker_instance_id": "external-test",
-                "expires_at": "2099-01-01T00:00:00+00:00",
-            },
-            "items": [
-                {
-                    "item_id": "round-trip-research",
-                    "kind": "browser_research",
-                    "payload": {
-                        "work": {
-                            "product_id": ROUND_TRIP,
-                            "execution": {
-                                "cache_scope": shared_scope,
-                                "query_fingerprint": fingerprint,
-                            },
-                        }
-                    },
-                }
-            ],
-        }
+        self.assertEqual("2026-10-11T08:15:00+00:00", expired["price_valid_until"])
+        self.assertEqual("expired", expired["price_freshness"])
 
-        def checkpoint(_: dict[str, Any]) -> dict[str, Any]:
-            self.fail("a cache entry without the current product scope must be a miss")
 
-        result = ExternalMissionWorker().run(
-            lease,
-            checkpoint,
-            {"cache_root": str(self.root), "lease_ref": "mission/lease.json"},
-        )
-        self.assertEqual("yield", result["kind"])
-
-    def test_cache_removes_and_rebinds_admission_identity_per_attempt(self) -> None:
-        scope = f"provider-observation:{ONE_WAY}"
-        fingerprint = "query-identity"
-        self.cache.put(
-            scope,
-            fingerprint,
-            {
-                "kind": "observation_bundle",
-                "bundle_id": "stale-top-level",
-                "product_payload": {"bundle_id": "stale-product", "offers": [1]},
-            },
-            ttl_seconds=60,
-        )
-        cached = self.cache.get(scope, fingerprint)
-        self.assertNotIn("bundle_id", cached)
-        self.assertNotIn("bundle_id", cached["product_payload"])
-
-        rebound = _rebind_cached_payload(
-            cached,
-            {"product_id": ONE_WAY},
-            operation_id="lease-a:work-a:attempt-2",
-        )
-        self.assertRegex(rebound["bundle_id"], r"^cache-bundle-[a-f0-9]{20}$")
-        self.assertEqual(
-            rebound["bundle_id"], rebound["product_payload"]["bundle_id"]
-        )
-
-    def test_random_loop_cache_payload_is_rebound_to_current_request(self) -> None:
-        cached = {
+class PriceOrderingTestCase(unittest.TestCase):
+    def test_fare_requires_generic_lowest_price_method(self) -> None:
+        attempt = {
             "kind": "observations",
             "product_payload": {
-                "search_results": [
+                "observations": [
                     {
-                        "query_id": "old-query",
-                        "request_id": "old-request",
-                        "parent_id": "old-parent",
-                        "acquisition": {"method": "browser"},
+                        "evidence_status": "research_observed",
+                        "source_id": "provider-a",
+                        "provider": "Provider A",
+                        "url": "https://example.invalid/flights",
+                        "gateway_candidates": [
+                            {
+                                "signal": {
+                                    "lowest_displayed_total": {
+                                        "amount": 5616,
+                                        "currency": "CNY",
+                                    }
+                                }
+                            }
+                        ],
                     }
                 ]
             },
         }
-        work = {
-            "product_id": RANDOM_LOOP,
-            "brief": {
-                "request": {
-                    "request_id": "current-request",
-                    "parent_id": "current-parent",
-                }
-            },
-        }
-
-        rebound = _rebind_cached_payload(cached, work)
-        group = rebound["product_payload"]["search_results"][0]
-        self.assertEqual("current-request", group["request_id"])
-        self.assertEqual("current-parent", group["parent_id"])
-        self.assertNotIn("query_id", group)
-        self.assertEqual("cache", group["acquisition"]["method"])
-        self.assertEqual("old-request", cached["product_payload"]["search_results"][0]["request_id"])
-
+        with self.assertRaisesRegex(
+            HarnessProtocolError, "requires price_selection_method"
+        ):
+            validate_price_ordering(attempt)
+        attempt["product_payload"]["observations"][0][
+            "price_selection_method"
+        ] = "recommended_view"
+        with self.assertRaisesRegex(
+            HarnessProtocolError, "requires price_selection_method"
+        ):
+            validate_price_ordering(attempt)
+        attempt["product_payload"]["observations"][0][
+            "price_selection_method"
+        ] = "lowest_price_view"
+        validate_price_ordering(attempt)
 
 class WorkerProjectionTestCase(unittest.TestCase):
     @staticmethod
@@ -193,19 +103,18 @@ class WorkerProjectionTestCase(unittest.TestCase):
             }
 
         request = {
-            "request_version": "2.0",
+            "request_version": "4.0",
             "journey_shape": "one_way",
             "intent": {
                 "base_currency": "XTS",
-                "traveler_count": 2,
+                "adult_count": 2,
                 "baggage_policy": {
-                    "cabin_baggage": "one cabin bag",
-                    "checked_bag_count": 1,
+                    "cabin_baggage": "none_required",
+                    "checked_bag_count": 0,
                     "paid_baggage_allowed": True,
                 },
                 "overnight_allowed": False,
-                "self_transfer_policy": "avoid",
-                "fx_to_base": {"XTS": 1.0},
+                "self_transfer_policy": "allow",
                 "origin": side(
                     "origin-region", cls._one_way_node("AAA", "Alpha Airport")
                 ),
@@ -245,7 +154,6 @@ class WorkerProjectionTestCase(unittest.TestCase):
     def _real_random_loop_item_and_projection(
         cls,
     ) -> tuple[dict[str, Any], dict[str, Any]]:
-        adapter = RandomLoopProductAdapter()
         with tempfile.TemporaryDirectory() as raw_directory:
             product_directory = Path(raw_directory)
             catalog_path = product_directory / "airports.json"
@@ -266,21 +174,21 @@ class WorkerProjectionTestCase(unittest.TestCase):
                 ),
                 encoding="utf-8",
             )
+            adapter = RandomLoopProductAdapter(airport_catalog_ref=catalog_path)
             state = adapter.initialize(
                 {
-                    "request_version": "2.0",
+                    "request_version": "4.0",
                     "journey_shape": "random_loop",
                     "intent": {
                         "base_currency": "XTS",
-                        "traveler_count": 1,
+                        "adult_count": 1,
                         "baggage_policy": {
-                            "cabin_baggage": "personal item",
+                            "cabin_baggage": "none_required",
                             "checked_bag_count": 0,
                             "paid_baggage_allowed": True,
                         },
                         "overnight_allowed": True,
                         "self_transfer_policy": "allow",
-                        "fx_to_base": {"XTS": 1.0},
                         "departure_airports": ["AAA"],
                         "return_airports": ["AAA"],
                         "first_departure_window": {
@@ -293,12 +201,9 @@ class WorkerProjectionTestCase(unittest.TestCase):
                         "max_connection_wait_minutes": 720,
                         "maximum_total_duration_minutes": 2880,
                         "quality_gate": {
-                            "minimum_leg_efficiency_km_per_base_currency_unit": None,
                             "minimum_complete_loop_efficiency_km_per_base_currency_unit": 1.0,
-                            "target_complete_loop_efficiency_km_per_base_currency_unit": 2.0,
                             "maximum_leg_price_in_base_currency": None,
                         },
-                        "airport_catalog_ref": str(catalog_path),
                     },
                 },
                 product_directory,
@@ -339,19 +244,18 @@ class WorkerProjectionTestCase(unittest.TestCase):
             product_directory = Path(raw_directory)
             state = adapter.initialize(
                 {
-                    "request_version": "2.0",
+                    "request_version": "4.0",
                     "journey_shape": "round_trip",
                     "intent": {
                         "base_currency": "XTS",
-                        "traveler_count": 2,
+                        "adult_count": 2,
                         "baggage_policy": {
-                            "cabin_baggage": "personal item",
+                            "cabin_baggage": "personal_item",
                             "checked_bag_count": 0,
                             "paid_baggage_allowed": True,
                         },
                         "overnight_allowed": True,
                         "self_transfer_policy": "allow",
-                        "fx_to_base": {"XTS": 1.0},
                         "origin": side(
                             "origin-region", cls._one_way_node("AAA", "Alpha Airport")
                         ),
@@ -412,17 +316,20 @@ class WorkerProjectionTestCase(unittest.TestCase):
         self.assertTrue(effective_source["source_id"])
         self.assertEqual(2, projection["traveler_count"])
         self.assertEqual(
-            {"mode": "one cabin bag; checked_bag_count=1", "paid_baggage": True},
+            {"mode": "none_required", "paid_baggage": True},
             projection["required_baggage"],
         )
         self.assertIs(projection["overnight_allowed"], False)
-        self.assertEqual("avoid", projection["self_transfer_policy"])
+        self.assertEqual("allow", projection["self_transfer_policy"])
         self.assertTrue(projection["time_window"])
         self.assertTrue(projection["date_search"])
+        self.assertEqual(
+            "lowest_total_price", projection["price_ordering"]["objective"]
+        )
         self.assertIsInstance(projection["attempt_schema"], dict)
 
     def test_real_random_loop_projection_preserves_ordered_provider_protocol(self) -> None:
-        item, projection = self._real_random_loop_item_and_projection()
+        _, projection = self._real_random_loop_item_and_projection()
 
         self.assertEqual("random_loop_search", projection["research_kind"])
         batch = projection["query"]["required_source_batch"]
@@ -442,25 +349,8 @@ class WorkerProjectionTestCase(unittest.TestCase):
         ):
             self.assertIn(required_text, rule)
 
-        work = item["payload"]["work"]
-        changed_rule = copy.deepcopy(work)
-        changed_rule["brief"]["evidence_rule"] += " Changed binding rule."
-        changed_batch = copy.deepcopy(work)
-        changed_batch["brief"]["request"]["required_source_batch"] = ["different"]
-        base_fingerprint = projection["execution"]["query_fingerprint"]
-        for candidate in (changed_rule, changed_batch):
-            changed = project_work(
-                candidate,
-                research_kind=item["payload"]["research_kind"],
-                journey_scope=item["payload"]["journey_scope"],
-            )
-            self.assertNotEqual(
-                base_fingerprint,
-                changed["execution"]["query_fingerprint"],
-            )
-
     def test_real_round_trip_projection_preserves_temporal_protocol(self) -> None:
-        item, projection = self._real_round_trip_item_and_projection()
+        _, projection = self._real_round_trip_item_and_projection()
 
         self.assertEqual("priced_offer", projection["research_kind"])
         temporal_execution = projection["temporal_execution"]
@@ -471,25 +361,9 @@ class WorkerProjectionTestCase(unittest.TestCase):
         self.assertEqual("research_observed", temporal_research["evidence_status"])
         self.assertIs(temporal_research["coverage_complete"], False)
         self.assertIs(temporal_research["creates_offer_or_movement"], False)
-
-        work = item["payload"]["work"]
-        changed_execution = copy.deepcopy(work)
-        changed_execution["brief"]["temporal_execution"]["phase"] = "exact_verification"
-        changed_research = copy.deepcopy(work)
-        changed_research["brief"]["evidence_contract"]["temporal_research_option"][
-            "signal_kind"
-        ] = "changed_signal"
-        base_fingerprint = projection["execution"]["query_fingerprint"]
-        for candidate in (changed_execution, changed_research):
-            changed = project_work(
-                candidate,
-                research_kind=item["payload"]["research_kind"],
-                journey_scope=item["payload"]["journey_scope"],
-            )
-            self.assertNotEqual(
-                base_fingerprint,
-                changed["execution"]["query_fingerprint"],
-            )
+        self.assertEqual(
+            "lowest_total_price", projection["price_ordering"]["objective"]
+        )
 
     def test_codex_serializes_real_random_and_round_trip_policy_projections(self) -> None:
         _, one_way_projection = self._real_one_way_item_and_projection()
@@ -523,87 +397,6 @@ class WorkerProjectionTestCase(unittest.TestCase):
         self.assertTrue(projected[1]["evidence_rule"])
         self.assertTrue(projected[2]["temporal_execution"])
         self.assertTrue(projected[2]["temporal_research_option"])
-
-    def test_real_one_way_fingerprint_binds_every_hard_projection_semantic(self) -> None:
-        item, base = self._real_one_way_item_and_projection()
-        work = item["payload"]["work"]
-        research_kind = item["payload"]["research_kind"]
-        journey_scope = item["payload"]["journey_scope"]
-
-        def changed(mutator: Any) -> dict[str, Any]:
-            candidate = copy.deepcopy(work)
-            mutator(candidate["brief"])
-            return project_work(
-                candidate,
-                research_kind=research_kind,
-                journey_scope=journey_scope,
-            )
-
-        schema_variant = copy.deepcopy(work)
-        schema_variant["attempt_schema"] = {
-            "type": "object",
-            "required": ["changed_contract"],
-            "properties": {"changed_contract": {"type": "string"}},
-        }
-        variants = (
-            changed(lambda brief: brief.update({"task_family": "changed-family"})),
-            changed(
-                lambda brief: brief.update(
-                    {"query_scope_ladder": {"scope_ladder": [{"kind": "changed"}]}}
-                )
-            ),
-            changed(
-                lambda brief: brief.update(
-                    {"corridor_context": {"corridor_id": "changed-corridor"}}
-                )
-            ),
-            changed(
-                lambda brief: brief["provider_foundation"]["required_source"].update(
-                    {"source_id": "changed-provider"}
-                )
-            ),
-            changed(
-                lambda brief: brief["traveler_requirements"].update(
-                    {"traveler_count": 5}
-                )
-            ),
-            changed(
-                lambda brief: brief["traveler_requirements"].update(
-                    {"baggage": {"mode": "no baggage", "paid_baggage": False}}
-                )
-            ),
-            changed(
-                lambda brief: brief["traveler_requirements"].update(
-                    {"overnight_allowed": True}
-                )
-            ),
-            changed(
-                lambda brief: brief["traveler_requirements"].update(
-                    {"self_transfer_policy": "never"}
-                )
-            ),
-            changed(
-                lambda brief: brief["time_window"].update(
-                    {"latest_arrival": "2027-04-06T23:59:59Z"}
-                )
-            ),
-            changed(
-                lambda brief: brief["date_search"].update(
-                    {"mode": "fully_flexible"}
-                )
-            ),
-            project_work(
-                schema_variant,
-                research_kind=research_kind,
-                journey_scope=journey_scope,
-            ),
-        )
-        base_fingerprint = base["execution"]["query_fingerprint"]
-        for variant in variants:
-            self.assertNotEqual(
-                base_fingerprint,
-                variant["execution"]["query_fingerprint"],
-            )
 
     def test_codex_app_server_batch_serializes_canonical_projections(self) -> None:
         _, projection = self._real_one_way_item_and_projection()

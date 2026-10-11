@@ -22,8 +22,8 @@ The Run is the only lifecycle authority. The subordinate Mission file contains
 only an execution cursor, and the Lease file alone owns the active claim and
 pending Work Attempts. A rejected Receipt retries the same Work Item with a new
 `attempt_number`; it does not create a correction graph. Receipt admission is
-idempotent across interruption windows, while events, metrics, cache entries,
-and summaries remain optional sidecars.
+idempotent across interruption windows, while events and metrics remain
+optional sidecars.
 
 The Product Kernel produces `need_work`, `draft`, `blocked`, or `complete`
 effects. The Harness maps unrecoverable execution errors to terminal `failed`.
@@ -96,7 +96,7 @@ The Harness shares coordination, recovery, Work Items, Receipts, Workers, and St
 | --- | --- | --- |
 | Random loop | Ordered route tree, open frontier, siblings, closure state and efficiency beam | The destination sequence is discovered during a loop search |
 | One-way | Complete-route incumbent, forward and backward labels, residual budgets and Pareto alternatives | The goal is a constrained path to the selected destination |
-| Round trip | Regional gateways, complete-journey hypotheses, atomic Offers and portfolio challengers | Outbound and return pricing may be joint, split, nested or open-jaw |
+| Round trip | Regional gateways, complete-journey hypotheses, and atomic Offer portfolios | Outbound and return pricing may be joint, split, nested or open-jaw |
 
 Keeping those Modules independent gives each Product Kernel a small Harness-facing Interface while preserving its own Evidence rules, solver, recovery state, and finalization criteria.
 
@@ -117,4 +117,3 @@ These works influenced the design vocabulary and search discipline. Flight Searc
 - One-way residual-budget search: [`RESIDUAL-BUDGET-SEARCH.md`](../product/one-way/references/RESIDUAL-BUDGET-SEARCH.md)
 - One-way date scheduling: [`TEMPORAL-CORRIDOR-SCHEDULING.md`](../product/one-way/references/TEMPORAL-CORRIDOR-SCHEDULING.md)
 - Round-trip regional contract: [`REGIONAL-ROUND-TRIP-CONTRACT.md`](../product/round-trip/references/REGIONAL-ROUND-TRIP-CONTRACT.md)
-- Round-trip portfolio exploration: [`PORTFOLIO-EXPLORATION.md`](../product/round-trip/references/PORTFOLIO-EXPLORATION.md)

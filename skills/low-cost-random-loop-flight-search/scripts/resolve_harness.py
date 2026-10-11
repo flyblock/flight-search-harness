@@ -14,7 +14,7 @@ import zipfile
 from pathlib import Path, PurePosixPath, PureWindowsPath
 
 
-HARNESS_VERSION = "1.0.0"
+HARNESS_VERSION = "1.1.0"
 REPOSITORY = "flyblock/flight-search-harness"
 ARCHIVE_URL = (
     f"https://github.com/{REPOSITORY}/releases/download/v{HARNESS_VERSION}/"

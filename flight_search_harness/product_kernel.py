@@ -219,7 +219,18 @@ class AdapterProductKernel:
         elif pause_effect is not None:
             effect = pause_effect
         else:
-            effect = self._next_effect(product_directory)
+            try:
+                effect = self._next_effect(product_directory)
+            except Exception as exc:
+                planning_error = str(exc) or exc.__class__.__name__
+                effect = draft(
+                    "Receipt admission was committed, but planning the next "
+                    "Product Kernel effect was interrupted and can be resumed.",
+                    {
+                        "type": "resume_mission",
+                        "error": planning_error,
+                    },
+                )
         return self._transition(receipt_results, effect)
 
     @staticmethod

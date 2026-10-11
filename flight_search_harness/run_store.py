@@ -275,10 +275,7 @@ class RunStore:
                 raise HarnessProtocolError(
                     f"Run manifest {reference_field} must be {expected_reference}"
                 )
-        optional_references = {
-            "result_ref": "product/final.json",
-            "result_summary_ref": "result/summary.json",
-        }
+        optional_references = {"result_ref": "product/final.json"}
         for reference_field, expected_reference in optional_references.items():
             if (
                 reference_field in manifest
@@ -301,7 +298,6 @@ class RunStore:
             "mission_ref",
             "product_session_ref",
             "result_ref",
-            "result_summary_ref",
         }
         extras = sorted(set(manifest) - allowed)
         if extras:
@@ -367,18 +363,10 @@ class RunStore:
             write_json_atomic(target, result)
         return target.relative_to(self.run_directory(run_id)).as_posix()
 
-    def write_result_summary(self, run_id: str, summary: dict[str, Any]) -> str:
-        target = self.run_directory(run_id) / "result" / "summary.json"
-        write_json_atomic(target, summary)
-        return target.relative_to(self.run_directory(run_id)).as_posix()
-
     def read_result(self, run_id: str, reference: str) -> dict[str, Any]:
         run_root = self.run_directory(run_id).resolve()
         target = (run_root / reference).resolve()
-        allowed = {
-            (run_root / "product" / "final.json").resolve(),
-            (run_root / "result" / "summary.json").resolve(),
-        }
+        allowed = {(run_root / "product" / "final.json").resolve()}
         if target not in allowed:
             raise HarnessProtocolError("result reference is not an owned result artifact")
         return read_json(target)
@@ -470,9 +458,7 @@ class RunStore:
         leases = list((run_directory / "mission/leases").glob("lease-*.json"))
         items = list((run_directory / "mission/items").glob("*.json"))
         raw_receipts = list((run_directory / "mission/receipts/raw").glob("*.json"))
-        admissions = list((run_directory / "mission/receipts/admissions").glob("*.json"))
         session_path = run_directory / str(manifest["product_session_ref"])
-        summary_path = run_directory / "result/summary.json"
         full_result_path = run_directory / "product/final.json"
         return {
             "metrics_version": "2.0",
@@ -483,7 +469,6 @@ class RunStore:
             "event_bytes": events_path.stat().st_size if events_path.exists() else 0,
             "event_span_seconds": event_span_seconds,
             "session_bytes": session_path.stat().st_size if session_path.exists() else 0,
-            "result_summary_bytes": summary_path.stat().st_size if summary_path.exists() else 0,
             "full_result_bytes": full_result_path.stat().st_size if full_result_path.exists() else 0,
             "mission_version": mission.get("mission_version") if mission else None,
             "mission_revision": mission.get("revision") if mission else None,
@@ -491,7 +476,6 @@ class RunStore:
             "mission_lease_files": len(leases),
             "mission_item_files": len(items),
             "mission_raw_receipt_files": len(raw_receipts),
-            "mission_admission_files": len(admissions),
             "metrics_checkpoint_files": len(metric_files),
             "mission_metrics": aggregate,
         }

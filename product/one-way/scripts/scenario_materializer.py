@@ -401,8 +401,18 @@ def _normalize_side(raw: Any, side: str, currency: str) -> dict[str, Any]:
     other_time_field = (
         "max_egress_time_minutes" if side == "origin" else "max_access_time_minutes"
     )
-    primary_time = _integer(raw.get(max_time_field, 1440), f"{field}.{max_time_field}")
-    other_time = _integer(raw.get(other_time_field, primary_time), f"{field}.{other_time_field}")
+    primary_raw = raw.get(max_time_field)
+    other_raw = raw.get(other_time_field)
+    primary_time = (
+        None
+        if primary_raw is None
+        else _integer(primary_raw, f"{field}.{max_time_field}")
+    )
+    other_time = (
+        None
+        if other_raw is None
+        else _integer(other_raw, f"{field}.{other_time_field}")
+    )
     return {
         "region_id": region_id,
         "label": label,
@@ -667,8 +677,8 @@ def materialize_intent(raw: Any) -> dict[str, Any]:
     advisory_query_budget = intent["query_budget"] or DEFAULT_QUERY_BUDGET
     if not isinstance(intent["overnight_allowed"], bool):
         raise MaterializationError("overnight_allowed must be boolean")
-    if intent["self_transfer_policy"] not in {"allow", "avoid", "never"}:
-        raise MaterializationError("self_transfer_policy must be allow, avoid, or never")
+    if intent["self_transfer_policy"] not in {"allow", "never"}:
+        raise MaterializationError("self_transfer_policy must be allow or never")
     origin = intent["origin"]
     destination = intent["destination"]
     nodes = [*copy.deepcopy(origin["nodes"]), *copy.deepcopy(destination["nodes"])]

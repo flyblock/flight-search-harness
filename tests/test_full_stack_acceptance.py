@@ -47,15 +47,14 @@ def _side(region_id: str, airport: str) -> dict[str, Any]:
 def _shared() -> dict[str, Any]:
     return {
         "base_currency": "XTS",
-        "traveler_count": 1,
+        "adult_count": 1,
         "baggage_policy": {
-            "cabin_baggage": "personal item",
+            "cabin_baggage": "none_required",
             "checked_bag_count": 0,
             "paid_baggage_allowed": True,
         },
         "overnight_allowed": True,
         "self_transfer_policy": "allow",
-        "fx_to_base": {"XTS": 1.0},
     }
 
 
@@ -84,7 +83,7 @@ class FullStackAcceptanceTests(unittest.TestCase):
             )
             cases = {
                 "one_way": {
-                    "request_version": "2.0",
+                    "request_version": "4.0",
                     "journey_shape": "one_way",
                     "intent": {
                         **_shared(),
@@ -97,7 +96,7 @@ class FullStackAcceptanceTests(unittest.TestCase):
                     },
                 },
                 "round_trip": {
-                    "request_version": "2.0",
+                    "request_version": "4.0",
                     "journey_shape": "round_trip",
                     "intent": {
                         **_shared(),
@@ -114,7 +113,7 @@ class FullStackAcceptanceTests(unittest.TestCase):
                     },
                 },
                 "random_loop": {
-                    "request_version": "2.0",
+                    "request_version": "4.0",
                     "journey_shape": "random_loop",
                     "intent": {
                         **_shared(),
@@ -129,10 +128,8 @@ class FullStackAcceptanceTests(unittest.TestCase):
                         "max_legs": 3,
                         "connection_buffer_minutes": 30,
                         "max_connection_wait_minutes": 1440,
-                        "airport_catalog_ref": str(airport_catalog),
                         "quality_gate": {
                             "minimum_complete_loop_efficiency_km_per_base_currency_unit": 1.0,
-                            "target_complete_loop_efficiency_km_per_base_currency_unit": 2.0,
                         },
                     },
                 },
@@ -140,7 +137,7 @@ class FullStackAcceptanceTests(unittest.TestCase):
             adapters = (
                 OneWayProductAdapter(),
                 RoundTripProductAdapter(),
-                RandomLoopProductAdapter(),
+                RandomLoopProductAdapter(airport_catalog_ref=airport_catalog),
             )
             store = RunStore(root / "runs")
             harness = SearchMissionHarness(

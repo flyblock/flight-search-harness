@@ -8,6 +8,8 @@ import unittest
 from pathlib import Path
 from typing import Any
 
+from flight_search_harness.result_projection import summarize
+
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS = (
@@ -29,6 +31,15 @@ def load_module(name: str, filename: str) -> Any:
 MATERIALIZER = load_module("test_round_trip_materializer", "round_trip_intent_materializer.py")
 SESSION = load_module("test_round_trip_session", "round_trip_session.py")
 GENERATOR = load_module("test_round_trip_generator", "round_trip_hypothesis_generator.py")
+EVIDENCE_ADAPTER = load_module(
+    "test_round_trip_evidence_adapter", "round_trip_evidence_adapter.py"
+)
+BROWSER_BRIEF = load_module(
+    "test_round_trip_browser_task_brief", "round_trip_browser_task_brief.py"
+)
+TEMPORAL_SCHEDULER = load_module(
+    "test_round_trip_temporal_scheduler", "round_trip_temporal_scheduler.py"
+)
 
 
 def node(node_id: str, *, node_type: str, location: str) -> dict[str, Any]:
@@ -69,6 +80,8 @@ def intent(
     regional: bool = False,
     required_baggage_items: list[str] | None = None,
     paid_baggage_allowed: bool = False,
+    maximum_outbound_duration_minutes: int | None = None,
+    maximum_return_duration_minutes: int | None = None,
 ) -> dict[str, Any]:
     origin_airport = node("AAA", node_type="airport", location="Alpha Airport")
     destination_airport = node("BBB", node_type="airport", location="Beta Airport")
@@ -82,7 +95,7 @@ def intent(
         if regional
         else destination_airport
     )
-    return {
+    value = {
         "intent_id": "round-trip-contract-test",
         "trip_scope": "round_trip",
         "trip_mode": "fixed_destination",
@@ -115,6 +128,13 @@ def intent(
             "end": "2027-06-10T23:59:00+00:00",
         },
     }
+    if maximum_outbound_duration_minutes is not None:
+        value["maximum_outbound_duration_minutes"] = (
+            maximum_outbound_duration_minutes
+        )
+    if maximum_return_duration_minutes is not None:
+        value["maximum_return_duration_minutes"] = maximum_return_duration_minutes
+    return value
 
 
 def initialize(
@@ -122,6 +142,8 @@ def initialize(
     regional: bool = False,
     required_baggage_items: list[str] | None = None,
     paid_baggage_allowed: bool = False,
+    maximum_outbound_duration_minutes: int | None = None,
+    maximum_return_duration_minutes: int | None = None,
 ) -> dict[str, Any]:
     return SESSION.validate_session(
         SESSION.initialize_session(
@@ -130,6 +152,12 @@ def initialize(
                     regional=regional,
                     required_baggage_items=required_baggage_items,
                     paid_baggage_allowed=paid_baggage_allowed,
+                    maximum_outbound_duration_minutes=(
+                        maximum_outbound_duration_minutes
+                    ),
+                    maximum_return_duration_minutes=(
+                        maximum_return_duration_minutes
+                    ),
                 )
             )
         )
@@ -148,6 +176,8 @@ def evidence(
     temporal_signals: list[dict[str, Any]] | None = None,
     movements: list[dict[str, Any]] | None = None,
     offers: list[dict[str, Any]] | None = None,
+    submitted_scope: dict[str, Any] | None = None,
+    observations: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     return {
         "evidence_version": SESSION.SESSION_VERSION,
@@ -155,13 +185,14 @@ def evidence(
         "task_id": task_id,
         "evidence_status": status,
         "coverage_complete": coverage_complete,
+        "submitted_scope": copy.deepcopy(submitted_scope),
         "nodes": copy.deepcopy(nodes or []),
         "gateway_candidates": copy.deepcopy(gateway_candidates or []),
         "ai_proposals": copy.deepcopy(ai_proposals or []),
         "temporal_signals": copy.deepcopy(temporal_signals or []),
         "movements": copy.deepcopy(movements or []),
         "offers": copy.deepcopy(offers or []),
-        "observations": [],
+        "observations": copy.deepcopy(observations or []),
     }
 
 
@@ -180,20 +211,6 @@ def scope_proposal(side_name: str, gateway: dict[str, Any]) -> dict[str, Any]:
         ],
         "excluded_seed_nodes": [],
         "scope_reason": "A bounded primary airport scope for the declared region.",
-    }
-
-
-def challenge_proposal(side_name: str) -> dict[str, Any]:
-    return {
-        "proposal_version": SESSION.AI_EXPLORATION.VERSION,
-        "side": side_name,
-        "region_id": f"{side_name}-region",
-        "reviewed_categories": sorted(
-            SESSION.AI_EXPLORATION.REGION_SCOPE_REVIEW_CATEGORIES
-        ),
-        "additional_candidates": [],
-        "no_additional_candidate_reason": "Every required category was reviewed; no additional airport fits the declared limits.",
-        "challenge_reason": "Independent adversarial scope review completed.",
     }
 
 
@@ -226,38 +243,46 @@ def complete_regional_side(
             ],
         ),
     )
-    challenge_task_id = f"task-region-scope-challenge-{side_name}-g1"
-    state = SESSION.ingest_evidence(
-        state,
-        evidence(
-            f"bundle-{side_name}-challenge",
-            challenge_task_id,
-            "ai_proposed",
-            ai_proposals=[
-                {
-                    "proposal_type": "region_scope_challenge",
-                    "proposal": challenge_proposal(side_name),
-                }
-            ],
+    screen_task = next(
+        (
+            item
+            for item in state["research_tasks"]
+            if item.get("research_kind") == "region_pool_fare_screen"
+            and item.get("requirement_status") == "open"
         ),
+        None,
     )
-    gateway_task_id = f"task-gateway-{side_name}-{gateway_id.lower()}-g1"
-    state = SESSION.ingest_evidence(
-        state,
-        evidence(
-            f"bundle-{side_name}-gateway",
-            gateway_task_id,
-            "research_observed",
-            gateway_candidates=[
-                {
-                    "candidate_id": f"observed-{side_name}-{gateway_id}",
-                    "side": side_name,
-                    "node": gateway,
-                    "signal": {"kind": "observed_connectivity"},
-                }
-            ],
-        ),
-    )
+    if screen_task is not None:
+        state = SESSION.ingest_evidence(
+            state,
+            evidence(
+                "bundle-region-pool-fare-screen",
+                screen_task["task_id"],
+                "research_observed",
+                submitted_scope=screen_task["query_shape"]["submitted_scope"],
+                observations=[
+                    {
+                        "evidence_status": "research_observed",
+                        "date_coverage": "bounded_window",
+                    }
+                ],
+                temporal_signals=[
+                    {
+                        "signal_id": "screen-aaa-bbb-20270601-20270608",
+                        "signal_kind": "joint_date_pair",
+                        "origin_gateway_node_id": "AAA",
+                        "destination_gateway_node_id": "BBB",
+                        "outbound_origin_gateway_node_id": "AAA",
+                        "outbound_destination_gateway_node_id": "BBB",
+                        "return_origin_gateway_node_id": "BBB",
+                        "return_destination_gateway_node_id": "AAA",
+                        "outbound_date": "2027-06-01",
+                        "return_date": "2027-06-08",
+                        "atomic_total": {"amount": 100, "currency": "XTS"},
+                    }
+                ],
+            ),
+        )
     return SESSION.record_hypothesis_decision(
         state,
         "complete",
@@ -332,12 +357,19 @@ def route_state(
     required_baggage_items: list[str] | None = None,
     paid_baggage_allowed: bool = False,
     mandatory_baggage_cost: float = 0,
+    include_split: bool = False,
+    maximum_outbound_duration_minutes: int | None = None,
+    maximum_return_duration_minutes: int | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     state = initialize(
         required_baggage_items=required_baggage_items,
         paid_baggage_allowed=paid_baggage_allowed,
+        maximum_outbound_duration_minutes=maximum_outbound_duration_minutes,
+        maximum_return_duration_minutes=maximum_return_duration_minutes,
     )
     suggestion = GENERATOR.generate_suggestions(state)["suggestions"][0]
+    if include_split:
+        suggestion["advisory_basis"]["split_verification_indicated"] = True
     state = SESSION.validate_session(SESSION.add_route_hypothesis(state, suggestion))
     hypothesis_id = suggestion["hypothesis_id"]
     tasks = {
@@ -406,96 +438,439 @@ def route_state(
         ],
     )
     state = SESSION.ingest_evidence(state, joint_evidence)
-    state = SESSION.ingest_evidence(
-        state,
-        evidence(
-            "bundle-outbound",
-            tasks["one_way:outbound"],
-            "verified_observed",
-            movements=[outbound],
-            offers=[
-                offer(
-                    "offer-outbound",
-                    "one_way",
-                    ["movement-outbound"],
-                    90,
-                    direction="outbound",
-                    expires_at=expires_at,
-                    mandatory_baggage_cost=mandatory_baggage_cost,
-                )
-            ],
-        ),
-    )
-    state = SESSION.ingest_evidence(
-        state,
-        evidence(
-            "bundle-return",
-            tasks["one_way:return"],
-            "verified_observed",
-            movements=[returning],
-            offers=[
-                offer(
-                    "offer-return",
-                    "one_way",
-                    ["movement-return"],
-                    90,
-                    direction="return",
-                    expires_at=expires_at,
-                    mandatory_baggage_cost=mandatory_baggage_cost,
-                )
-            ],
-        ),
-    )
+    if include_split:
+        state = SESSION.ingest_evidence(
+            state,
+            evidence(
+                "bundle-outbound",
+                tasks["one_way:outbound"],
+                "verified_observed",
+                movements=[outbound],
+                offers=[
+                    offer(
+                        "offer-outbound",
+                        "one_way",
+                        ["movement-outbound"],
+                        90,
+                        direction="outbound",
+                        expires_at=expires_at,
+                        mandatory_baggage_cost=mandatory_baggage_cost,
+                    )
+                ],
+            ),
+        )
+        state = SESSION.ingest_evidence(
+            state,
+            evidence(
+                "bundle-return",
+                tasks["one_way:return"],
+                "verified_observed",
+                movements=[returning],
+                offers=[
+                    offer(
+                        "offer-return",
+                        "one_way",
+                        ["movement-return"],
+                        90,
+                        direction="return",
+                        expires_at=expires_at,
+                        mandatory_baggage_cost=mandatory_baggage_cost,
+                    )
+                ],
+            ),
+        )
     return SESSION.validate_session(state), joint_evidence
 
 
 def complete_for_finalization(
-    *, expires_at: str = "2099-01-01T00:00:00+00:00"
+    *,
+    expires_at: str = "2099-01-01T00:00:00+00:00",
+    include_split: bool = False,
 ) -> dict[str, Any]:
-    state, _ = route_state(expires_at=expires_at)
+    state, _ = route_state(expires_at=expires_at, include_split=include_split)
     state = SESSION.record_hypothesis_decision(
         state, "complete", reason="Every required atomic question has terminal Evidence."
-    )
-    state = SESSION.validate_session(state)
-    structural_task = next(
-        task
-        for task in state["research_tasks"]
-        if task["hypothesis_id"] == SESSION.STRUCTURAL_DISCOVERY_HYPOTHESIS
-    )
-    state = SESSION.record_hypothesis_decision(
-        state,
-        "select",
-        task_id=structural_task["task_id"],
-        reason="Assess a materially different structural challenger.",
-    )
-    state = SESSION.ingest_evidence(
-        state,
-        evidence(
-            "bundle-structural",
-            structural_task["task_id"],
-            "ai_proposed",
-            ai_proposals=[
-                {
-                    "proposal_type": "structural_challengers",
-                    "proposal": {
-                        "proposal_version": SESSION.AI_EXPLORATION.VERSION,
-                        "proposals": [],
-                        "no_material_challenger_reason": "No materially different structure fits this exact-airport request.",
-                    },
-                }
-            ],
-        ),
-    )
-    state = SESSION.record_hypothesis_decision(
-        state, "complete", reason="Structural challenger discovery is terminal."
-    )
-    state = SESSION.record_stop_assessment(
-        state, "No unresolved evidence-backed challenger remains."
     )
     return SESSION.validate_session(state)
 
 
 class RoundTripKernelTests(unittest.TestCase):
+    def test_exact_anchors_are_admitted_to_temporal_scheduling(self) -> None:
+        state = initialize()
+        schedule = TEMPORAL_SCHEDULER.schedule_round_trip_date_pairs(
+            state,
+            [
+                {
+                    "signal_id": "signal-exact-anchor-pair",
+                    "signal_kind": "joint_date_pair",
+                    "evidence_status": "research_observed",
+                    "origin_gateway_node_id": "AAA",
+                    "destination_gateway_node_id": "BBB",
+                    "outbound_origin_gateway_node_id": "AAA",
+                    "outbound_destination_gateway_node_id": "BBB",
+                    "return_origin_gateway_node_id": "BBB",
+                    "return_destination_gateway_node_id": "AAA",
+                    "outbound_date": "2027-06-01",
+                    "return_date": "2027-06-08",
+                    "atomic_total": {"amount": 125, "currency": "XTS"},
+                }
+            ],
+        )
+
+        self.assertEqual(schedule["candidate_catalog"]["candidate_count"], 1)
+        self.assertEqual(
+            schedule["input_contract"]["accepted_origin_gateway_ids"], ["AAA"]
+        )
+        self.assertEqual(
+            schedule["input_contract"]["accepted_destination_gateway_ids"],
+            ["BBB"],
+        )
+
+    def test_gateway_fare_aliases_normalize_and_ambiguous_prices_fail(self) -> None:
+        observation = {
+            "observation_version": EVIDENCE_ADAPTER.VERSION,
+            "bundle_id": "bundle-gateway-fare",
+            "task_id": "task-gateway-origin-aaa-g1",
+            "observations": [
+                {
+                    "observation_id": "observation-gateway-fare",
+                    "evidence_status": "research_observed",
+                    "source_id": "google-flights",
+                    "provider": "Google Flights",
+                    "url": "https://www.google.com/travel/flights",
+                    "observed_at": "2026-10-10T00:00:00+00:00",
+                    "gateway_candidates": [
+                        {
+                            "candidate_id": "observed-origin-AAA",
+                            "side": "origin",
+                            "node": node(
+                                "AAA",
+                                node_type="airport",
+                                location="Alpha Airport",
+                            ),
+                            "signal": {
+                                "signal_kind": "dated_fare",
+                                "lowest_displayed_total": {
+                                    "amount": 125,
+                                    "currency": "XTS",
+                                },
+                                "destination_gateway_node_id": "BBB",
+                            },
+                        }
+                    ],
+                }
+            ],
+        }
+
+        adapted = EVIDENCE_ADAPTER.adapt_observations(
+            observation, trusted_at="2026-10-10T01:00:00+00:00"
+        )
+        signal = adapted["gateway_candidates"][0]["signal"]
+        self.assertEqual(signal["kind"], "dated_fare")
+        self.assertEqual(
+            signal["dated_fare_amount"], {"amount": 125.0, "currency": "XTS"}
+        )
+        self.assertEqual(signal["opposite_gateway_node_id"], "BBB")
+        self.assertEqual(signal["date_coverage"], "sampled_date_pair")
+        self.assertNotIn("signal_kind", signal)
+        self.assertNotIn("lowest_displayed_total", signal)
+        self.assertNotIn("destination_gateway_node_id", signal)
+
+        destination_observation = copy.deepcopy(observation)
+        destination_candidate = destination_observation["observations"][0][
+            "gateway_candidates"
+        ][0]
+        destination_candidate["candidate_id"] = "observed-destination-BBB"
+        destination_candidate["side"] = "destination"
+        destination_candidate["node"] = node(
+            "BBB", node_type="airport", location="Beta Airport"
+        )
+        destination_candidate["signal"].pop("destination_gateway_node_id")
+        destination_candidate["signal"]["origin_gateway_node_id"] = "AAA"
+        destination_signal = EVIDENCE_ADAPTER.adapt_observations(
+            destination_observation,
+            trusted_at="2026-10-10T01:00:00+00:00",
+        )["gateway_candidates"][0]["signal"]
+        self.assertEqual(destination_signal["opposite_gateway_node_id"], "AAA")
+        self.assertNotIn("origin_gateway_node_id", destination_signal)
+
+        missing_pair = copy.deepcopy(observation)
+        del missing_pair["observations"][0]["gateway_candidates"][0]["signal"][
+            "destination_gateway_node_id"
+        ]
+        with self.assertRaisesRegex(
+            EVIDENCE_ADAPTER.EvidenceAdapterError,
+            "opposite_gateway_node_id",
+        ):
+            EVIDENCE_ADAPTER.adapt_observations(
+                missing_pair, trusted_at="2026-10-10T01:00:00+00:00"
+            )
+
+        conflicting_alias = copy.deepcopy(observation)
+        conflicting_alias["observations"][0]["gateway_candidates"][0]["signal"][
+            "dated_fare_amount"
+        ] = {"amount": 130, "currency": "XTS"}
+        with self.assertRaisesRegex(
+            EVIDENCE_ADAPTER.EvidenceAdapterError, "conflicts"
+        ):
+            EVIDENCE_ADAPTER.adapt_observations(
+                conflicting_alias, trusted_at="2026-10-10T01:00:00+00:00"
+            )
+
+        conflicting_pair = copy.deepcopy(observation)
+        conflicting_pair["observations"][0]["gateway_candidates"][0]["signal"][
+            "opposite_gateway_node_id"
+        ] = "CCC"
+        with self.assertRaisesRegex(
+            EVIDENCE_ADAPTER.EvidenceAdapterError, "conflicts"
+        ):
+            EVIDENCE_ADAPTER.adapt_observations(
+                conflicting_pair, trusted_at="2026-10-10T01:00:00+00:00"
+            )
+
+    def test_pool_screen_ranks_pair_and_dates_without_seed_priority(self) -> None:
+        state = initialize()
+        state["gateway_candidates"]["origin"].append(
+            {
+                "candidate_id": "observed-origin-ALT",
+                "side": "origin",
+                "node": node("ALT", node_type="airport", location="Alternate Origin"),
+                "signal": {"kind": "region_pool_screen_covered"},
+                "evidence_status": "research_observed",
+            }
+        )
+        state["gateway_candidates"]["destination"].append(
+            {
+                "candidate_id": "observed-destination-DST",
+                "side": "destination",
+                "node": node(
+                    "DST", node_type="airport", location="Alternate Destination"
+                ),
+                "signal": {"kind": "region_pool_screen_covered"},
+                "evidence_status": "research_observed",
+            }
+        )
+        state["research_tasks"].append(
+            {
+                "task_id": "task-region-pool-fare-screen-g1",
+                "research_kind": "region_pool_fare_screen",
+            }
+        )
+        state["scenario"]["fx_snapshot"] = {
+            "rates": {"XTS": 1.0, "EUR": 2.0}
+        }
+        state["temporal_signals"] = [
+            {
+                "signal_id": "screen-seed-expensive",
+                "signal_kind": "joint_date_pair",
+                "research_task_id": "task-region-pool-fare-screen-g1",
+                "origin_gateway_node_id": "AAA",
+                "destination_gateway_node_id": "BBB",
+                "outbound_origin_gateway_node_id": "AAA",
+                "outbound_destination_gateway_node_id": "BBB",
+                "return_origin_gateway_node_id": "DST",
+                "return_destination_gateway_node_id": "ALT",
+                "outbound_date": "2027-06-01",
+                "return_date": "2027-06-08",
+                "atomic_total": {"amount": 400, "currency": "EUR"},
+            },
+            {
+                "signal_id": "screen-alt-cheap",
+                "signal_kind": "joint_date_pair",
+                "research_task_id": "task-region-pool-fare-screen-g1",
+                "origin_gateway_node_id": "ALT",
+                "destination_gateway_node_id": "DST",
+                "outbound_origin_gateway_node_id": "ALT",
+                "outbound_destination_gateway_node_id": "DST",
+                "return_origin_gateway_node_id": "DST",
+                "return_destination_gateway_node_id": "ALT",
+                "outbound_date": "2027-06-02",
+                "return_date": "2027-06-09",
+                "atomic_total": {"amount": 600, "currency": "XTS"},
+            },
+        ]
+
+        result = GENERATOR.generate_suggestions(
+            state, max_closed_pairs=2, include_open_jaw=False
+        )
+        suggestions = result["suggestions"]
+        self.assertEqual(len(suggestions), 2)
+        self.assertEqual(
+            suggestions[0]["screen_candidate"]["signal_id"], "screen-alt-cheap"
+        )
+        self.assertEqual(
+            suggestions[0]["screen_candidate"]["outbound_date"], "2027-06-02"
+        )
+        self.assertEqual(suggestions[0]["origin_gateway_nodes"], ["ALT"])
+        self.assertEqual(suggestions[0]["destination_gateway_nodes"], ["DST"])
+        self.assertEqual(suggestions[1]["route_shape"], "regional_open_jaw")
+        self.assertEqual(suggestions[1]["origin_gateway_nodes"], ["AAA", "ALT"])
+        self.assertEqual(
+            suggestions[1]["destination_gateway_nodes"], ["BBB", "DST"]
+        )
+        state["result"]["best_portfolio"] = {
+            "total_mandatory_cost": {"amount": 650, "currency": "XTS"}
+        }
+        remaining = GENERATOR.generate_suggestions(
+            state, max_closed_pairs=2, include_open_jaw=False
+        )["suggestions"]
+        self.assertEqual(
+            [item["screen_candidate"]["signal_id"] for item in remaining],
+            ["screen-alt-cheap"],
+        )
+        state["result"]["best_portfolio"]["total_mandatory_cost"]["amount"] = 550
+        self.assertEqual(
+            GENERATOR.generate_suggestions(
+                state, max_closed_pairs=2, include_open_jaw=False
+            )["suggestions"],
+            [],
+        )
+
+    def test_primary_destination_sample_keeps_flexible_gateway_work_open(self) -> None:
+        state = initialize(regional=True)
+        state = complete_regional_side(state, "origin", "AAA")
+        destination_gateway = next(
+            item for item in state["scenario"]["nodes"] if item["node_id"] == "BBB"
+        )
+        scope_task_id = "task-region-scope-destination-g1"
+        state = SESSION.record_hypothesis_decision(
+            state,
+            "select",
+            task_id=scope_task_id,
+            reason="Define destination scope.",
+        )
+        state = SESSION.ingest_evidence(
+            state,
+            evidence(
+                "bundle-destination-scope-window",
+                scope_task_id,
+                "ai_proposed",
+                ai_proposals=[
+                    {
+                        "proposal_type": "region_scope",
+                        "proposal": scope_proposal(
+                            "destination", destination_gateway
+                        ),
+                    }
+                ],
+            ),
+        )
+        screen_task = next(
+            item
+            for item in state["research_tasks"]
+            if item.get("research_kind") == "region_pool_fare_screen"
+        )
+        self.assertEqual(
+            screen_task["query_shape"]["origin_gateway_node_ids"], ["AAA"]
+        )
+        self.assertEqual(
+            screen_task["query_shape"]["destination_gateway_node_ids"], ["BBB"]
+        )
+        brief = BROWSER_BRIEF.task_to_brief(state, screen_task["task_id"])
+        self.assertEqual(brief["research_kind"], "region_pool_fare_screen")
+        self.assertEqual(
+            brief["evidence_contract"]["date_coverage"], "bounded_window"
+        )
+
+        sampled = evidence(
+            "bundle-region-pool-sampled",
+            screen_task["task_id"],
+            "research_observed",
+            submitted_scope=screen_task["query_shape"]["submitted_scope"],
+            observations=[
+                {
+                    "evidence_status": "research_observed",
+                    "date_coverage": "sampled_date_pair",
+                }
+            ],
+            temporal_signals=[
+                {
+                    "signal_id": "screen-sampled-aaa-bbb",
+                    "signal_kind": "joint_date_pair",
+                    "origin_gateway_node_id": "AAA",
+                    "destination_gateway_node_id": "BBB",
+                    "outbound_origin_gateway_node_id": "AAA",
+                    "outbound_destination_gateway_node_id": "BBB",
+                    "return_origin_gateway_node_id": "BBB",
+                    "return_destination_gateway_node_id": "AAA",
+                    "outbound_date": "2027-06-01",
+                    "return_date": "2027-06-08",
+                    "atomic_total": {"amount": 125, "currency": "XTS"},
+                }
+            ],
+        )
+        with self.assertRaisesRegex(
+            SESSION.RoundTripSessionError, "sampled dates cannot complete"
+        ):
+            SESSION.ingest_evidence(state, sampled)
+
+        completed = EVIDENCE_ADAPTER.adapt_observations(
+            {
+                "observation_version": SESSION.SESSION_VERSION,
+                "bundle_id": "bundle-region-pool-bounded-window",
+                "task_id": screen_task["task_id"],
+                "coverage_complete": True,
+                "submitted_scope": copy.deepcopy(
+                    screen_task["query_shape"]["submitted_scope"]
+                ),
+                "observations": [
+                    {
+                        "observation_id": "obs-region-pool-bounded-window",
+                        "source_id": "google-flights",
+                        "evidence_status": "research_observed",
+                        "provider": "Google Flights",
+                        "url": "https://example.invalid/pool-screen",
+                        "observed_at": "2026-10-10T00:00:00+00:00",
+                        "price_selection_method": "lowest_price_view",
+                        "date_coverage": "bounded_window",
+                        "temporal_signals": copy.deepcopy(sampled["temporal_signals"]),
+                    }
+                ],
+            },
+            trusted_at="2026-10-10T00:01:00+00:00",
+        )
+        state = SESSION.validate_session(SESSION.ingest_evidence(state, completed))
+        task = next(
+            item
+            for item in state["research_tasks"]
+            if item["task_id"] == screen_task["task_id"]
+        )
+        self.assertEqual(task["requirement_status"], "satisfied")
+        signal = next(
+            item
+            for item in state["temporal_signals"]
+            if item["signal_id"] == "screen-sampled-aaa-bbb"
+        )
+        self.assertEqual(signal["outbound_date"], "2027-06-01")
+        self.assertEqual(signal["return_date"], "2027-06-08")
+
+    def test_surface_egress_uses_exit_buffer_and_export_lists_movements(self) -> None:
+        state, _ = route_state()
+        hypothesis_id = next(
+            hypothesis_id
+            for hypothesis_id, node_value in state["hypothesis_tree"]["nodes"].items()
+            if node_value.get("hypothesis_kind") == "complete_journey"
+        )
+        schedule = SESSION._exact_surface_schedule(state, hypothesis_id)
+        self.assertEqual(
+            schedule["origin-egress-return"]["not_before"],
+            "2027-06-08T12:00:00+00:00",
+        )
+
+        exported = SESSION.export_result(state, search_status="draft")
+        self.assertEqual(
+            [item["movement_id"] for item in exported["journey_movements"]],
+            ["movement-outbound", "movement-return"],
+        )
+        self.assertEqual(
+            [item["direction"] for item in exported["journey_movements"]],
+            ["outbound", "return"],
+        )
+        summary = summarize(
+            "round_trip", exported, full_result_ref="product/final.json"
+        )
+        self.assertEqual(summary["movements"], exported["journey_movements"])
+
     def test_persisted_session_omits_reconstructable_adapter_projections(self) -> None:
         persisted = SESSION.initialize_session(
             MATERIALIZER.materialize_intent(intent(regional=True))
@@ -503,7 +878,6 @@ class RoundTripKernelTests(unittest.TestCase):
 
         self.assertIn("hypotheses", persisted)
         self.assertIn("active_hypothesis_id", persisted)
-        self.assertIn("challenger_dispositions", persisted)
         for field in (
             "active_hypothesis",
             "hypothesis_tree",
@@ -520,7 +894,6 @@ class RoundTripKernelTests(unittest.TestCase):
         self.assertTrue(
             all("status" not in task for task in persisted["research_tasks"])
         )
-        self.assertNotIn("dispositions", persisted["structural_exploration"])
 
         hydrated = SESSION.validate_session(persisted)
         self.assertIn("hypothesis_tree", hydrated)
@@ -550,7 +923,7 @@ class RoundTripKernelTests(unittest.TestCase):
         self.assertEqual(exact, original)
         self.assertEqual(validated, original)
 
-    def test_dual_scope_passes_and_gateway_coverage_are_required(self) -> None:
+    def test_single_scope_pass_and_gateway_coverage_are_required(self) -> None:
         state = initialize(regional=True)
         state = complete_regional_side(state, "origin", "AAA")
         state = complete_regional_side(state, "destination", "BBB")
@@ -558,7 +931,6 @@ class RoundTripKernelTests(unittest.TestCase):
         for side_name in ("origin", "destination"):
             scope = state["region_scopes"][side_name]
             self.assertEqual(scope["status"], "defined")
-            self.assertTrue(scope["challenge_history"])
             self.assertNotIn("pending", scope["coverage"].values())
             self.assertTrue(
                 any(
@@ -569,7 +941,16 @@ class RoundTripKernelTests(unittest.TestCase):
         self.assertGreater(state["product_revision"], 0)
 
     def test_joint_and_split_atomic_offers_both_reach_solver(self) -> None:
-        state, _ = route_state()
+        baseline, _ = route_state()
+        baseline_hypothesis_id = baseline["active_hypothesis_id"]
+        baseline_scopes = {
+            task.get("journey_scope")
+            for task in baseline["research_tasks"]
+            if task.get("hypothesis_id") == baseline_hypothesis_id
+        }
+        self.assertEqual({"joint_round_trip"}, baseline_scopes)
+
+        state, _ = route_state(include_split=True)
 
         kinds = state["result"]["portfolio_kind_counts"]
         self.assertGreater(kinds["joint_round_trip"], 0)
@@ -579,6 +960,14 @@ class RoundTripKernelTests(unittest.TestCase):
             "joint_round_trip",
         )
         self.assertNotIn("solver_projection", state["result"])
+
+        at_limit, _ = route_state(
+            maximum_outbound_duration_minutes=120,
+            maximum_return_duration_minutes=120,
+        )
+        too_tight, _ = route_state(maximum_outbound_duration_minutes=119)
+        self.assertIsNotNone(at_limit["result"]["best_portfolio"])
+        self.assertIsNone(too_tight["result"]["best_portfolio"])
 
     def test_paid_baggage_permission_requires_a_visible_mandatory_cost(self) -> None:
         allowed, _ = route_state(
@@ -635,20 +1024,24 @@ class RoundTripKernelTests(unittest.TestCase):
         with self.assertRaisesRegex(SESSION.RoundTripSessionError, "conflicting content"):
             SESSION.ingest_evidence(state, conflicting)
 
-    def test_challenger_stop_assessment_is_revision_bound_and_finalizes(self) -> None:
+    def test_complete_verified_portfolio_finalizes_without_audit_ceremony(self) -> None:
         state = complete_for_finalization()
-        assessment = state["stop_assessment"]
 
-        self.assertEqual(assessment["assessed_revision"], state["product_revision"])
         self.assertTrue(SESSION._finalization_audit(state)["can_finalize"])
-        finalized, result = SESSION.finalize_session(state, "Product audit passed.")
+        self.assertFalse(
+            any(
+                task.get("research_kind") == "structural_challenger_definition"
+                for task in state["research_tasks"]
+            )
+        )
+        finalized, result = SESSION.finalize_session(state, "Verified portfolio complete.")
         self.assertEqual(finalized["finalization_status"], "final")
         self.assertEqual(result["search_status"], "final")
         self.assertGreater(finalized["product_revision"], state["product_revision"])
         self.assertTrue(SESSION._finalization_audit(finalized)["can_finalize"])
 
-    def test_expired_incumbent_can_fall_back_then_receive_fresh_stop(self) -> None:
-        state = complete_for_finalization()
+    def test_expired_incumbent_can_fall_back_and_finalize(self) -> None:
+        state = complete_for_finalization(include_split=True)
         joint = next(item for item in state["offers"] if item["offer_id"] == "offer-joint")
         joint["expires_at"] = "2030-01-01T00:00:00+00:00"
         original_now = SESSION._now
@@ -661,10 +1054,7 @@ class RoundTripKernelTests(unittest.TestCase):
                 "split_one_ways",
             )
             self.assertTrue(state["hypotheses"])
-            state = SESSION.record_stop_assessment(
-                state, "The surviving split portfolio has no unresolved challenger."
-            )
-            finalized, result = SESSION.finalize_session(state, "Fresh audit passed.")
+            finalized, result = SESSION.finalize_session(state, "Fresh portfolio selected.")
             self.assertEqual(result["best_portfolio"]["portfolio_kind"], "split_one_ways")
             self.assertEqual(finalized["finalization_status"], "final")
         finally:

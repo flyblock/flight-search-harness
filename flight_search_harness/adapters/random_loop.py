@@ -19,10 +19,10 @@ from ..contracts import (
     _plan_adapter_transition,
 )
 from ..observation_bundle import normalize_attempt
+from ..fx_rates import system_fx_context
 from ..request_values import (
     canonical_shared_intent,
     canonical_window,
-    validate_fx_snapshot_freshness,
 )
 from ..suite_layout import SuiteLayout
 
@@ -65,6 +65,8 @@ class RandomLoopProductAdapter:
         self,
         *,
         product_root: str | Path | None = None,
+        airport_catalog_ref: str | Path | None = None,
+        airport_transit_catalog_ref: str | Path | None = None,
     ):
         self.product_root = (
             Path(product_root).resolve()
@@ -74,6 +76,22 @@ class RandomLoopProductAdapter:
         self.engine = _load_module(
             "flight_search_harness_random_loop",
             self.product_root / "scripts" / "route_engine.py",
+        )
+        configured_airport_catalog = airport_catalog_ref or os.environ.get(
+            "FLIGHT_SEARCH_HARNESS_AIRPORT_CATALOG"
+        )
+        configured_transit_catalog = airport_transit_catalog_ref or os.environ.get(
+            "FLIGHT_SEARCH_HARNESS_AIRPORT_TRANSIT_CATALOG"
+        )
+        self.airport_catalog_ref = (
+            Path(configured_airport_catalog).resolve()
+            if configured_airport_catalog
+            else None
+        )
+        self.airport_transit_catalog_ref = (
+            Path(configured_transit_catalog).resolve()
+            if configured_transit_catalog
+            else None
         )
 
     @staticmethod
@@ -160,8 +178,8 @@ class RandomLoopProductAdapter:
         intent = request.get("intent")
         if not isinstance(intent, dict):
             raise HarnessProtocolError("random-loop request.intent must be an object")
-        validate_fx_snapshot_freshness(intent.get("fx_snapshot"))
         shared = canonical_shared_intent(intent)
+        shared["fx_to_base"] = system_fx_context(shared["base_currency"])["rates"]
         if not shared["overnight_allowed"]:
             raise HarnessProtocolError(
                 "random-loop currently supports only overnight_allowed=true; "
@@ -170,13 +188,15 @@ class RandomLoopProductAdapter:
         if shared["self_transfer_policy"] != "allow":
             raise HarnessProtocolError(
                 "random-loop currently supports only self_transfer_policy=allow; "
-                "its airport-only independent-leg search cannot enforce avoid or never"
+                "its airport-only independent-leg search cannot enforce never"
             )
-        if not shared["baggage_policy"]["paid_baggage_allowed"]:
+        if shared["baggage_policy"] != {
+            "cabin_baggage": "none_required",
+            "checked_bag_count": 0,
+            "paid_baggage_allowed": True,
+        }:
             raise HarnessProtocolError(
-                "random-loop currently supports only "
-                "baggage_policy.paid_baggage_allowed=true; its Product Kernel "
-                "cannot enforce a prohibition on paid baggage"
+                "random-loop currently supports only no minimum baggage requirement"
             )
         config = copy.deepcopy(intent)
         first_departure_window = canonical_window(intent, "first_departure_window")
@@ -197,7 +217,7 @@ class RandomLoopProductAdapter:
                 "preferred_trip_duration_hours": (
                     maximum_total_duration_minutes / 60.0
                 ),
-                "traveler_count": shared["traveler_count"],
+                "traveler_count": shared["adult_count"],
                 "baggage_policy": {
                     "cabin_baggage": shared["baggage_policy"]["cabin_baggage"],
                     "checked_bag_count": shared["baggage_policy"]["checked_bag_count"],
@@ -206,12 +226,7 @@ class RandomLoopProductAdapter:
                 "fx_to_base": shared["fx_to_base"],
             }
         )
-        maximum_provider_queries = config.pop("maximum_provider_queries", None)
-        if maximum_provider_queries is not None:
-            config["search_budget"] = {
-                "max_browser_queries": maximum_provider_queries
-            }
-        airport_catalog_ref = config.pop("airport_catalog_ref", None)
+        airport_catalog_ref = self.airport_catalog_ref
         if airport_catalog_ref is not None:
             config["airport_catalog"] = airport_catalog_ref
         maximum_leg_price = config.get("quality_gate", {}).pop(
@@ -223,6 +238,7 @@ class RandomLoopProductAdapter:
                 "base_currency"
             ]
         for public_field in (
+            "adult_count",
             "first_departure_window",
             "maximum_total_duration_minutes",
             "overnight_allowed",
@@ -262,7 +278,7 @@ class RandomLoopProductAdapter:
             if isinstance(airports, dict):
                 merged_airports.update(copy.deepcopy(airports))
             airports = merged_airports
-        transit_catalog_ref = config.pop("airport_transit_catalog_ref", None)
+        transit_catalog_ref = self.airport_transit_catalog_ref
         if transit_catalog_ref is not None:
             reference = Path(str(transit_catalog_ref))
             candidates = [reference] if reference.is_absolute() else [
@@ -961,7 +977,6 @@ class RandomLoopProductAdapter:
             return self._materialize_final_result(
                 product_directory, state, reason
             )
-        validate_fx_snapshot_freshness(state.get("config", {}).get("fx_snapshot"))
         self._remember_finalization_reason(product_directory, reason)
         try:
             state, result = self.engine.finalize_result(state, reason)
