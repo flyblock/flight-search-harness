@@ -41,7 +41,7 @@ The materializer never browses, geocodes, or chooses an airport. A seed gateway 
 
 For a non-exact natural-language region, gateway discovery begins with one bounded AI semantic pass rather than a hard-coded airport catalog. `region_scope_definition` accounts for request seeds and checks core city-code, nearby-city, surface-connected, cross-border, and specialized-airport categories. It is persisted with `evidence_status=ai_proposed`; it is not Provider Evidence or solver input.
 
-After both scopes are defined, the Session compiles one `region_pool_fare_screen` across their complete airport pools, departure windows, and stay range. Provider-native pooled search is preferred; bounded partitions remain part of the same Work Item. The Receipt preserves the complete submitted scope and actual airports used in both directions. A sampled date pair can never close the screen.
+After both scopes are defined, the Session compiles one `region_pool_fare_screen` across their complete airport pools, departure windows, and stay range. Provider-native pooled search is preferred; bounded airport partitions remain part of the same Work Item. Each admitted Observation records the airport partition and complete date/stay range actually submitted to a Provider-ranked query, plus only that partition's local winner or complete no-market result. The Product Kernel derives coverage from the partition union. A sampled date pair, calendar label, copied request scope, or Worker completion flag can never close the screen.
 
 Every non-exact regional side still owns an independent gateway hypothesis, but its semantic scope proposal defines membership rather than claiming price coverage. Screen signals are `research_observed` temporal facts and do not become payable Offers.
 
@@ -49,7 +49,7 @@ Evidence admission uses its evaluation time as the trusted upper bound for Worke
 
 Evidence bundle identity is product-idempotent. Replaying byte-equivalent admitted Evidence with the same `bundle_id` is a no-op; reusing that ID for different content is a protocol error.
 
-Pool-screen signals are research facts, not priced movements. A concrete city/station anchor uses `anchor_required`, so exact scheduled access and egress must be captured as payable atomic surface offers before a door-to-door portfolio can complete. A user-named region may explicitly use `any_admitted_gateway`; then an admitted gateway inside that region is the endpoint and no ticket to an abstract country/region label is invented.
+Pool-screen signals are research facts, not priced movements. A Provider-ranked partition needs only one local minimum, so neither airport-pair Work Item fan-out nor a persisted date-price matrix is required. A concrete city/station anchor uses `anchor_required`, so exact scheduled access and egress must be captured as payable atomic surface offers before a door-to-door portfolio can complete. A user-named region may explicitly use `any_admitted_gateway`; then an admitted gateway inside that region is the endpoint and no ticket to an abstract country/region label is invented.
 
 The AI selects which candidates deserve complete route research. Cheap proximity alone is not a sufficient reason; materially useful signals include observed access feasibility, a dated fare/calendar anomaly, a unique network connection, or a plausible complete-cost advantage.
 

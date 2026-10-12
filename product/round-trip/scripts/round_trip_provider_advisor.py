@@ -12,7 +12,7 @@ from typing import Any
 VERSION = "0.5.0"
 MAX_SOURCE_HINTS = 3
 FAMILY_SOURCE_HINTS = {
-    "region_pool_fare_screen": ["google-flights", "kiwi-com", "skyscanner"],
+    "region_pool_fare_screen": ["kiwi-com", "google-flights", "skyscanner"],
     "joint_quote": ["google-flights", "skyscanner", "kiwi-com"],
     "split_outbound": ["kiwi-com", "trip-com", "google-flights"],
     "split_return": ["kiwi-com", "trip-com", "google-flights"],

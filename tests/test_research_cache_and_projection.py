@@ -365,6 +365,55 @@ class WorkerProjectionTestCase(unittest.TestCase):
             "lowest_total_price", projection["price_ordering"]["objective"]
         )
 
+    def test_region_pool_projection_preserves_complete_execution_scope(self) -> None:
+        query = {
+            "trip_type": "region_pool_fare_screen",
+            "origin_gateway_node_ids": ["AAA", "AAX"],
+            "destination_gateway_node_ids": ["BBB", "BBX"],
+            "outbound_departure_window": {
+                "start": "2027-06-01T00:00:00+00:00",
+                "end": "2027-06-03T23:59:00+00:00",
+            },
+            "return_departure_window": {
+                "start": "2027-06-08T00:00:00+00:00",
+                "end": "2027-06-10T23:59:00+00:00",
+            },
+            "minimum_stay_nights": 7,
+            "maximum_stay_nights": 9,
+        }
+        projection = project_work(
+            {
+                "work_version": "1.0",
+                "product_id": "round_trip",
+                "task_id": "task-region-pool-fare-screen-g1",
+                "hypothesis_id": "hypothesis-gateway-destination",
+                "brief": {
+                    "research_kind": "region_pool_fare_screen",
+                    "query_shape": copy.deepcopy(query),
+                    "traveler_count": 1,
+                    "baggage_policy": {
+                        "required_items": [],
+                        "paid_baggage_allowed": True,
+                    },
+                    "evidence_contract": {
+                        "evidence_status": "research_observed",
+                        "provider_scope": {
+                            "coverage_semantics": "provider_ranked_window"
+                        },
+                        "rule": "Execute Provider-ranked airport partitions.",
+                    },
+                },
+                "attempt_schema": {"type": "object"},
+            },
+            research_kind="region_pool_fare_screen",
+        )
+
+        self.assertEqual(query, projection["query"])
+        self.assertEqual(
+            "provider_ranked_window",
+            projection["admission"]["provider_scope"]["coverage_semantics"],
+        )
+
     def test_codex_serializes_real_random_and_round_trip_policy_projections(self) -> None:
         _, one_way_projection = self._real_one_way_item_and_projection()
         _, random_projection = self._real_random_loop_item_and_projection()

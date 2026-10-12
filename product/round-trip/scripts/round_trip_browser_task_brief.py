@@ -172,9 +172,14 @@ def task_to_brief(raw_state: Any, task_id: str, registry_path: str | Path | None
     elif pool_screen:
         contract = {
             "evidence_status": "research_observed",
-            "coverage_complete": True,
-            "date_coverage": "bounded_window",
-            "submitted_scope": copy.deepcopy(task["query_shape"]["submitted_scope"]),
+            "provider_scope": {
+                "coverage_semantics": "provider_ranked_window",
+                "price_selection_method": "price_sorted_api",
+                "rule": (
+                    "Report the exact airport partition, complete departure windows, "
+                    "and stay range actually submitted to the Provider."
+                ),
+            },
             "signal_kind": "joint_date_pair",
             "required_signal_fields": [
                 "origin_gateway_node_id",
@@ -187,15 +192,17 @@ def task_to_brief(raw_state: Any, task_id: str, registry_path: str | Path | None
                 "return_date",
                 "atomic_total",
             ],
-            "price_selection_method": (
-                "Required: lowest_price_view, price_ascending, price_sorted_api, "
-                "or all_visible_compared."
-            ),
+            "price_selection_method": "Required: price_sorted_api.",
             "rule": (
-                "Search the complete submitted airport pools, departure windows, and "
-                "stay range. Preserve the actual airports used in both directions and the dates returned by the "
-                "Provider. A sampled date pair never completes this screen; screen signals "
-                "are research only and require later payable Offer verification."
+                "Use a Provider-native flexible-window query over the complete date "
+                "and stay range. Search the requested airport pools in one query when "
+                "supported; otherwise submit non-empty airport partitions in later "
+                "attempts of this same Work Item. Each coverage-closing Observation "
+                "carries its actual provider_scope and only that partition's local "
+                "minimum or complete no-market result. The Product Kernel, not the "
+                "Worker, derives coverage. "
+                "Manual calendars, sampled dates, and Google Flights date-grid browsing "
+                "may omit provider_scope to rank candidates, but cannot close this pool screen."
             ),
         }
     else:
@@ -227,6 +234,10 @@ def task_to_brief(raw_state: Any, task_id: str, registry_path: str | Path | None
         else _source_advice(state, task, registry_path)
     )
     query_shape = copy.deepcopy(task["query_shape"])
+    if pool_screen:
+        query_shape["coverage_progress"] = SESSION.pool_screen_progress(
+            state, task_id
+        )
     if temporal_state.get("active_selection") is not None:
         query_shape["ai_selected_exact_target"] = copy.deepcopy(temporal_state["active_selection"])
     return {
@@ -252,7 +263,6 @@ def task_to_brief(raw_state: Any, task_id: str, registry_path: str | Path | None
         "terminal_evidence_contract": (
             {
                 "fields": [
-                    "submitted_scope",
                     "observation_id",
                     "source_id",
                     "evidence_status=no_result|rejected",
@@ -260,7 +270,8 @@ def task_to_brief(raw_state: Any, task_id: str, registry_path: str | Path | None
                     "url",
                     "observed_at",
                     "reason",
-                    "date_coverage=bounded_window",
+                    "provider_scope for a complete no-market partition",
+                    "price_selection_method=price_sorted_api",
                 ]
             }
             if pool_screen
@@ -283,13 +294,8 @@ def task_to_brief(raw_state: Any, task_id: str, registry_path: str | Path | None
             "observation_version": SESSION.SESSION_VERSION,
             "bundle_id": "<stable-unique-bundle-id>",
             "task_id": task["task_id"],
-            **(
-                {"submitted_scope": copy.deepcopy(task["query_shape"]["submitted_scope"])}
-                if pool_screen
-                else {}
-            ),
             "coverage_complete": False
-            if temporal_state.get("phase") == "surface_discovery"
+            if pool_screen or temporal_state.get("phase") == "surface_discovery"
             else True,
             "observations": [
                 "<one ai_proposed region_scope proposal>"

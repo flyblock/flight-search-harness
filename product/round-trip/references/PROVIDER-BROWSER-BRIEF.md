@@ -2,7 +2,7 @@
 
 ## Authority
 
-The AI owns gateway, route, date, portfolio, and seller decisions. The shared fixed-route rule owns one narrow invariant: when Google Flights supports the Work Item shape, the first flight attempt uses it. After that attempt, the brief carries at most three non-binding source hints rather than a scored catalog. One Research Question remains one Work Item; source hints never create sibling Work Items.
+The AI owns gateway, route, date, portfolio, and seller decisions. The shared fixed-route rule owns one narrow invariant for exact priced flight research: when Google Flights supports the Work Item shape, the first attempt uses it. The regional pool screen instead begins with a capability-matched structured flexible-window Provider; a manual calendar or date grid cannot prove complete pool coverage. After the applicable first attempt, the brief carries at most three non-binding source hints rather than a scored catalog. One Research Question remains one Work Item; source hints never create sibling Work Items.
 
 The source catalog is adapted from the one-way Product Kernel's broad Provider model. Round-trip execution keeps the catalog breadth and dynamic official-source rules, but scores them against round-trip Work Item families rather than copying one-way corridor Work Items verbatim.
 
@@ -11,7 +11,7 @@ Registry file order has no ranking meaning. The Harness brief carries the bindin
 ## Progressive disclosure
 
 1. For a non-exact region, render AI-only `region_scope_definition` with no Provider assignment.
-2. Persist the bounded proposal and compile one Provider Work Item for each candidate airport.
+2. Persist the bounded proposals and compile one pool-screen Work Item across both admitted airport pools.
 3. Render the compact catalog and select one regional-scope, pool-screen, or complete-journey Work Item.
 4. Render only the selected Work Item's executable query and Evidence contract.
 5. Operate the browser, adapt visible observations, and ingest them transactionally.
@@ -21,7 +21,7 @@ Registry file order has no ranking meaning. The Harness brief carries the bindin
 
 `region_scope_definition` is a semantic-judgment Work Item, not Browser Evidence, and has no assigned Provider. It returns candidates, roles, inclusion reasons, seed exclusions, and a scope reason after checking the published gateway categories. No production mapping supplies the airport list.
 
-After both scopes are defined, one `region_pool_fare_screen` compares the complete admitted airport pools, date windows, and stay range. Its Receipt preserves the submitted scope and concrete pair/date totals. Sampled dates cannot close it, and its signals remain research-only until a payable Offer is verified.
+After both scopes are defined, one `region_pool_fare_screen` compares the complete admitted airport pools, date windows, and stay range. Each Observation reports the actual Provider-ranked airport partition while preserving the complete date windows and stay range. The Product Kernel derives coverage from the admitted partition union; neither `coverage_complete`, `date_coverage`, nor a copied request scope is Worker authority. Each partition keeps only its local winner or complete no-market result, and its signals remain research-only until a payable Offer is verified.
 
 Do not:
 
@@ -32,7 +32,8 @@ Do not:
 
 Typical Work Item fit is deliberately different by context:
 
-- one-way and round-trip flight discovery starts with Google Flights through the shared Provider policy;
+- one-way and exact round-trip priced research starts with Google Flights through the shared Provider policy;
+- a round-trip regional pool screen starts with a structured flexible-window Provider such as Kiwi.com and keeps manual Google Flights results as non-closing research signals;
 - after the required first attempt, broad global airport/date challengers may include Kiwi, Skyscanner, or KAYAK when the Work Item remains unresolved;
 - topology-only sources such as FlightConnections, Rome2Rio, OSM, or Transitland remain research-only;
 - a direct carrier becomes actionable when its market or an identified operator matches.

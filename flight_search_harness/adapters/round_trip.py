@@ -651,7 +651,8 @@ class RoundTripProductAdapter:
             raise HarnessProtocolError("round-trip active hypothesis must be closed before switching")
         brief = self.briefs.task_to_brief(state, task_id)
         semantic = task.get("research_kind") in self.briefs.SEMANTIC_RESEARCH_KINDS
-        if not semantic:
+        pool_screen = task.get("research_kind") == "region_pool_fare_screen"
+        if not semantic and not pool_screen:
             brief = provider_foundation.apply_foundation(
                 brief,
                 attempted_sources=provider_foundation.attempted_source_ids(
@@ -691,7 +692,12 @@ class RoundTripProductAdapter:
             for item in state["research_tasks"]
             if item["task_id"] == str(action["task_id"])
         )
-        if current_task.get("research_kind") not in self.briefs.SEMANTIC_RESEARCH_KINDS:
+        pool_screen = current_task.get("research_kind") == "region_pool_fare_screen"
+        if (
+            current_task.get("research_kind")
+            not in self.briefs.SEMANTIC_RESEARCH_KINDS
+            and not pool_screen
+        ):
             current_brief = provider_foundation.apply_foundation(
                 self.briefs.task_to_brief(state, str(action["task_id"])),
                 attempted_sources=provider_foundation.attempted_source_ids(
@@ -705,7 +711,15 @@ class RoundTripProductAdapter:
                 ],
             )
             provider_foundation.validate_price_ordering(attempt)
+        elif pool_screen:
+            provider_foundation.validate_price_ordering(attempt)
         payload = copy.deepcopy(attempt["product_payload"])
+        if pool_screen:
+            # Pool completion belongs to the Product Kernel.  The Worker reports
+            # Provider scopes and local minima; it never supplies the completion
+            # decision or echoes the requested scope as proof.
+            payload["coverage_complete"] = False
+            payload.pop("submitted_scope", None)
         payload.setdefault("observation_version", self.session.SESSION_VERSION)
         payload["bundle_id"] = (
             f"bundle-{action.get('_receipt_id') or action['action_id']}"
@@ -743,6 +757,10 @@ class RoundTripProductAdapter:
         if existing is None:
             return False
         candidate_payload = copy.deepcopy(payload)
+        task = self._task_by_id(state, str(action["task_id"]))
+        if task.get("research_kind") == "region_pool_fare_screen":
+            candidate_payload["coverage_complete"] = False
+            candidate_payload.pop("submitted_scope", None)
         candidate_payload["bundle_id"] = bundle_id
         candidate_payload["task_id"] = action["task_id"]
         try:

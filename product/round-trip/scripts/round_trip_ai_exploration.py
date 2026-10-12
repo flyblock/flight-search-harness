@@ -251,7 +251,7 @@ def region_pool_fare_screen_spec(
         str(record["node"]["node_id"])
         for record in destination_scope.get("candidate_records", [])
     ]
-    submitted_scope = {
+    scope = {
         "origin_gateway_node_ids": origin_ids,
         "destination_gateway_node_ids": destination_ids,
         "outbound_departure_window": copy.deepcopy(
@@ -272,10 +272,9 @@ def region_pool_fare_screen_spec(
         ),
         "query_shape": {
             "trip_type": "region_pool_fare_screen",
-            **copy.deepcopy(submitted_scope),
+            **copy.deepcopy(scope),
             "objective": "lowest_total_price",
             "required_price_selection_method": True,
-            "submitted_scope": submitted_scope,
         },
     }
 # End of regional scope implementation.

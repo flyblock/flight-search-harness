@@ -293,6 +293,7 @@ def _objective(brief: dict[str, Any]) -> str:
 def _compact_query(query: dict[str, Any], research_kind: str) -> dict[str, Any]:
     if research_kind in {
         "region_scope_definition",
+        "region_pool_fare_screen",
         "structural_challenger_definition",
     }:
         return copy.deepcopy(query)
@@ -376,6 +377,10 @@ def _compact_contract(raw: Any) -> dict[str, Any] | None:
         "admission_role",
         "research_only_source_requires_payable_offer_verification",
         "fields",
+        "provider_scope",
+        "signal_kind",
+        "required_signal_fields",
+        "price_selection_method",
     }
     return {
         key: copy.deepcopy(value)

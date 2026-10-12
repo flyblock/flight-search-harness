@@ -174,9 +174,9 @@ def evidence(
     gateway_candidates: list[dict[str, Any]] | None = None,
     ai_proposals: list[dict[str, Any]] | None = None,
     temporal_signals: list[dict[str, Any]] | None = None,
+    provider_scopes: list[dict[str, Any]] | None = None,
     movements: list[dict[str, Any]] | None = None,
     offers: list[dict[str, Any]] | None = None,
-    submitted_scope: dict[str, Any] | None = None,
     observations: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     return {
@@ -185,11 +185,11 @@ def evidence(
         "task_id": task_id,
         "evidence_status": status,
         "coverage_complete": coverage_complete,
-        "submitted_scope": copy.deepcopy(submitted_scope),
         "nodes": copy.deepcopy(nodes or []),
         "gateway_candidates": copy.deepcopy(gateway_candidates or []),
         "ai_proposals": copy.deepcopy(ai_proposals or []),
         "temporal_signals": copy.deepcopy(temporal_signals or []),
+        "provider_scopes": copy.deepcopy(provider_scopes or []),
         "movements": copy.deepcopy(movements or []),
         "offers": copy.deepcopy(offers or []),
         "observations": copy.deepcopy(observations or []),
@@ -211,6 +211,43 @@ def scope_proposal(side_name: str, gateway: dict[str, Any]) -> dict[str, Any]:
         ],
         "excluded_seed_nodes": [],
         "scope_reason": "A bounded primary airport scope for the declared region.",
+    }
+
+
+def ranked_provider_scope(
+    task: dict[str, Any],
+    *,
+    observation_id: str,
+    origins: list[str] | None = None,
+    destinations: list[str] | None = None,
+    disposition: str = "winner",
+    signal_ids: list[str] | None = None,
+) -> dict[str, Any]:
+    query = task["query_shape"]
+    return {
+        "observation_id": observation_id,
+        "source_id": "kiwi-com",
+        "observed_at": "2026-10-10T00:00:00+00:00",
+        "price_selection_method": "price_sorted_api",
+        "coverage_semantics": "provider_ranked_window",
+        "scope_disposition": disposition,
+        "origin_gateway_node_ids": list(
+            origins or query["origin_gateway_node_ids"]
+        ),
+        "destination_gateway_node_ids": list(
+            destinations or query["destination_gateway_node_ids"]
+        ),
+        "outbound_departure_window": {
+            key: str(value)[:10]
+            for key, value in query["outbound_departure_window"].items()
+        },
+        "return_departure_window": {
+            key: str(value)[:10]
+            for key, value in query["return_departure_window"].items()
+        },
+        "minimum_stay_nights": query.get("minimum_stay_nights"),
+        "maximum_stay_nights": query.get("maximum_stay_nights"),
+        "temporal_signal_ids": list(signal_ids or []),
     }
 
 
@@ -253,22 +290,28 @@ def complete_regional_side(
         None,
     )
     if screen_task is not None:
+        signal_id = "screen-aaa-bbb-20270601-20270608"
+        provider_scope = ranked_provider_scope(
+            screen_task,
+            observation_id="obs-region-pool-fare-screen",
+            signal_ids=[signal_id],
+        )
         state = SESSION.ingest_evidence(
             state,
             evidence(
                 "bundle-region-pool-fare-screen",
                 screen_task["task_id"],
                 "research_observed",
-                submitted_scope=screen_task["query_shape"]["submitted_scope"],
                 observations=[
                     {
                         "evidence_status": "research_observed",
-                        "date_coverage": "bounded_window",
+                        "provider_scope": copy.deepcopy(provider_scope),
                     }
                 ],
+                provider_scopes=[provider_scope],
                 temporal_signals=[
                     {
-                        "signal_id": "screen-aaa-bbb-20270601-20270608",
+                        "signal_id": signal_id,
                         "signal_kind": "joint_date_pair",
                         "origin_gateway_node_id": "AAA",
                         "destination_gateway_node_id": "BBB",
@@ -768,15 +811,16 @@ class RoundTripKernelTests(unittest.TestCase):
         )
         brief = BROWSER_BRIEF.task_to_brief(state, screen_task["task_id"])
         self.assertEqual(brief["research_kind"], "region_pool_fare_screen")
+        self.assertEqual("kiwi-com", brief["source_options"][1]["source_id"])
         self.assertEqual(
-            brief["evidence_contract"]["date_coverage"], "bounded_window"
+            brief["evidence_contract"]["provider_scope"]["coverage_semantics"],
+            "provider_ranked_window",
         )
 
         sampled = evidence(
             "bundle-region-pool-sampled",
             screen_task["task_id"],
             "research_observed",
-            submitted_scope=screen_task["query_shape"]["submitted_scope"],
             observations=[
                 {
                     "evidence_status": "research_observed",
@@ -799,34 +843,70 @@ class RoundTripKernelTests(unittest.TestCase):
                 }
             ],
         )
-        with self.assertRaisesRegex(
-            SESSION.RoundTripSessionError, "sampled dates cannot complete"
-        ):
-            SESSION.ingest_evidence(state, sampled)
+        sampled_state = SESSION.ingest_evidence(state, sampled)
+        sampled_task = next(
+            item
+            for item in sampled_state["research_tasks"]
+            if item["task_id"] == screen_task["task_id"]
+        )
+        self.assertEqual("open", sampled_task["requirement_status"])
+        self.assertIn(
+            "screen-sampled-aaa-bbb",
+            {item["signal_id"] for item in sampled_state["temporal_signals"]},
+        )
 
-        completed = EVIDENCE_ADAPTER.adapt_observations(
-            {
+        completed_input = {
                 "observation_version": SESSION.SESSION_VERSION,
                 "bundle_id": "bundle-region-pool-bounded-window",
                 "task_id": screen_task["task_id"],
-                "coverage_complete": True,
-                "submitted_scope": copy.deepcopy(
-                    screen_task["query_shape"]["submitted_scope"]
-                ),
+                "coverage_complete": False,
                 "observations": [
                     {
                         "observation_id": "obs-region-pool-bounded-window",
-                        "source_id": "google-flights",
+                        "source_id": "kiwi-com",
                         "evidence_status": "research_observed",
-                        "provider": "Google Flights",
-                        "url": "https://example.invalid/pool-screen",
+                        "provider": "Kiwi.com",
+                        "url": "https://www.kiwi.com/",
                         "observed_at": "2026-10-10T00:00:00+00:00",
-                        "price_selection_method": "lowest_price_view",
-                        "date_coverage": "bounded_window",
+                        "price_selection_method": "price_sorted_api",
+                        "provider_scope": {
+                            "coverage_semantics": "provider_ranked_window",
+                            "origin_gateway_node_ids": ["AAA"],
+                            "destination_gateway_node_ids": ["BBB"],
+                            "outbound_departure_window": {
+                                "start": "2027-06-01",
+                                "end": "2027-06-03",
+                            },
+                            "return_departure_window": {
+                                "start": "2027-06-08",
+                                "end": "2027-06-10",
+                            },
+                            "minimum_stay_nights": None,
+                            "maximum_stay_nights": None,
+                        },
                         "temporal_signals": copy.deepcopy(sampled["temporal_signals"]),
                     }
                 ],
-            },
+            }
+        manual_grid = copy.deepcopy(completed_input)
+        manual_grid["bundle_id"] = "bundle-region-pool-manual-grid"
+        manual_grid["observations"][0].update(
+            {
+                "source_id": "google-flights",
+                "provider": "Google Flights",
+                "price_selection_method": "lowest_price_view",
+            }
+        )
+        with self.assertRaisesRegex(
+            EVIDENCE_ADAPTER.EvidenceAdapterError, "price_sorted_api"
+        ):
+            EVIDENCE_ADAPTER.adapt_observations(
+                manual_grid,
+                trusted_at="2026-10-10T00:01:00+00:00",
+            )
+
+        completed = EVIDENCE_ADAPTER.adapt_observations(
+            completed_input,
             trusted_at="2026-10-10T00:01:00+00:00",
         )
         state = SESSION.validate_session(SESSION.ingest_evidence(state, completed))
@@ -843,6 +923,197 @@ class RoundTripKernelTests(unittest.TestCase):
         )
         self.assertEqual(signal["outbound_date"], "2027-06-01")
         self.assertEqual(signal["return_date"], "2027-06-08")
+
+    def test_pool_screen_completes_only_after_airport_partitions_exactly_cover(self) -> None:
+        state = initialize(regional=True)
+        alternate_origin = node(
+            "AAX", node_type="airport", location="Alternate Alpha Airport"
+        )
+        alternate_destination = node(
+            "BBX", node_type="airport", location="Alternate Beta Airport"
+        )
+        state["scenario"]["nodes"].extend(
+            [alternate_origin, alternate_destination]
+        )
+
+        for side_name, primary_id, alternate in (
+            ("origin", "AAA", alternate_origin),
+            ("destination", "BBB", alternate_destination),
+        ):
+            task_id = f"task-region-scope-{side_name}-g1"
+            state = SESSION.record_hypothesis_decision(
+                state, "select", task_id=task_id, reason=f"Define {side_name} scope."
+            )
+            primary = next(
+                item for item in state["scenario"]["nodes"] if item["node_id"] == primary_id
+            )
+            proposal = scope_proposal(side_name, primary)
+            proposal["candidates"].append(
+                {
+                    "candidate_id": f"scope-{side_name}-{alternate['node_id']}",
+                    "node": alternate,
+                    "roles": ["secondary_airport"],
+                    "inclusion_reason": "A bounded alternate airport for partition coverage.",
+                }
+            )
+            state = SESSION.ingest_evidence(
+                state,
+                evidence(
+                    f"bundle-{side_name}-scope-two-airports",
+                    task_id,
+                    "ai_proposed",
+                    ai_proposals=[
+                        {"proposal_type": "region_scope", "proposal": proposal}
+                    ],
+                ),
+            )
+            if side_name == "origin":
+                state = SESSION.record_hypothesis_decision(
+                    state,
+                    "complete",
+                    reason="Origin scope is defined before destination discovery.",
+                )
+
+        screen_task = next(
+            item
+            for item in state["research_tasks"]
+            if item.get("research_kind") == "region_pool_fare_screen"
+        )
+        self.assertEqual(
+            {"AAA", "AAX"}, set(screen_task["query_shape"]["origin_gateway_node_ids"])
+        )
+        self.assertEqual(
+            {"BBB", "BBX"},
+            set(screen_task["query_shape"]["destination_gateway_node_ids"]),
+        )
+
+        first_signal = {
+            "signal_id": "screen-partition-aaa-bbb",
+            "signal_kind": "joint_date_pair",
+            "origin_gateway_node_id": "AAA",
+            "destination_gateway_node_id": "BBB",
+            "outbound_origin_gateway_node_id": "AAA",
+            "outbound_destination_gateway_node_id": "BBB",
+            "return_origin_gateway_node_id": "BBB",
+            "return_destination_gateway_node_id": "AAA",
+            "outbound_date": "2027-06-01",
+            "return_date": "2027-06-08",
+            "atomic_total": {"amount": 125, "currency": "XTS"},
+        }
+        state = SESSION.ingest_evidence(
+            state,
+            evidence(
+                "bundle-region-pool-partition-aaa",
+                screen_task["task_id"],
+                "research_observed",
+                coverage_complete=True,
+                observations=[{"evidence_status": "research_observed"}],
+                temporal_signals=[first_signal],
+                provider_scopes=[
+                    ranked_provider_scope(
+                        screen_task,
+                        observation_id="obs-region-pool-partition-aaa",
+                        origins=["AAA"],
+                        destinations=["BBB", "BBX"],
+                        signal_ids=[first_signal["signal_id"]],
+                    )
+                ],
+            ),
+        )
+        pending_task = next(
+            item
+            for item in state["research_tasks"]
+            if item["task_id"] == screen_task["task_id"]
+        )
+        self.assertEqual("open", pending_task["requirement_status"])
+        self.assertEqual(2, len(SESSION.pool_screen_progress(state, screen_task["task_id"])["remaining_pairs"]))
+
+        second_signal = {
+            **copy.deepcopy(first_signal),
+            "signal_id": "screen-partition-aax-bbx",
+            "origin_gateway_node_id": "AAX",
+            "destination_gateway_node_id": "BBX",
+            "outbound_origin_gateway_node_id": "AAX",
+            "outbound_destination_gateway_node_id": "BBX",
+            "return_origin_gateway_node_id": "BBX",
+            "return_destination_gateway_node_id": "AAX",
+            "atomic_total": {"amount": 115, "currency": "XTS"},
+        }
+        state = SESSION.ingest_evidence(
+            state,
+            evidence(
+                "bundle-region-pool-partition-aax",
+                screen_task["task_id"],
+                "research_observed",
+                observations=[{"evidence_status": "research_observed"}],
+                temporal_signals=[second_signal],
+                provider_scopes=[
+                    ranked_provider_scope(
+                        screen_task,
+                        observation_id="obs-region-pool-partition-aax",
+                        origins=["AAX"],
+                        destinations=["BBB", "BBX"],
+                        signal_ids=[second_signal["signal_id"]],
+                    )
+                ],
+            ),
+        )
+        completed_task = next(
+            item
+            for item in state["research_tasks"]
+            if item["task_id"] == screen_task["task_id"]
+        )
+        self.assertEqual("satisfied", completed_task["requirement_status"])
+        self.assertTrue(
+            SESSION.pool_screen_progress(state, screen_task["task_id"])[
+                "coverage_complete"
+            ]
+        )
+
+    def test_pool_scope_accepts_the_complete_stay_feasible_window_envelope(self) -> None:
+        task = {
+            "query_shape": {
+                "origin_gateway_node_ids": ["AAA"],
+                "destination_gateway_node_ids": ["BBB"],
+                "outbound_departure_window": {
+                    "start": "2026-12-16T00:00:00+00:00",
+                    "end": "2027-01-10T23:59:00+00:00",
+                },
+                "return_departure_window": {
+                    "start": "2026-12-16T00:00:00+00:00",
+                    "end": "2027-01-10T23:59:00+00:00",
+                },
+                "minimum_stay_nights": 14,
+                "maximum_stay_nights": 21,
+            }
+        }
+        provider_scope = {
+            "origin_gateway_node_ids": ["AAA"],
+            "destination_gateway_node_ids": ["BBB"],
+            "outbound_departure_window": {
+                "start": "2026-12-16",
+                "end": "2026-12-27",
+            },
+            "return_departure_window": {
+                "start": "2026-12-30",
+                "end": "2027-01-10",
+            },
+            "minimum_stay_nights": 14,
+            "maximum_stay_nights": 21,
+            "coverage_semantics": "provider_ranked_window",
+            "price_selection_method": "price_sorted_api",
+            "scope_disposition": "winner",
+            "temporal_signal_ids": ["screen-winner"],
+        }
+
+        self.assertEqual(
+            {("AAA", "BBB")}, SESSION._pool_scope_pairs(task, provider_scope)
+        )
+        provider_scope["outbound_departure_window"]["end"] = "2026-12-26"
+        with self.assertRaisesRegex(
+            SESSION.RoundTripSessionError, "complete feasible date windows"
+        ):
+            SESSION._pool_scope_pairs(task, provider_scope)
 
     def test_surface_egress_uses_exit_buffer_and_export_lists_movements(self) -> None:
         state, _ = route_state()
