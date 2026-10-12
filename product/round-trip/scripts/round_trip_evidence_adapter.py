@@ -109,6 +109,117 @@ def _date_only(value: Any, field: str) -> str:
         raise EvidenceAdapterError(f"{field} must be an ISO date") from exc
 
 
+def _identifier_list(value: Any, field: str) -> list[str]:
+    if not isinstance(value, list) or not value:
+        raise EvidenceAdapterError(f"{field} must be a non-empty array")
+    identifiers = [_text(item, f"{field}[]") for item in value]
+    if len(set(identifiers)) != len(identifiers):
+        raise EvidenceAdapterError(f"{field} must not contain duplicates")
+    return identifiers
+
+
+def _date_window(value: Any, field: str) -> dict[str, str]:
+    if not isinstance(value, dict):
+        raise EvidenceAdapterError(f"{field} must be an object")
+    start = _date_only(value.get("start"), f"{field}.start")
+    end = _date_only(value.get("end"), f"{field}.end")
+    if start > end:
+        raise EvidenceAdapterError(f"{field}.start must not be after end")
+    return {"start": start, "end": end}
+
+
+def _stay_nights(value: Any, field: str) -> int | None:
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise EvidenceAdapterError(
+            f"{field} must be a non-negative integer or null"
+        )
+    return value
+
+
+def _provider_scope(
+    raw: Any,
+    field: str,
+    identity: dict[str, Any],
+    source_registry: dict[str, dict[str, Any]],
+    *,
+    disposition: str,
+    temporal_signal_ids: list[str],
+) -> dict[str, Any]:
+    if not isinstance(raw, dict):
+        raise EvidenceAdapterError(f"{field} must be an object")
+    if raw.get("coverage_semantics") != "provider_ranked_window":
+        raise EvidenceAdapterError(
+            f"{field}.coverage_semantics must be provider_ranked_window"
+        )
+    price_selection_method = identity.get("price_selection_method")
+    if price_selection_method != "price_sorted_api":
+        raise EvidenceAdapterError(
+            f"{field} requires price_selection_method=price_sorted_api"
+        )
+    if identity.get("source_id") == "google-flights":
+        raise EvidenceAdapterError(
+            f"{field} cannot use manual Google Flights evidence to close pool coverage"
+        )
+    registered_source = source_registry.get(str(identity.get("source_id")))
+    if not isinstance(registered_source, dict):
+        raise EvidenceAdapterError(
+            f"{field} requires a registered structured Provider"
+        )
+    expected_host = urlsplit(str(registered_source.get("url") or "")).hostname
+    observed_host = urlsplit(str(identity.get("url") or "")).hostname
+    if not expected_host or not observed_host or not (
+        observed_host == expected_host
+        or observed_host.endswith("." + expected_host)
+        or expected_host.endswith("." + observed_host)
+    ):
+        raise EvidenceAdapterError(
+            f"{field} source_id does not match the observed Provider URL"
+        )
+    minimum_stay = _stay_nights(
+        raw.get("minimum_stay_nights"), f"{field}.minimum_stay_nights"
+    )
+    maximum_stay = _stay_nights(
+        raw.get("maximum_stay_nights"), f"{field}.maximum_stay_nights"
+    )
+    if (
+        minimum_stay is not None
+        and maximum_stay is not None
+        and minimum_stay > maximum_stay
+    ):
+        raise EvidenceAdapterError(
+            f"{field}.minimum_stay_nights must not exceed maximum_stay_nights"
+        )
+    return {
+        "observation_id": identity["observation_id"],
+        "source_id": identity["source_id"],
+        "observed_at": identity["observed_at"],
+        "price_selection_method": price_selection_method,
+        "coverage_semantics": "provider_ranked_window",
+        "scope_disposition": disposition,
+        "origin_gateway_node_ids": _identifier_list(
+            raw.get("origin_gateway_node_ids"),
+            f"{field}.origin_gateway_node_ids",
+        ),
+        "destination_gateway_node_ids": _identifier_list(
+            raw.get("destination_gateway_node_ids"),
+            f"{field}.destination_gateway_node_ids",
+        ),
+        "outbound_departure_window": _date_window(
+            raw.get("outbound_departure_window"),
+            f"{field}.outbound_departure_window",
+        ),
+        "return_departure_window": _date_window(
+            raw.get("return_departure_window"),
+            f"{field}.return_departure_window",
+        ),
+        "minimum_stay_nights": minimum_stay,
+        "maximum_stay_nights": maximum_stay,
+        "temporal_signal_ids": list(temporal_signal_ids),
+    }
+
+
 def _money(value: Any, field: str) -> dict[str, Any] | None:
     if value is None:
         return None
@@ -469,9 +580,6 @@ def adapt_observations(
     coverage_complete = raw.get("coverage_complete", True)
     if not isinstance(coverage_complete, bool):
         raise EvidenceAdapterError("coverage_complete must be boolean")
-    submitted_scope = raw.get("submitted_scope")
-    if submitted_scope is not None and not isinstance(submitted_scope, dict):
-        raise EvidenceAdapterError("submitted_scope must be an object")
     sources = _registry(registry_path)
     trusted_time = _trusted_evaluation_time(trusted_at)
     observations = raw.get("observations")
@@ -483,6 +591,7 @@ def adapt_observations(
     nodes: dict[str, dict[str, Any]] = {}
     gateway_candidates: dict[str, dict[str, Any]] = {}
     temporal_signals: dict[str, dict[str, Any]] = {}
+    provider_scopes: list[dict[str, Any]] = []
     ai_proposals: list[dict[str, Any]] = []
     normalized: list[dict[str, Any]] = []
     for index, observation in enumerate(observations):
@@ -560,6 +669,21 @@ def adapt_observations(
                         f"{field}.date_coverage is unsupported"
                     )
                 terminal["date_coverage"] = date_coverage
+            if observation.get("provider_scope") is not None:
+                if status != "no_result":
+                    raise EvidenceAdapterError(
+                        f"{field}.provider_scope is allowed only for a complete no_result"
+                    )
+                normalized_scope = _provider_scope(
+                    observation["provider_scope"],
+                    f"{field}.provider_scope",
+                    identity,
+                    sources,
+                    disposition="no_market_result",
+                    temporal_signal_ids=[],
+                )
+                terminal["provider_scope"] = copy.deepcopy(normalized_scope)
+                provider_scopes.append(normalized_scope)
             normalized.append(terminal)
             continue
         if status == "research_observed":
@@ -594,6 +718,23 @@ def adapt_observations(
                 "gateway_candidate_ids": candidate_ids,
                 "temporal_signal_ids": signal_ids,
             }
+            if observation.get("provider_scope") is not None:
+                if not has_signals:
+                    raise EvidenceAdapterError(
+                        f"{field}.provider_scope requires temporal_signals"
+                    )
+                normalized_scope = _provider_scope(
+                    observation["provider_scope"],
+                    f"{field}.provider_scope",
+                    identity,
+                    sources,
+                    disposition="winner",
+                    temporal_signal_ids=signal_ids,
+                )
+                normalized_research["provider_scope"] = copy.deepcopy(
+                    normalized_scope
+                )
+                provider_scopes.append(normalized_scope)
             if observation.get("date_coverage") is not None:
                 date_coverage = observation["date_coverage"]
                 if date_coverage not in {
@@ -674,10 +815,10 @@ def adapt_observations(
         "task_id": task_id,
         "evidence_status": evidence_status,
         "coverage_complete": coverage_complete,
-        "submitted_scope": copy.deepcopy(submitted_scope),
         "nodes": list(nodes.values()),
         "gateway_candidates": list(gateway_candidates.values()),
         "temporal_signals": list(temporal_signals.values()),
+        "provider_scopes": provider_scopes,
         "ai_proposals": ai_proposals,
         "movements": list(movements.values()),
         "offers": list(offers.values()),

@@ -1473,6 +1473,191 @@ def _refresh_time_sensitive_state(state: dict[str, Any]) -> bool:
     return True
 
 
+def _scope_window_dates(raw: Any, field: str) -> dict[str, str]:
+    if not isinstance(raw, dict):
+        raise RoundTripSessionError(f"{field} must be an object")
+    try:
+        start = datetime.fromisoformat(
+            str(raw.get("start")).replace("Z", "+00:00")
+        ).date()
+        end = datetime.fromisoformat(
+            str(raw.get("end")).replace("Z", "+00:00")
+        ).date()
+    except ValueError as exc:
+        raise RoundTripSessionError(f"{field} must contain ISO dates") from exc
+    if start > end:
+        raise RoundTripSessionError(f"{field}.start must not be after end")
+    return {"start": start.isoformat(), "end": end.isoformat()}
+
+
+def _pool_scope_pairs(
+    task: dict[str, Any], provider_scope: dict[str, Any]
+) -> set[tuple[str, str]]:
+    query_shape = task.get("query_shape", {})
+    required_origins = set(query_shape.get("origin_gateway_node_ids", []))
+    required_destinations = set(
+        query_shape.get("destination_gateway_node_ids", [])
+    )
+    origins = set(provider_scope.get("origin_gateway_node_ids", []))
+    destinations = set(provider_scope.get("destination_gateway_node_ids", []))
+    if not origins or not destinations:
+        raise RoundTripSessionError(
+            "region pool Provider scope requires non-empty airport pools"
+        )
+    if not origins <= required_origins or not destinations <= required_destinations:
+        raise RoundTripSessionError(
+            "region pool Provider scope exceeds the requested airport pools"
+        )
+    raw_outbound = _scope_window_dates(
+        query_shape.get("outbound_departure_window"),
+        "query_shape.outbound_departure_window",
+    )
+    raw_return = _scope_window_dates(
+        query_shape.get("return_departure_window"),
+        "query_shape.return_departure_window",
+    )
+    observed_outbound = _scope_window_dates(
+        provider_scope.get("outbound_departure_window"),
+        "provider_scope.outbound_departure_window",
+    )
+    observed_return = _scope_window_dates(
+        provider_scope.get("return_departure_window"),
+        "provider_scope.return_departure_window",
+    )
+    minimum_stay = query_shape.get("minimum_stay_nights")
+    maximum_stay = query_shape.get("maximum_stay_nights")
+    outbound_start = datetime.fromisoformat(raw_outbound["start"]).date()
+    outbound_end = datetime.fromisoformat(raw_outbound["end"]).date()
+    return_start = datetime.fromisoformat(raw_return["start"]).date()
+    return_end = datetime.fromisoformat(raw_return["end"]).date()
+    if minimum_stay is not None:
+        outbound_end = min(
+            outbound_end, return_end - timedelta(days=int(minimum_stay))
+        )
+        return_start = max(
+            return_start, outbound_start + timedelta(days=int(minimum_stay))
+        )
+    if maximum_stay is not None:
+        outbound_start = max(
+            outbound_start, return_start - timedelta(days=int(maximum_stay))
+        )
+        return_end = min(
+            return_end, outbound_end + timedelta(days=int(maximum_stay))
+        )
+    feasible_outbound = {
+        "start": outbound_start.isoformat(),
+        "end": outbound_end.isoformat(),
+    }
+    feasible_return = {
+        "start": return_start.isoformat(),
+        "end": return_end.isoformat(),
+    }
+    if not (
+        (observed_outbound == raw_outbound and observed_return == raw_return)
+        or (
+            observed_outbound == feasible_outbound
+            and observed_return == feasible_return
+        )
+    ):
+        raise RoundTripSessionError(
+            "region pool Provider scope must preserve the complete feasible date windows"
+        )
+    for field in ("minimum_stay_nights", "maximum_stay_nights"):
+        if provider_scope.get(field) != query_shape.get(field):
+            raise RoundTripSessionError(
+                "region pool Provider scope must preserve the complete stay range"
+            )
+    if provider_scope.get("coverage_semantics") != "provider_ranked_window":
+        raise RoundTripSessionError(
+            "region pool Provider scope requires provider_ranked_window semantics"
+        )
+    if provider_scope.get("price_selection_method") != "price_sorted_api":
+        raise RoundTripSessionError(
+            "region pool Provider scope requires price_sorted_api"
+        )
+    disposition = provider_scope.get("scope_disposition")
+    if disposition not in {"winner", "no_market_result"}:
+        raise RoundTripSessionError(
+            "region pool Provider scope has unsupported disposition"
+        )
+    signal_ids = provider_scope.get("temporal_signal_ids", [])
+    if disposition == "winner" and not signal_ids:
+        raise RoundTripSessionError(
+            "region pool winner scope requires a local minimum signal"
+        )
+    if disposition == "no_market_result" and signal_ids:
+        raise RoundTripSessionError(
+            "region pool no-result scope cannot carry minimum signals"
+        )
+    return {(origin, destination) for origin in origins for destination in destinations}
+
+
+def _pool_screen_progress(
+    state: dict[str, Any],
+    task: dict[str, Any],
+    extra_evidence: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    query_shape = task.get("query_shape", {})
+    required_pairs = {
+        (origin, destination)
+        for origin in query_shape.get("origin_gateway_node_ids", [])
+        for destination in query_shape.get("destination_gateway_node_ids", [])
+    }
+    covered_pairs: set[tuple[str, str]] = set()
+    has_winner = False
+    bundles = [
+        bundle
+        for bundle in state.get("evidence_bundles", [])
+        if isinstance(bundle, dict) and bundle.get("task_id") == task.get("task_id")
+    ]
+    if extra_evidence is not None:
+        bundles.append(extra_evidence)
+    for bundle in bundles:
+        bundle_signal_ids = {
+            signal.get("signal_id")
+            for signal in bundle.get("temporal_signals", [])
+            if isinstance(signal, dict) and signal.get("signal_id")
+        }
+        for provider_scope in bundle.get("provider_scopes", []):
+            if not isinstance(provider_scope, dict):
+                raise RoundTripSessionError(
+                    "region pool provider_scopes must contain objects"
+                )
+            referenced_signal_ids = set(
+                provider_scope.get("temporal_signal_ids", [])
+            )
+            if not referenced_signal_ids <= bundle_signal_ids:
+                raise RoundTripSessionError(
+                    "region pool Provider scope references a signal outside its Evidence bundle"
+                )
+            covered_pairs.update(_pool_scope_pairs(task, provider_scope))
+            has_winner = (
+                has_winner
+                or provider_scope.get("scope_disposition") == "winner"
+            )
+    remaining_pairs = required_pairs - covered_pairs
+    return {
+        "coverage_complete": bool(required_pairs) and not remaining_pairs,
+        "has_winner": has_winner,
+        "covered_pairs": [
+            {"origin_gateway_node_id": origin, "destination_gateway_node_id": destination}
+            for origin, destination in sorted(covered_pairs)
+        ],
+        "remaining_pairs": [
+            {"origin_gateway_node_id": origin, "destination_gateway_node_id": destination}
+            for origin, destination in sorted(remaining_pairs)
+        ],
+    }
+
+
+def pool_screen_progress(raw_state: Any, task_id: str) -> dict[str, Any]:
+    state = validate_session(raw_state)
+    task = _task_by_id(state, task_id)
+    if task.get("research_kind") != "region_pool_fare_screen":
+        raise RoundTripSessionError("task is not a region pool fare screen")
+    return _pool_screen_progress(state, task)
+
+
 def ingest_evidence(raw_state: Any, raw_evidence: Any) -> dict[str, Any]:
     state = validate_session(raw_state)
     if not isinstance(raw_evidence, dict) or raw_evidence.get("evidence_version") != SESSION_VERSION:
@@ -1559,33 +1744,21 @@ def ingest_evidence(raw_state: Any, raw_evidence: Any) -> dict[str, Any]:
                 )
     temporal_signals = raw_evidence.get("temporal_signals", [])
     if pool_screen_task:
-        expected_scope = task.get("query_shape", {}).get("submitted_scope")
-        if raw_evidence.get("submitted_scope") != expected_scope:
-            raise RoundTripSessionError(
-                "region pool fare screen must preserve the complete submitted_scope"
-            )
-        if raw_evidence.get("coverage_complete") is not True:
-            raise RoundTripSessionError(
-                "region pool fare screen must be coverage_complete=true"
-            )
+        provider_scopes = raw_evidence.get("provider_scopes", [])
         if status == "research_observed" and not raw_evidence.get("observations"):
             raise RoundTripSessionError(
-                "region pool fare screen requires an observed bounded_window record"
+                "region pool fare screen requires an observed Provider result"
             )
-        if status == "research_observed" and any(
-            observation.get("date_coverage") != "bounded_window"
-            for observation in raw_evidence.get("observations", [])
-        ):
+        if status == "no_result" and not provider_scopes:
             raise RoundTripSessionError(
-                "sampled dates cannot complete the region pool fare screen"
+                "region pool fare screen requires Provider-ranked scope evidence"
             )
-        if status in {"no_result", "rejected"} and not any(
-            observation.get("date_coverage") == "bounded_window"
-            for observation in raw_evidence.get("observations", [])
-        ):
+        if status == "rejected" and provider_scopes:
             raise RoundTripSessionError(
-                "terminal region pool fare screen requires bounded_window coverage"
+                "rejected region pool evidence cannot cover Provider scope"
             )
+        for provider_scope in provider_scopes:
+            _pool_scope_pairs(task, provider_scope)
     if pool_screen_research:
         query_shape = task.get("query_shape", {})
         if not isinstance(temporal_signals, list) or not temporal_signals:
@@ -1665,14 +1838,34 @@ def ingest_evidence(raw_state: Any, raw_evidence: Any) -> dict[str, Any]:
     next_task = _task_by_id(next_state, task["task_id"])
     next_task["attempt_count"] += 1
     next_task["evidence_bundle_ids"].append(bundle_id)
-    coverage_complete = raw_evidence.get("coverage_complete", True)
+    pool_progress = (
+        _pool_screen_progress(next_state, next_task, raw_evidence)
+        if pool_screen_task
+        else None
+    )
+    coverage_complete = (
+        bool(pool_progress["coverage_complete"])
+        if pool_progress is not None
+        else raw_evidence.get("coverage_complete", True)
+    )
     if coverage_complete:
+        terminal_without_winner = bool(
+            pool_progress is not None and not pool_progress["has_winner"]
+        )
         _set_requirement_state(
             next_task,
-            "exhausted" if status in {"no_result", "rejected"} else "satisfied",
+            "exhausted"
+            if terminal_without_winner
+            or (pool_progress is None and status in {"no_result", "rejected"})
+            else "satisfied",
             evidence_disposition=status,
         )
-        next_task["status"] = status
+        if terminal_without_winner:
+            next_task["status"] = "no_result"
+        elif pool_progress is not None:
+            next_task["status"] = "research_observed"
+        else:
+            next_task["status"] = status
     else:
         _set_requirement_state(
             next_task, "open", evidence_disposition=status
@@ -1695,7 +1888,7 @@ def ingest_evidence(raw_state: Any, raw_evidence: Any) -> dict[str, Any]:
                     if signal["signal_id"] not in next_temporal["signal_refs"]:
                         next_temporal["signal_refs"].append(signal["signal_id"])
                 next_temporal["phase"] = "surface_discovery"
-            else:
+            elif coverage_complete:
                 for side in ("origin", "destination"):
                     for candidate in next_state["gateway_candidates"][side]:
                         if candidate.get("evidence_status") == "ai_proposed":

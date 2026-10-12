@@ -28,6 +28,8 @@ For a new user search, start a fresh Run and do not inspect or reuse another cha
 
 For every fare-bearing flight search, establish the lowest compatible result through the Provider's lowest-price view, ascending price sort, price-sorted API, or comparison of all visible results. Record the generic `price_selection_method`; default recommended ordering and an unopened lower-price label cannot support a lowest-price claim.
 
+For `region_pool_fare_screen`, use a Provider-native price-sorted flexible-window query. Return the exact airport partition, complete feasible date windows, and stay range actually submitted as `provider_scope`, together with only that partition's local winner or complete no-market result. Keep the same Work Item open for any remaining airport partitions. Manual Google Flights calendar or date-grid browsing may supply ranking signals but cannot close pool coverage.
+
 ## Deliver
 
 Present the best verified complete round-trip portfolio within the investigated Evidence when the Product Kernel returns a `completed` Outcome. Present `blocked` only when its required action belongs to the user or another unavailable external actor. Treat `failed` as terminal for that Run. Never fabricate Evidence, book or pay for travel, or present a final result before `completed`.

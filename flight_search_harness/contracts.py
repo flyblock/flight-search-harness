@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any, Callable, Protocol
 
 
-HARNESS_VERSION = "1.1.0"
+HARNESS_VERSION = "1.2.0"
 REQUEST_VERSION = "4.0"
 OUTCOME_VERSION = "2.0"
 OUTCOME_KINDS = {"draft", "blocked", "failed", "completed"}
