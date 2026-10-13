@@ -136,6 +136,8 @@ Portfolio labels are derived from the selected ticket offers:
 
 Surface offers do not change a joint or split ticket label, but their mandatory effective cost and duration remain part of the complete portfolio.
 
+Surface Evidence does not complete a Research Requirement merely because a Receipt is `verified_observed`. The Product Kernel validates the complete priced movement chain against the Work Item endpoints, `departure_window`, `not_before`, `must_arrive_by`, allowed modes, and any user-declared time or effective-cost limits. A Receipt that fails those conditions remains immutable but its Offers are not admitted to the solver, and the same requirement stays `open`, so a later Receipt can correct the chain without replacing the Run or killing the fare hypothesis. A single source `no_result` or rejection also leaves the requirement open; `exhausted` requires Product-owned proof that the bounded access question itself is infeasible.
+
 ## Cost and feasibility
 
 - All movement times require UTC offsets.

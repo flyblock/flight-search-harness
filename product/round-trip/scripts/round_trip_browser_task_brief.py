@@ -225,6 +225,19 @@ def task_to_brief(raw_state: Any, task_id: str, registry_path: str | Path | None
                 else None
             ),
         }
+        if task.get("journey_scope") == "surface":
+            contract["rule"] += (
+                " One Receipt must describe a complete priced movement chain from a "
+                "published origin to a published destination. The first departure "
+                "must remain inside departure_window and respect not_before; the final "
+                "arrival must respect must_arrive_by. A truthful but incomplete or "
+                "infeasible submission remains recorded in its Receipt but its Offers "
+                "are not admitted to the solver and it does not complete the Work Item, "
+                "which will be retried under the same task_id. A single "
+                "Provider no-result or rejection does not prove airport access infeasible. "
+                "When date_search.selection_order=listed, search those exact local dates "
+                "in order before reporting no result."
+            )
     advice = (
         {
             "dynamic_source_rules": [],

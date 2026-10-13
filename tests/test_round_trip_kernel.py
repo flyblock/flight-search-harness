@@ -8,6 +8,7 @@ import unittest
 from pathlib import Path
 from typing import Any
 
+from flight_search_harness.adapters.round_trip import RoundTripProductAdapter
 from flight_search_harness.result_projection import summarize
 
 
@@ -354,6 +355,27 @@ def movement(
             "marketing_carrier": "EA",
             "flight_numbers": [flight_number],
         },
+    }
+
+
+def surface_movement(
+    movement_id: str,
+    origin: str,
+    destination: str,
+    departure: str,
+    arrival: str,
+    *,
+    mode: str = "bus",
+) -> dict[str, Any]:
+    return {
+        "movement_id": movement_id,
+        "from_node": origin,
+        "to_node": destination,
+        "departure": departure,
+        "arrival": arrival,
+        "mode": mode,
+        "operator": "Example Surface Operator",
+        "service_id": movement_id,
     }
 
 
@@ -1127,6 +1149,14 @@ class RoundTripKernelTests(unittest.TestCase):
             schedule["origin-egress-return"]["not_before"],
             "2027-06-08T12:00:00+00:00",
         )
+        self.assertEqual(
+            ["2027-06-01", "2027-05-31"],
+            schedule["origin-access-outbound"]["service_dates"],
+        )
+        self.assertEqual(
+            ["2027-06-08", "2027-06-09"],
+            schedule["origin-egress-return"]["service_dates"],
+        )
 
         exported = SESSION.export_result(state, search_status="draft")
         self.assertEqual(
@@ -1141,6 +1171,251 @@ class RoundTripKernelTests(unittest.TestCase):
             "round_trip", exported, full_result_ref="product/final.json"
         )
         self.assertEqual(summary["movements"], exported["journey_movements"])
+
+    def test_time_infeasible_surface_evidence_reopens_same_requirement(self) -> None:
+        state = initialize(regional=True)
+        state = complete_regional_side(state, "origin", "AAA")
+        state = complete_regional_side(state, "destination", "BBB")
+        state = SESSION.validate_session(state)
+        suggestion = GENERATOR.generate_suggestions(state)["suggestions"][0]
+        state = SESSION.validate_session(
+            SESSION.add_route_hypothesis(state, suggestion)
+        )
+        hypothesis_id = suggestion["hypothesis_id"]
+        joint_task = next(
+            task
+            for task in state["research_tasks"]
+            if task["hypothesis_id"] == hypothesis_id
+            and task.get("journey_scope") == "joint_round_trip"
+        )
+        state = SESSION.record_hypothesis_decision(
+            state,
+            "select",
+            task_id=joint_task["task_id"],
+            reason="Verify the regional joint fare before airport access.",
+        )
+        outbound = movement(
+            "movement-regional-outbound",
+            "AAA",
+            "BBB",
+            "2027-06-01T08:00:00+00:00",
+            "2027-06-01T10:00:00+00:00",
+            "EA201",
+        )
+        returning = movement(
+            "movement-regional-return",
+            "BBB",
+            "AAA",
+            "2027-06-08T09:00:00+00:00",
+            "2027-06-08T11:00:00+00:00",
+            "EA202",
+        )
+        state = SESSION.ingest_evidence(
+            state,
+            evidence(
+                "bundle-regional-joint",
+                joint_task["task_id"],
+                "verified_observed",
+                movements=[outbound, returning],
+                offers=[
+                    offer(
+                        "offer-regional-joint",
+                        "joint_round_trip",
+                        [
+                            "movement-regional-outbound",
+                            "movement-regional-return",
+                        ],
+                        150,
+                    )
+                ],
+            ),
+        )
+        access_task = next(
+            task
+            for task in state["research_tasks"]
+            if task["hypothesis_id"] == hypothesis_id
+            and task.get("query_shape", {}).get("surface_role")
+            == "origin-access-outbound"
+        )
+        state = SESSION.ingest_evidence(
+            state,
+            evidence(
+                "bundle-access-single-provider-no-result",
+                access_task["task_id"],
+                "no_result",
+                coverage_complete=True,
+                observations=[
+                    {
+                        "evidence_status": "no_result",
+                        "reason": "One coach Provider returned no result.",
+                    }
+                ],
+            ),
+        )
+        access_after_no_result = next(
+            task
+            for task in state["research_tasks"]
+            if task["task_id"] == access_task["task_id"]
+        )
+        self.assertEqual("open", access_after_no_result["requirement_status"])
+        too_early_access = surface_movement(
+            "movement-access-before-window",
+            "alpha-city",
+            "AAA",
+            "2027-05-31T05:00:00+00:00",
+            "2027-05-31T05:50:00+00:00",
+        )
+        state = SESSION.ingest_evidence(
+            state,
+            evidence(
+                "bundle-access-before-window",
+                access_task["task_id"],
+                "verified_observed",
+                movements=[too_early_access],
+                offers=[
+                    offer(
+                        "offer-access-before-window",
+                        "surface",
+                        [too_early_access["movement_id"]],
+                        8,
+                    )
+                ],
+            ),
+        )
+        access_after_early_offer = next(
+            task
+            for task in state["research_tasks"]
+            if task["task_id"] == access_task["task_id"]
+        )
+        self.assertEqual("open", access_after_early_offer["requirement_status"])
+        self.assertEqual(2, access_after_early_offer["attempt_count"])
+        self.assertNotIn(
+            too_early_access["movement_id"],
+            {item["movement_id"] for item in state["movements"]},
+        )
+        egress_task = next(
+            task
+            for task in state["research_tasks"]
+            if task["hypothesis_id"] == hypothesis_id
+            and task.get("query_shape", {}).get("surface_role")
+            == "origin-egress-return"
+        )
+        self.assertEqual(
+            "2027-06-08T12:00:00+00:00",
+            egress_task["query_shape"]["schedule_context"]["not_before"],
+        )
+        egress_task["query_shape"]["pool_constraints"]["max_time_minutes"] = 100
+
+        early = surface_movement(
+            "movement-egress-too-early",
+            "AAA",
+            "alpha-city",
+            "2027-06-08T11:34:00+00:00",
+            "2027-06-08T14:30:00+00:00",
+        )
+        state = SESSION.ingest_evidence(
+            state,
+            evidence(
+                "bundle-egress-too-early",
+                egress_task["task_id"],
+                "verified_observed",
+                coverage_complete=True,
+                movements=[early],
+                offers=[
+                    offer(
+                        "offer-egress-too-early",
+                        "surface",
+                        [early["movement_id"]],
+                        10,
+                    )
+                ],
+            ),
+        )
+        reopened = next(
+            task
+            for task in state["research_tasks"]
+            if task["task_id"] == egress_task["task_id"]
+        )
+        self.assertEqual("open", reopened["requirement_status"])
+        self.assertEqual(1, reopened["attempt_count"])
+        self.assertNotIn(
+            early["movement_id"],
+            {item["movement_id"] for item in state["movements"]},
+        )
+        self.assertIn(
+            early["movement_id"],
+            {
+                movement["movement_id"]
+                for bundle in state["evidence_bundles"]
+                if bundle["bundle_id"] == "bundle-egress-too-early"
+                for movement in bundle["movements"]
+            },
+        )
+        control = RoundTripProductAdapter().inspect(state)
+        self.assertIn(
+            egress_task["task_id"],
+            {item.get("task_id") for item in control["investigation_actions"]},
+        )
+        self.assertFalse(
+            any(
+                action.get("hypothesis_id") == hypothesis_id
+                and action.get("disposition") == "hard_dead"
+                for action in control["actions"]
+            )
+        )
+
+        valid_local = surface_movement(
+            "movement-egress-valid-local",
+            "AAA",
+            "surface-hub",
+            "2027-06-08T12:04:00+00:00",
+            "2027-06-08T12:30:00+00:00",
+        )
+        valid_coach = surface_movement(
+            "movement-egress-valid-coach",
+            "surface-hub",
+            "alpha-city",
+            "2027-06-08T12:50:00+00:00",
+            "2027-06-08T13:40:00+00:00",
+            mode="coach",
+        )
+        state = SESSION.ingest_evidence(
+            state,
+            evidence(
+                "bundle-egress-valid",
+                egress_task["task_id"],
+                "verified_observed",
+                nodes=[
+                    node(
+                        "surface-hub",
+                        node_type="station",
+                        location="Surface Hub",
+                    )
+                ],
+                movements=[valid_local, valid_coach],
+                offers=[
+                    offer(
+                        "offer-egress-valid-local",
+                        "surface",
+                        [valid_local["movement_id"]],
+                        0,
+                    ),
+                    offer(
+                        "offer-egress-valid-coach",
+                        "surface",
+                        [valid_coach["movement_id"]],
+                        12,
+                    )
+                ],
+            ),
+        )
+        satisfied = next(
+            task
+            for task in state["research_tasks"]
+            if task["task_id"] == egress_task["task_id"]
+        )
+        self.assertEqual("satisfied", satisfied["requirement_status"])
+        self.assertEqual(2, satisfied["attempt_count"])
 
     def test_persisted_session_omits_reconstructable_adapter_projections(self) -> None:
         persisted = SESSION.initialize_session(
