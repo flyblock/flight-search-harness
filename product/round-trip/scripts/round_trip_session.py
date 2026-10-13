@@ -870,7 +870,12 @@ def _surface_task_specs(
                     "departure_window": copy.deepcopy(schedule[suffix]["departure_window"]),
                     "date_search": {
                         "mode": "exact_dates",
-                        "exact_departure_dates": [schedule[suffix]["service_date"]],
+                        "exact_departure_dates": list(
+                            schedule[suffix].get(
+                                "service_dates", [schedule[suffix]["service_date"]]
+                            )
+                        ),
+                        "selection_order": "listed",
                     },
                     "schedule_context": copy.deepcopy(schedule[suffix]),
                     "pool_constraints": {
@@ -953,10 +958,14 @@ def _exact_surface_schedule(
             else SURFACE_DISCOVERY_HORIZON_MINUTES
         )
         start = deadline - timedelta(minutes=horizon)
+        service_dates = [deadline.date().isoformat()]
+        if start.date() != deadline.date():
+            service_dates.append(start.date().isoformat())
         return {
             "departure_window": {"start": start.isoformat(), "end": deadline.isoformat()},
             "must_arrive_by": deadline.isoformat(),
-            "service_date": start.date().isoformat(),
+            "service_date": service_dates[0],
+            "service_dates": service_dates,
             "flight_movement_id": flight["movement_id"],
         }
 
@@ -970,10 +979,14 @@ def _exact_surface_schedule(
             else SURFACE_DISCOVERY_HORIZON_MINUTES
         )
         end = start + timedelta(minutes=horizon)
+        service_dates = [start.date().isoformat()]
+        if end.date() != start.date():
+            service_dates.append(end.date().isoformat())
         return {
             "departure_window": {"start": start.isoformat(), "end": end.isoformat()},
             "not_before": start.isoformat(),
             "service_date": start.date().isoformat(),
+            "service_dates": service_dates,
             "flight_movement_id": flight["movement_id"],
         }
 
@@ -1658,6 +1671,123 @@ def pool_screen_progress(raw_state: Any, task_id: str) -> dict[str, Any]:
     return _pool_screen_progress(state, task)
 
 
+def _surface_requirement_satisfied(
+    state: dict[str, Any],
+    task: dict[str, Any],
+    evidence: dict[str, Any],
+) -> bool:
+    query = task.get("query_shape", {})
+    origins = set(query.get("origins", []))
+    destinations = set(query.get("destinations", []))
+    if not origins or not destinations:
+        return False
+    window = query.get("departure_window", {})
+    schedule = query.get("schedule_context", {})
+    try:
+        first_window = (
+            SOLVER._dt(window.get("start"), "departure_window.start"),
+            SOLVER._dt(window.get("end"), "departure_window.end"),
+        )
+        not_before = (
+            SOLVER._dt(schedule["not_before"], "schedule_context.not_before")
+            if schedule.get("not_before") is not None
+            else None
+        )
+        must_arrive_by = (
+            SOLVER._dt(
+                schedule["must_arrive_by"],
+                "schedule_context.must_arrive_by",
+            )
+            if schedule.get("must_arrive_by") is not None
+            else None
+        )
+    except SOLVER.RoundTripError:
+        return False
+
+    scenario = state["scenario"]
+    constraints = query.get("pool_constraints", {})
+    max_time = constraints.get("max_time_minutes")
+    max_cost = constraints.get("max_cost")
+    annotated_offers = []
+    for offer in evidence.get("offers", []):
+        if not isinstance(offer, dict):
+            return False
+        annotated_offers.append(
+            {**copy.deepcopy(offer), "pool_constraints": copy.deepcopy(constraints)}
+        )
+    if not annotated_offers:
+        return False
+
+    known_node_ids = {
+        _node_id(node, "scenario.nodes[]") for node in scenario["nodes"]
+    }
+    evidence_nodes = [
+        copy.deepcopy(node)
+        for node in evidence.get("nodes", [])
+        if _node_id(node, "evidence.nodes[]") not in known_node_ids
+    ]
+    try:
+        context = SOLVER._validate_bundle(
+            {
+                "schema_version": SOLVER.VERSION,
+                "base_currency": scenario["base_currency"],
+                "intent": scenario["intent"],
+                "nodes": [*scenario["nodes"], *evidence_nodes],
+                "transport_entitlements": scenario.get(
+                    "transport_entitlements", []
+                ),
+                "fx_snapshot": scenario.get("fx_snapshot"),
+                "evaluation_at": _now(),
+                "movements": evidence.get("movements", []),
+                "offers": annotated_offers,
+            }
+        )
+    except (RoundTripSessionError, SOLVER.RoundTripError):
+        return False
+
+    offers = list(context["offers"].values())
+    movements = context["movements"]
+    max_cost_amount = (
+        float(max_cost["amount"]) if isinstance(max_cost, dict) else None
+    )
+    pairs = [
+        (movement_id, offer["offer_id"])
+        for offer in offers
+        for movement_id in offer["_used_movement_ids"]
+    ]
+    movement_offer = dict(pairs)
+    if len(movement_offer) != len(pairs):
+        return False
+    if (
+        max_cost_amount is not None
+        and sum(offer["_effective_cost"] for offer in offers) > max_cost_amount
+    ):
+        return False
+    for path in SOLVER._paths(
+        set(movement_offer),
+        movements,
+        movement_offer,
+        origins,
+        destinations,
+        first_window,
+        context,
+        not_before,
+    ):
+        if set(path) != set(movement_offer):
+            continue
+        first = movements[path[0]]["_departure"]
+        last = movements[path[-1]]["_arrival"]
+        if must_arrive_by is not None and last > must_arrive_by:
+            continue
+        if (
+            max_time is not None
+            and int((last - first).total_seconds() // 60) > int(max_time)
+        ):
+            continue
+        return True
+    return False
+
+
 def ingest_evidence(raw_state: Any, raw_evidence: Any) -> dict[str, Any]:
     state = validate_session(raw_state)
     if not isinstance(raw_evidence, dict) or raw_evidence.get("evidence_version") != SESSION_VERSION:
@@ -1693,6 +1823,10 @@ def ingest_evidence(raw_state: Any, raw_evidence: Any) -> dict[str, Any]:
     )
     temporal_research = status == "research_observed" and task["research_kind"] == "priced_offer" and task.get("journey_scope") in {"joint_round_trip", "one_way"}
     pool_screen_task = task["research_kind"] == "region_pool_fare_screen"
+    surface_task = (
+        task["research_kind"] == "priced_offer"
+        and task.get("journey_scope") == "surface"
+    )
     pool_screen_research = (
         status == "research_observed"
         and pool_screen_task
@@ -1843,9 +1977,16 @@ def ingest_evidence(raw_state: Any, raw_evidence: Any) -> dict[str, Any]:
         if pool_screen_task
         else None
     )
+    surface_complete = (
+        _surface_requirement_satisfied(next_state, next_task, raw_evidence)
+        if surface_task and status == "verified_observed"
+        else False
+    )
     coverage_complete = (
         bool(pool_progress["coverage_complete"])
         if pool_progress is not None
+        else surface_complete
+        if surface_task
         else raw_evidence.get("coverage_complete", True)
     )
     if coverage_complete:
@@ -1899,7 +2040,9 @@ def ingest_evidence(raw_state: Any, raw_evidence: Any) -> dict[str, Any]:
                     coverage = next_state.get("region_scopes", {}).get(side, {}).get("coverage", {})
                     for node_id in list(coverage):
                         coverage[node_id] = "research_observed"
-    elif status == "verified_observed":
+    elif status == "verified_observed" and not (
+        surface_task and not surface_complete
+    ):
         node_map = {_node_id(node, "scenario.nodes[]"): node for node in next_state["scenario"]["nodes"]}
         for node in raw_evidence.get("nodes", []):
             node_id = _node_id(node, "evidence.nodes[]")

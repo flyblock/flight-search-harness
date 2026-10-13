@@ -1,7 +1,7 @@
 {
   "schema_version": "1.0.0",
   "product_id": "round_trip",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "package_files": [
     "PRODUCT-MANIFEST.json",
     "data/source-registry.json",

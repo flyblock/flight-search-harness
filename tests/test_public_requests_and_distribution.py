@@ -195,7 +195,7 @@ class DistributionContractTests(unittest.TestCase):
         assert spec is not None and spec.loader is not None
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
-        self.assertIn("/releases/download/v1.2.0/", module.ARCHIVE_URL)
+        self.assertIn("/releases/download/v1.3.0/", module.ARCHIVE_URL)
         with tempfile.TemporaryDirectory() as raw_directory:
             root = Path(raw_directory)
             archive_path = root / "unsafe.zip"

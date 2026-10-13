@@ -25,6 +25,8 @@ A priced movement needs current visible Evidence with exact endpoints, offset-aw
 
 Keep physical movements separate from atomic Offers and count every selected Offer once. Surface legs require their own operator or seller Evidence. A short same-ticket connection is protected only when payable Evidence establishes a protected through-ticket; shared pricing, matching carrier names, or the absence of a warning is not enough.
 
+A verified Surface Observation satisfies its Work Item only when its priced movements form a complete chronological chain between the published endpoints, the first departure is inside `departure_window` and respects `not_before`, the final arrival respects `must_arrive_by`, and the chain meets the published mode, time, and effective-cost constraints. A truthful but incomplete or infeasible submission remains in its immutable Receipt but is not admitted to the solver, while the same Work Item stays open for another attempt. One Provider `no_result`, rejection, unavailable timetable, or browser failure never proves airport access infeasible.
+
 Research-only, topology, calendar, historical, estimated, unknown, no-result, rejected, or expired Observations cannot become current priced movements. The Harness owns Base Currency normalization for non-Base-Currency Observations.
 
 One Provider-ranked airport partition needs only its local winner or a complete no-market result, not a price matrix. When a Provider imposes an airport-count limit, query the smallest useful airport partitions inside the same Work Item. Keep the complete date windows and stay range unchanged in every partition. Coverage remains open until the admitted partition union contains every origin-destination airport pair.

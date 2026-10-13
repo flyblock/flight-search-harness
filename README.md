@@ -3,7 +3,7 @@
 Flight Search Harness gives Codex a recoverable, evidence-backed way to research low-cost travel. It routes each request to one independent Product Kernel, preserves the Run across interruptions, and returns a structured Outcome.
 
 The project is tested on Windows with Codex desktop and Python 3.10 or later.
-The current Plugin release is `1.2.0` and uses public request protocol `2.0`
+The current Plugin release is `1.3.0` and uses public request protocol `2.0`
 with the protocol-3 Run, Lease, Work Item, and Receipt lifecycle.
 
 Live searches use the user's authorized Browser/computer-use capability to research public travel pages. No paid flight-search API subscription is required.
@@ -26,7 +26,7 @@ Install the complete Plugin, or install one search Skill directly:
 npx skills add flyblock/flight-search-harness --skill low-cost-round-trip-flight-search
 ```
 
-The same command supports `low-cost-one-way-travel-flight-search` and `low-cost-random-loop-flight-search`. After the corresponding v1.2.0 GitHub Release is public, a standalone Skill obtains its matching Harness runtime from that Release asset on first use; a Skill installed through the complete Plugin uses the bundled runtime. While the repository and Release remain private, use the complete local Plugin installation. Then describe the trip in natural language. Codex selects the matching search Skill and resumes the same Run if the search is interrupted.
+The same command supports `low-cost-one-way-travel-flight-search` and `low-cost-random-loop-flight-search`. After the corresponding v1.3.0 GitHub Release is public, a standalone Skill obtains its matching Harness runtime from that Release asset on first use; a Skill installed through the complete Plugin uses the bundled runtime. While the repository and Release remain private, use the complete local Plugin installation. Then describe the trip in natural language. Codex selects the matching search Skill and resumes the same Run if the search is interrupted.
 
 The complete Plugin contains the Harness runtime, all three Product Kernel modules, and all three search Skills. Extract it without changing its directory structure and install the extracted folder through Codex's local Plugin workflow.
 
