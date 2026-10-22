@@ -59,6 +59,15 @@ Product result reference:
   result. The small inline projection is regenerated from that file when
   needed.
 
+The `deliver` command is the user-delivery Interface. Its default
+`presentation` view returns a compact projection only when the Run and Outcome
+are `completed`, the referenced final Result is readable, and the selected best
+Journey Alternative's price Evidence remains current. `--view full` exposes the
+complete persisted Result for audit. Stale optional alternatives do not block a
+current rank-one delivery; they retain their own freshness state. Every other
+state returns `delivery_blocked` without candidate prices. Private Product
+Session and raw Solver artifacts are never delivery sources.
+
 ## Product Kernel Seam
 
 ```python
@@ -81,11 +90,16 @@ outside the Run lock. The Worker researches bounded Work Attempts and submits a
 Receipt batch through `checkpoint`; it never mutates Product Session state or
 admits Evidence.
 
-The complete Work Item is immutable under `mission/items/`. A Lease contains a
-compact projection plus `full_item_ref`, `full_item_hash`, and
-`attempt_number`. Protocol 3 has no Work Item dependency graph and no
-correction Work Item kind. A rejected Receipt causes the same Work Item to be
-published as the next attempt with an incremented number and `last_error`.
+The complete Work Item is immutable under `mission/items/`. Its task-specific
+`attempt_schema` is executed by the Harness during Product admission;
+generation-time structured output is never the admission authority. A Lease
+contains a compact projection plus `full_item_ref`, `full_item_hash`, and
+`attempt_number`. The External Worker CLI additionally returns a smaller
+`worker_turn` that omits fencing values and the repeated attempt Schema while
+providing a ready-to-fill Receipt submission. Protocol 3 has no Work Item
+dependency graph and no correction Work Item kind. A rejected Receipt causes
+the same Work Item to be published as the next attempt with an incremented
+number and a targeted correction message.
 
 ## Lease and Receipt transaction
 
@@ -108,14 +122,15 @@ A Receipt batch carries the Lease fencing facts once: `lease_id`,
 `mission_revision`, `claim_id`, and `worker_instance_id`. Each Receipt contains
 only `item_id`, `attempt_number`, `complete|blocked`, and its payload or reason.
 The Harness derives `receipt_id` deterministically from the Lease and Work
-Attempt; a Worker does not supply an arbitrary idempotency key or a duplicate
-revision.
+Attempt and records an immutable `received_at`; a Worker does not supply an
+arbitrary idempotency key, trusted receive time, or a duplicate revision.
 
 The admission order is:
 
 1. validate Lease revision, claim, Work Item, and attempt;
 2. atomically persist immutable raw Receipts;
-3. ask the Product Kernel to admit them idempotently;
+3. execute the published Work Attempt Schema and ask the Product Kernel to
+   admit valid observations idempotently;
 4. index each Product decision in the Mission cursor;
 5. update the pending Work Attempts once and close an empty Lease;
 6. materialize the Product Kernel's next effect;
@@ -169,7 +184,7 @@ Worker as execution context, but they are not persisted identities.
 
 ## Protocol versions
 
-- request: `2.0`;
+- request: `4.0`;
 - Outcome: `2.0`;
 - Run and Search Mission: `3.0`;
 - Lease and Work Item projection: `3.0`;

@@ -20,6 +20,8 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 
+from flight_search_harness.search_effort import normalize_search_effort
+
 
 VERSION = "0.7.1"
 TRIP_SCOPE = "one_way"
@@ -349,6 +351,14 @@ def _normalize_side(raw: Any, side: str, currency: str) -> dict[str, Any]:
     policy = str(raw.get("policy", "extended_region")).lower()
     if policy not in {"exact", "city_region", "extended_region"}:
         raise MaterializationError(f"{field}.policy is unsupported")
+    endpoint_policy = str(
+        raw.get(
+            "endpoint_policy",
+            "anchor_required" if policy == "exact" else "any_admitted_gateway",
+        )
+    ).lower()
+    if endpoint_policy not in {"anchor_required", "any_admitted_gateway"}:
+        raise MaterializationError(f"{field}.endpoint_policy is unsupported")
     raw_nodes = raw.get("seed_nodes")
     if not isinstance(raw_nodes, list) or not raw_nodes:
         raise MaterializationError(f"{field}.seed_nodes must be a non-empty array")
@@ -382,11 +392,6 @@ def _normalize_side(raw: Any, side: str, currency: str) -> dict[str, Any]:
     expansion_enabled = bool(expansion.get("enabled", policy != "exact"))
     if policy == "exact" and expansion_enabled:
         raise MaterializationError(f"{field}.exact pool cannot enable expansion")
-    max_discovered = _integer(
-        expansion.get("max_discovered_nodes", 24),
-        f"{field}.expansion.max_discovered_nodes",
-        minimum=1,
-    )
     provider_kinds = _unique_strings(
         expansion.get(
             "provider_kinds",
@@ -420,10 +425,12 @@ def _normalize_side(raw: Any, side: str, currency: str) -> dict[str, Any]:
         "nodes": nodes,
         "node_ids": node_ids,
         "airport_ids": airport_ids,
+        "endpoint_policy": endpoint_policy,
         "pool": {
             "pool_id": f"{region_id}-{side}",
             "label": label,
             "policy": policy,
+            "endpoint_policy": endpoint_policy,
             "seed_nodes": node_ids,
             "region_hint": {"region_id": region_id, "label": label},
             "max_access_time_minutes": primary_time if side == "origin" else other_time,
@@ -443,7 +450,6 @@ def _normalize_side(raw: Any, side: str, currency: str) -> dict[str, Any]:
                     else "within_constraints"
                 ),
                 "require_observed_evidence": True,
-                "max_discovered_nodes": max_discovered,
             },
             "notes": [
                 "Seed nodes came from the structured AI intent; provider expansion requires observed evidence."
@@ -545,7 +551,7 @@ def validate_intent(raw: Any) -> dict[str, Any]:
                 f"{side_name}.allowed_ground_modes is outside allowed_modes: "
                 + ", ".join(unsupported_pool_modes)
             )
-    strategy = str(intent.get("strategy", "extreme_savings")).lower()
+    strategy = str(intent.get("strategy", "lowest_price")).lower()
     if strategy not in STRATEGIES:
         raise MaterializationError(f"strategy has unsupported value {strategy}")
     raw_entitlements = intent.get("transport_entitlements", [])
@@ -565,15 +571,15 @@ def validate_intent(raw: Any) -> dict[str, Any]:
     if not isinstance(baggage.get("paid_baggage"), bool):
         raise MaterializationError("baggage.paid_baggage must be boolean")
     accommodation_cost_policy = str(
-        intent.get("accommodation_cost_policy", "include_required")
+        intent.get("accommodation_cost_policy", "exclude_from_ranking")
     ).lower()
     if accommodation_cost_policy not in {
         "include_required",
         "exclude_from_optimization",
+        "exclude_from_ranking",
     }:
         raise MaterializationError(
-            "accommodation_cost_policy must be include_required or "
-            "exclude_from_optimization"
+            "accommodation_cost_policy is unsupported"
         )
     budget = _optional_money(intent.get("budget"), "budget", currency)
     currency_decimal_places = _integer(
@@ -654,6 +660,25 @@ def validate_intent(raw: Any) -> dict[str, Any]:
         "date_window": {"start": start, "end": end},
         "date_flexibility": date_flexibility,
         "query_budget": query_budget,
+        "search_effort": normalize_search_effort(intent.get("search_effort")),
+        "maximum_total_duration_minutes": (
+            _integer(
+                intent["maximum_total_duration_minutes"],
+                "maximum_total_duration_minutes",
+                minimum=1,
+            )
+            if intent.get("maximum_total_duration_minutes") is not None
+            else None
+        ),
+        "maximum_transfer_count": (
+            _integer(
+                intent["maximum_transfer_count"],
+                "maximum_transfer_count",
+                minimum=0,
+            )
+            if intent.get("maximum_transfer_count") is not None
+            else None
+        ),
         "allowed_modes": allowed_modes,
         "strategy": strategy,
         "budget": budget,
@@ -705,6 +730,10 @@ def materialize_intent(raw: Any) -> dict[str, Any]:
         "destination_end_nodes": list(destination["airport_ids"]),
         "origin_airport_nodes": list(origin["airport_ids"]),
         "destination_airport_nodes": list(destination["airport_ids"]),
+        "endpoint_policy": {
+            "origin": origin["endpoint_policy"],
+            "destination": destination["endpoint_policy"],
+        },
         "allowed_modes": list(intent["allowed_modes"]),
         "traveler_count": intent["traveler_count"],
         "date_window": copy.deepcopy(intent["date_window"]),
@@ -712,6 +741,7 @@ def materialize_intent(raw: Any) -> dict[str, Any]:
         "budget": copy.deepcopy(intent["budget"]),
         "baggage": copy.deepcopy(intent["baggage"]),
         "accommodation_cost_policy": intent["accommodation_cost_policy"],
+        "search_effort": intent["search_effort"],
         "transport_entitlements": copy.deepcopy(intent["transport_entitlements"]),
         "overnight_allowed": intent["overnight_allowed"],
         "self_transfer_policy": intent["self_transfer_policy"],
@@ -729,13 +759,14 @@ def materialize_intent(raw: Any) -> dict[str, Any]:
         "base_currency": intent["currency"],
         "currency_decimal_places": intent["currency_decimal_places"],
         "accommodation_cost_policy": intent["accommodation_cost_policy"],
+        "search_effort": intent["search_effort"],
         "fx_to_base": copy.deepcopy(intent["fx_to_base"]),
         "profile_file": "profile.json",
         "nodes_file": "nodes.json",
         "edges_file": "edges.json",
         "search": {
-            "max_total_travel_minutes": 43200,
-            "max_transfers": 12,
+            "max_total_travel_minutes": intent["maximum_total_duration_minutes"],
+            "max_transfers": intent["maximum_transfer_count"],
             "max_routes": None,
             "labels_per_node": None,
             "reference_cost": (
@@ -769,7 +800,6 @@ def materialize_intent(raw: Any) -> dict[str, Any]:
             "query_budget": advisory_query_budget,
         },
         "live_provider_session": {
-            "query_budget": intent["query_budget"],
             "source_selection_mode": "ai_led",
             "require_fresh_fx_snapshot": intent["require_fresh_fx_snapshot"],
             **(

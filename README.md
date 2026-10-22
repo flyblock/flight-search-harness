@@ -3,30 +3,27 @@
 Flight Search Harness gives Codex a recoverable, evidence-backed way to research low-cost travel. It routes each request to one independent Product Kernel, preserves the Run across interruptions, and returns a structured Outcome.
 
 The project is tested on Windows with Codex desktop and Python 3.10 or later.
-The current Plugin release is `1.3.0` and uses public request protocol `2.0`
+The current Plugin release is `2.0.0` and uses public request protocol `4.0`
 with the protocol-3 Run, Lease, Work Item, and Receipt lifecycle.
 
-Live searches use the user's authorized Browser/computer-use capability to research public travel pages. No paid flight-search API subscription is required.
+Live searches operate user-visible Provider pages through the agent host's authorized Browser or equivalent computer-use capability. The workflow is portable across browser-capable agent hosts.
 
 ## What it does
 
 | Search type | Use it for | Result |
 | --- | --- | --- |
 | Random loop | Flexible destinations and dates for an airport-only multi-leg loop | A verified loop, or a bounded no-result Outcome after the required search scope is exhausted |
-| One-way | A selected destination with flexible regional gateways and optional surface transport | A complete origin-to-destination journey assembled from admitted Evidence |
-| Round trip | A selected destination with an outbound and return journey | A comparison of complete ticket portfolios, including joint, split, open-jaw, nested, and surface-supported options |
+| One-way | A selected destination with flexible regional Gateways | The lowest verified Mandatory Air Ticket Total within a disclosed Self-access Gateway Pool and Research Credit budget |
+| Round trip | A selected destination with an outbound and return journey | The lowest verified Mandatory Air Ticket Total within a disclosed Self-access Gateway Pool and Research Credit budget, plus naturally discovered alternatives |
 
 The Harness researches and validates travel options. It does not book or pay for travel.
 
 ## Quick start
 
-Install the complete Plugin, or install one search Skill directly:
-
-```powershell
-npx skills add flyblock/flight-search-harness --skill low-cost-round-trip-flight-search
-```
-
-The same command supports `low-cost-one-way-travel-flight-search` and `low-cost-random-loop-flight-search`. After the corresponding v1.3.0 GitHub Release is public, a standalone Skill obtains its matching Harness runtime from that Release asset on first use; a Skill installed through the complete Plugin uses the bundled runtime. While the repository and Release remain private, use the complete local Plugin installation. Then describe the trip in natural language. Codex selects the matching search Skill and resumes the same Run if the search is interrupted.
+Install the complete Plugin from this local source snapshot. Standalone Skills use
+the bundled local Harness runtime and do not resolve or download an upstream
+repository. Then describe the trip in natural language. Codex selects the
+matching search Skill and resumes the same Run if the search is interrupted.
 
 The complete Plugin contains the Harness runtime, all three Product Kernel modules, and all three search Skills. Extract it without changing its directory structure and install the extracted folder through Codex's local Plugin workflow.
 
@@ -48,11 +45,11 @@ Random loop:
 
 One-way:
 
-> Find the lowest-cost complete one-way journey using my origin, destination, date window, party size, baggage policy, and transfer constraints. Include eligible surface access when I allow it.
+> Find the lowest Mandatory Air Ticket Total for a one-way trip using my origin and destination regions, date window, party size, baggage policy, and transfer constraints. Use standard Search Effort and disclose the Self-access Gateway Pool and excluded non-air costs.
 
 Round trip:
 
-> Compare complete round trips using my origin, destination, outbound and return windows, party size, baggage policy, and transfer constraints. Check joint, split, and open-jaw options.
+> Find the lowest Mandatory Air Ticket Total for a round trip using my origin and destination regions, date windows, party size, baggage policy, and transfer constraints. Use standard Search Effort and disclose the Self-access Gateway Pool and excluded non-air costs.
 
 ## How it works
 
@@ -65,7 +62,7 @@ Natural-language request
   -> completed, draft, blocked, or failed Outcome
 ```
 
-Skills are the natural-language workflow entry points. The authorized Browser/computer-use capability performs live Provider research, while the Harness owns execution, recovery, and persistence. Each Product Kernel independently owns its search state, Evidence admission, solver, and completion criteria.
+Skills are the natural-language workflow entry points. The host's preferred authorized live-research capability performs Provider research, while the Harness owns execution, recovery, and persistence. Each Product Kernel independently owns its search state, Evidence admission, solver, and completion criteria.
 
 See [How Flight Search Harness works](docs/how-it-works.md) for the three Product Kernel strategies, low-cost objectives, lifecycle diagram, and research foundations.
 

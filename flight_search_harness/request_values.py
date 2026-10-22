@@ -20,6 +20,7 @@ from typing import Any
 from urllib.parse import urlsplit
 
 from .contracts import HarnessProtocolError, REQUEST_VERSION
+from .search_effort import normalize_search_effort
 
 
 _CURRENCY_PATTERN = re.compile(r"^[A-Z]{3}$")
@@ -49,6 +50,11 @@ _SHARED_FIELDS = {
     "overnight_allowed",
     "self_transfer_policy",
 }
+_SHARED_OPTIONAL_FIELDS = {
+    "one_way": {"search_effort"},
+    "round_trip": {"search_effort"},
+    "random_loop": set(),
+}
 _PRODUCT_FIELDS = {
     "one_way": {
         "origin",
@@ -58,6 +64,7 @@ _PRODUCT_FIELDS = {
         "budget",
         "allowed_modes",
         "maximum_total_duration_minutes",
+        "maximum_transfer_count",
     },
     "random_loop": {
         "departure_airports",
@@ -75,6 +82,7 @@ _PRODUCT_FIELDS = {
     "round_trip": {
         "origin",
         "destination",
+        "travel_windows",
         "outbound_departure_window",
         "return_departure_window",
         "outbound_exact_departure_dates",
@@ -104,8 +112,6 @@ _PRODUCT_REQUIRED = {
     "round_trip": {
         "origin",
         "destination",
-        "outbound_departure_window",
-        "return_departure_window",
     },
 }
 
@@ -267,6 +273,9 @@ def _validate_schema_value(
         minimum_properties = schema.get("minProperties")
         if isinstance(minimum_properties, int) and len(value) < minimum_properties:
             raise _SchemaMismatch(f"{path} has too few fields")
+        maximum_properties = schema.get("maxProperties")
+        if isinstance(maximum_properties, int) and len(value) > maximum_properties:
+            raise _SchemaMismatch(f"{path} has too many fields")
         property_names = schema.get("propertyNames")
         if isinstance(property_names, dict):
             for name in value:
@@ -305,6 +314,9 @@ def _validate_schema_value(
         minimum_items = schema.get("minItems")
         if isinstance(minimum_items, int) and len(value) < minimum_items:
             raise _SchemaMismatch(f"{path} has too few items")
+        maximum_items = schema.get("maxItems")
+        if isinstance(maximum_items, int) and len(value) > maximum_items:
+            raise _SchemaMismatch(f"{path} has too many items")
         if schema.get("uniqueItems") is True:
             canonical = [
                 json.dumps(item, sort_keys=True, separators=(",", ":"))
@@ -350,9 +362,43 @@ def _validate_schema_value(
         minimum = schema.get("minimum")
         if isinstance(minimum, (int, float)) and value < minimum:
             raise _SchemaMismatch(f"{path} must be at least {minimum}")
+        maximum = schema.get("maximum")
+        if isinstance(maximum, (int, float)) and value > maximum:
+            raise _SchemaMismatch(f"{path} must be at most {maximum}")
         exclusive_minimum = schema.get("exclusiveMinimum")
         if isinstance(exclusive_minimum, (int, float)) and value <= exclusive_minimum:
             raise _SchemaMismatch(f"{path} must be greater than {exclusive_minimum}")
+        exclusive_maximum = schema.get("exclusiveMaximum")
+        if isinstance(exclusive_maximum, (int, float)) and value >= exclusive_maximum:
+            raise _SchemaMismatch(f"{path} must be less than {exclusive_maximum}")
+
+
+def validate_inline_schema(
+    value: Any,
+    schema: dict[str, Any],
+    *,
+    path: str = "value",
+) -> None:
+    """Validate one runtime value against an inline Work Attempt Schema.
+
+    Product Adapters publish these Schemas to Workers.  Admission must execute
+    the same contract locally so a Worker implementation cannot bypass it.
+    Inline Work Attempt Schemas deliberately do not use external ``$ref``
+    targets; product-specific semantic checks still belong to the Product
+    Kernel after this structural gate.
+    """
+
+    if not isinstance(schema, dict):
+        raise HarnessProtocolError(f"{path} Schema must be an object")
+    try:
+        _validate_schema_value(
+            value,
+            schema,
+            document_name="common-defs.schema.json",
+            path=path,
+        )
+    except _SchemaMismatch as exc:
+        raise HarnessProtocolError(f"{path} violates its Work Attempt contract: {exc}") from exc
 
 
 def _validate_public_schema(request: dict[str, Any], shape: str) -> None:
@@ -393,7 +439,10 @@ def _reject_unknown(raw: dict[str, Any], allowed: set[str], field: str) -> None:
 
 
 def _parsed_window(
-    window: dict[str, str], field: str
+    window: dict[str, str],
+    field: str,
+    *,
+    allow_single_local_date: bool = False,
 ) -> tuple[date | datetime, date | datetime]:
     parsed: list[date | datetime] = []
     kinds: list[type] = []
@@ -418,7 +467,10 @@ def _parsed_window(
         raise HarnessProtocolError(
             f"intent.{field} start and end must use the same date representation"
         )
-    if parsed[1] <= parsed[0]:
+    if parsed[1] < parsed[0] or (
+        parsed[1] == parsed[0]
+        and not (allow_single_local_date and kinds[0] is date)
+    ):
         raise HarnessProtocolError(f"intent.{field} must be strictly increasing")
     return parsed[0], parsed[1]
 
@@ -443,12 +495,12 @@ def _validate_effective_regional_modes(
             )
 
 
-def _require_anchor_utc_offsets(side: dict[str, Any], field: str) -> None:
+def _require_anchor_timezones(side: dict[str, Any], field: str) -> None:
     for index, anchor in enumerate(side["anchor_nodes"]):
-        offset = anchor.get("utc_offset")
-        if not isinstance(offset, str) or not offset.strip():
+        timezone_name = anchor.get("timezone")
+        if not isinstance(timezone_name, str) or not timezone_name.strip():
             raise HarnessProtocolError(
-                f"intent.{field}.anchor_nodes[{index}].utc_offset is required "
+                f"intent.{field}.anchor_nodes[{index}].timezone is required "
                 "for a date-only departure window"
             )
 
@@ -468,7 +520,13 @@ def validate_public_request(request: Any) -> dict[str, Any]:
     intent = request.get("intent")
     if not isinstance(intent, dict):
         raise HarnessProtocolError("request.intent must be an object")
-    _reject_unknown(intent, _SHARED_FIELDS | _PRODUCT_FIELDS[shape], "intent")
+    _reject_unknown(
+        intent,
+        _SHARED_FIELDS
+        | _SHARED_OPTIONAL_FIELDS[shape]
+        | _PRODUCT_FIELDS[shape],
+        "intent",
+    )
     required_fields = _SHARED_FIELDS | _PRODUCT_REQUIRED[shape]
     missing = sorted(required_fields - set(intent))
     if missing:
@@ -480,14 +538,6 @@ def validate_public_request(request: Any) -> dict[str, Any]:
     if shape in {"one_way", "round_trip"}:
         origin = canonical_region_side(intent, "origin")
         destination = canonical_region_side(intent, "destination")
-        if shape == "one_way" and any(
-            side["endpoint_policy"] == "any_admitted_gateway"
-            for side in (origin, destination)
-        ):
-            raise HarnessProtocolError(
-                "one-way endpoint_policy must be anchor_required until gateway "
-                "admission is explicitly evidence-backed"
-            )
         allowed_modes = intent.get("allowed_modes")
         if shape == "one_way" and allowed_modes is not None:
             if not isinstance(allowed_modes, list) or "flight" not in allowed_modes:
@@ -558,38 +608,24 @@ def validate_public_request(request: Any) -> dict[str, Any]:
                 "intent.quality_gate target efficiency must not be below its minimum"
             )
     else:
-        for direction in ("outbound", "return"):
-            field = f"{direction}_departure_window"
-            windows[direction] = _parsed_window(canonical_window(intent, field), field)
-            start, _ = windows[direction]
-            if isinstance(start, date) and not isinstance(start, datetime):
-                relevant_side = origin if direction == "outbound" else destination
-                _require_anchor_utc_offsets(
-                    relevant_side,
-                    "origin" if direction == "outbound" else "destination",
+        travel_windows = canonical_round_trip_travel_windows(intent)
+        for index, travel_window in enumerate(travel_windows):
+            for direction in ("outbound", "return"):
+                field = f"{direction}_departure_window"
+                parsed = _parsed_window(
+                    travel_window[field],
+                    f"travel_windows[{index}].{field}",
+                    allow_single_local_date=True,
                 )
-            exact_dates = intent.get(f"{direction}_exact_departure_dates")
-            if isinstance(exact_dates, list):
-                for raw_date in exact_dates:
-                    selected = date.fromisoformat(str(raw_date))
-                    start, end = windows[direction]
-                    start_date = start.date() if isinstance(start, datetime) else start
-                    end_date = end.date() if isinstance(end, datetime) else end
-                    if selected < start_date or selected > end_date:
-                        raise HarnessProtocolError(
-                            f"intent.{direction}_exact_departure_dates value is outside "
-                            f"{field}"
-                        )
-        minimum_stay = intent.get("minimum_stay_nights")
-        maximum_stay = intent.get("maximum_stay_nights")
-        if (
-            minimum_stay is not None
-            and maximum_stay is not None
-            and minimum_stay > maximum_stay
-        ):
-            raise HarnessProtocolError(
-                "intent.minimum_stay_nights must not exceed maximum_stay_nights"
-            )
+                start, _ = parsed
+                if isinstance(start, date) and not isinstance(start, datetime):
+                    relevant_side = (
+                        origin if direction == "outbound" else destination
+                    )
+                    _require_anchor_timezones(
+                        relevant_side,
+                        "origin" if direction == "outbound" else "destination",
+                    )
     return copy.deepcopy(request)
 
 
@@ -663,6 +699,7 @@ def canonical_shared_intent(intent: dict[str, Any]) -> dict[str, Any]:
         },
         "overnight_allowed": overnight_allowed,
         "self_transfer_policy": self_transfer_policy,
+        "search_effort": normalize_search_effort(intent.get("search_effort")),
     }
 
 
@@ -681,6 +718,111 @@ def canonical_window(intent: dict[str, Any], field: str) -> dict[str, str]:
     return {"start": start.strip(), "end": end.strip()}
 
 
+def canonical_round_trip_travel_windows(
+    intent: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """Normalize one or more disjoint round-trip date alternatives."""
+
+    raw_windows = intent.get("travel_windows")
+    if raw_windows is None:
+        raw_windows = [
+            {
+                "outbound_departure_window": canonical_window(
+                    intent, "outbound_departure_window"
+                ),
+                "return_departure_window": canonical_window(
+                    intent, "return_departure_window"
+                ),
+                "minimum_stay_nights": intent.get("minimum_stay_nights"),
+                "maximum_stay_nights": intent.get("maximum_stay_nights"),
+            }
+        ]
+    elif any(
+        field in intent
+        for field in (
+            "minimum_stay_nights",
+            "maximum_stay_nights",
+            "outbound_exact_departure_dates",
+            "return_exact_departure_dates",
+        )
+    ):
+        raise HarnessProtocolError(
+            "intent.travel_windows owns its stay constraints and cannot use "
+            "top-level stay or exact-date fields"
+        )
+    if not isinstance(raw_windows, list) or not raw_windows:
+        raise HarnessProtocolError(
+            "intent.travel_windows must be a non-empty array"
+        )
+    result = []
+    identities = set()
+    for index, raw in enumerate(raw_windows):
+        if not isinstance(raw, dict):
+            raise HarnessProtocolError(
+                f"intent.travel_windows[{index}] must be an object"
+            )
+        value = {
+            "outbound_departure_window": canonical_window(
+                raw, "outbound_departure_window"
+            ),
+            "return_departure_window": canonical_window(
+                raw, "return_departure_window"
+            ),
+            "minimum_stay_nights": raw.get("minimum_stay_nights"),
+            "maximum_stay_nights": raw.get("maximum_stay_nights"),
+        }
+        minimum = value["minimum_stay_nights"]
+        maximum = value["maximum_stay_nights"]
+        if minimum is not None and maximum is not None and minimum > maximum:
+            raise HarnessProtocolError(
+                f"intent.travel_windows[{index}] minimum_stay_nights must "
+                "not exceed maximum_stay_nights"
+            )
+        identity = json.dumps(value, sort_keys=True, separators=(",", ":"))
+        if identity in identities:
+            raise HarnessProtocolError(
+                "intent.travel_windows contains duplicate date alternatives"
+            )
+        identities.add(identity)
+        token = hashlib.sha256(identity.encode("utf-8")).hexdigest()[:16]
+        value["travel_window_id"] = f"travel-window-{token}"
+        if raw.get("label") is not None:
+            value["label"] = str(raw["label"]).strip()
+        result.append(value)
+    return result
+
+
+def round_trip_window_envelope(
+    travel_windows: list[dict[str, Any]],
+) -> tuple[dict[str, str], dict[str, str]]:
+    """Return conservative directional envelopes for path enumeration."""
+
+    envelopes = []
+    for direction in ("outbound", "return"):
+        field = f"{direction}_departure_window"
+        parsed = [
+            _parsed_window(
+                item[field],
+                f"travel_windows.{field}",
+                allow_single_local_date=True,
+            )
+            for item in travel_windows
+        ]
+        if len({type(start) for start, _ in parsed}) != 1:
+            raise HarnessProtocolError(
+                "all travel_windows must use one date representation"
+            )
+        start_index = min(range(len(parsed)), key=lambda index: parsed[index][0])
+        end_index = max(range(len(parsed)), key=lambda index: parsed[index][1])
+        envelopes.append(
+            {
+                "start": travel_windows[start_index][field]["start"],
+                "end": travel_windows[end_index][field]["end"],
+            }
+        )
+    return envelopes[0], envelopes[1]
+
+
 def canonical_region_side(intent: dict[str, Any], field: str) -> dict[str, Any]:
     """Copy a fixed-destination region side without choosing a gateway."""
 
@@ -693,6 +835,7 @@ def canonical_region_side(intent: dict[str, Any], field: str) -> dict[str, Any]:
             "region_id",
             "label",
             "country_codes",
+            "search_geography",
             "policy",
             "endpoint_policy",
             "anchor_nodes",
@@ -737,6 +880,18 @@ def canonical_region_side(intent: dict[str, Any], field: str) -> dict[str, Any]:
     normalized["allowed_ground_modes"] = copy.deepcopy(
         side.get("allowed_ground_modes", sorted(_GROUND_MODES))
     )
+    search_geography = side.get("search_geography")
+    if search_geography is not None:
+        if (
+            not isinstance(search_geography, dict)
+            or search_geography.get("kind") != "country"
+            or search_geography.get("country_code")
+            not in side.get("country_codes", [])
+        ):
+            raise HarnessProtocolError(
+                f"intent.{field}.search_geography must identify one declared country"
+            )
+        normalized["search_geography"] = copy.deepcopy(search_geography)
     return normalized
 
 

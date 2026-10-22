@@ -681,8 +681,30 @@ def schedule_round_trip_date_pairs(
                     }
                 )
                 continue
-            outbound = _date(signal.get("outbound_date"), "signal.outbound_date")
-            returning = _date(signal.get("return_date"), "signal.return_date")
+            constraint_signal = signal
+            if signal.get("temporal_signal_version") == "2.0":
+                dates = signal.get("itinerary_dates")
+                if not isinstance(dates, dict):
+                    raise RoundTripTemporalSchedulerError(
+                        "Temporal Signal v2 requires itinerary_dates"
+                    )
+                outbound = _date(
+                    dates.get("outbound_departure_local_date"),
+                    "signal.itinerary_dates.outbound_departure_local_date",
+                )
+                returning = _date(
+                    dates.get("return_departure_local_date"),
+                    "signal.itinerary_dates.return_departure_local_date",
+                )
+                constraint_signal = {
+                    **signal,
+                    "destination_arrival_date": dates.get(
+                        "outbound_destination_arrival_local_date"
+                    ),
+                }
+            else:
+                outbound = _date(signal.get("outbound_date"), "signal.outbound_date")
+                returning = _date(signal.get("return_date"), "signal.return_date")
             price_observation = _price_observation(signal, signal_id, kind)
             _add_candidate(
                 candidates_by_id,
@@ -690,7 +712,7 @@ def schedule_round_trip_date_pairs(
                 gateways=gateways,
                 outbound=outbound,
                 returning=returning,
-                constraint_signal=signal,
+                constraint_signal=constraint_signal,
                 source_refs=[_source_ref(signal, signal_id, kind)],
                 price_observation=price_observation,
                 outbound_window=outbound_window,

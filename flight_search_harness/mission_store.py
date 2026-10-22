@@ -467,9 +467,17 @@ class MissionStore:
         relative = target.relative_to(self.runs.run_directory(mission["run_id"])).as_posix()
         if target.exists():
             existing = read_json(target)
-            if existing != receipt:
+            replay_basis = {
+                key: value
+                for key, value in existing.items()
+                if key != "received_at"
+            }
+            if replay_basis != receipt:
                 raise HarnessProtocolError("Receipt identity was replayed with different content")
-            return receipt, relative, False
+            return existing, relative, False
+        receipt["received_at"] = datetime.now(timezone.utc).isoformat(
+            timespec="seconds"
+        )
         write_json_atomic(target, receipt)
         return receipt, relative, True
 

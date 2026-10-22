@@ -33,14 +33,22 @@ full-result copy.
 
 The Browser finds current facts. It does not decide whether an itinerary is complete, whether an Offer is admissible, or whether the search is finished. Those decisions remain inside the selected Product Kernel.
 
+## Shared journey cost scope
+
+One-way and Round-trip retain independent Product state and solving rules while using the same cost vocabulary. Their default flight-centered objective is **Mandatory Air Ticket Total**: every required flight Offer after the first selected Gateway, including air positioning, self-transfer flights, required baggage, and mandatory airline fees. Endpoint Access, Endpoint Egress, Internal Surface Transfer prices, accommodation, and other non-air costs are disclosed but excluded from this ranking.
+
+`gateway_complete_cost`, `endpoint_completion_cost`, and `anchor_complete_cost` remain optional audit calculations. They are not aliases for Mandatory Air Ticket Total and must not be presented as the default comparison when excluded costs are unknown.
+
+Random-loop remains an airport-loop product. It does not add Endpoint Access or Endpoint Egress to its efficiency objective.
+
 ## What low-cost means
 
 The three Product Kernels optimize different notions of value:
 
 | Journey shape | Primary low-cost objective | Important competing constraints |
 | --- | --- | --- |
-| One-way | Lowest mandatory end-to-end cost among verified complete journeys | Time, hops, transfer feasibility, regional access and egress |
-| Round trip | Lowest mandatory total cost of a verified outbound-and-return ticket portfolio | Stay length, joint versus split pricing, open jaws, surface segments and atomic ticket rules |
+| One-way | Lowest verified Mandatory Air Ticket Total within the disclosed scope and Research Credit budget | Explicit hard constraints and Internal Surface Transfer feasibility; long waits, overnight travel and unprotected transfers are warnings by default |
+| Round trip | Lowest verified Mandatory Air Ticket Total within the disclosed scope and Research Credit budget | Stay length, joint versus split pricing, open jaws, Internal Surface Transfer feasibility and atomic ticket rules |
 | Random loop | High verified flight distance per Base Currency unit inside the configured price and route constraints | Leg count, return feasibility, connection timing, date diversity and optional per-leg price cap |
 
 The result is authoritative for the Evidence and hypotheses actually investigated. The Harness does not claim that every Provider, airport, date, or fare worldwide was searched.
@@ -57,36 +65,29 @@ This is a bounded search strategy over live, incrementally observed Offers. It i
 
 ## One-way search
 
-One-way search treats the journey as an evidence-backed, resource-constrained path between regional anchors. Flights may be combined with verified rail, bus, ferry, transit, rideshare, walking, or other allowed surface segments.
+For a city or region, the AI defines a finite Self-access Gateway Pool without a numeric airport cap. Regional requests use `any_admitted_gateway`: the user arranges Endpoint Access and Endpoint Egress, so current Runs neither price them nor publish Work Items for them. Exact airport requests may use `anchor_required` for compatibility.
 
-The normal path is:
+The first verified complete flight path becomes the incumbent. Every later Work Item must fit the remaining Product-owned Research Credits and have an optimistic Mandatory Air Ticket Total below the incumbent by the configured percentage Price Challenge Threshold. There is no default Pareto-comfort lane, structural-diversity quota, fixed remote-airport phase, target alternative count, or manual stop assessment. Alternatives are natural by-products of pursuing the price winner.
 
-1. Establish a complete conventional baseline route and its mandatory total cost `U`.
-2. Discover useful regional gateways and forward or backward frontier states from admitted Evidence.
-3. Expand verified suffixes backward from the destination and calculate how much an unknown prefix may cost while still beating `U`.
-4. Research only bounded Provider questions that may improve price or add a materially different Pareto alternative.
-5. Recompute the complete route after every admitted Offer.
+Mandatory Air Ticket Total includes every required flight Offer, air-positioning or self-transfer flight, mandatory baggage, and airline fee. It excludes Endpoint travel, Surface prices, accommodation, and other non-air costs. `total_trip_cost` is optional audit output and cannot control ranking, budget pruning, or a price challenge. `gateway_complete_cost` is reported only when its whole audit scope is actually priced; an unpriced Internal Surface Transfer makes it incomplete rather than zero.
 
-For a verified suffix from node `v` to the destination:
+An Internal Surface Transfer is a non-Offer feasibility bridge. One external route check records only endpoints, approximate duration, feasibility, one Evidence link, and observation time. A plausible taxi or road fallback may connect two flights; explicit infeasibility or duration plus buffers exceeding the available window rejects that combination. The solver never inserts a zero-price TravelEdge.
 
-```text
-price_cutoff = U - delta
-remaining_budget(v) = U - delta - verified_suffix_cost(v)
-```
+Search Effort selects 10 credits at a 10% threshold for `economy`, 30 at 5% for `standard`, and 100 at 1% for `deep`. Exact payable research costs 2 credits, structured research costs 1, and an Internal Surface Transfer check costs 1. A real Provider query commits the credit even if its Receipt later needs representation correction; correction, replay, and non-Provider work cost zero and must not repeat research. Credit exhaustion with a fresh winner is bounded completion; without a winner it is `draft`.
 
-The price-improvement lane searches for a strictly cheaper complete route. A separate Pareto lane may retain a slightly more expensive route when it is faster or uses fewer hops. Unknown prices, expired Offers, calendar estimates, and inferred connections never enter a route as zero-cost edges.
-
-Flexible dates are scheduled per discovered corridor. A date signal from one corridor does not silently suppress another corridor's date window, and an exact dated Offer must still be verified before final comparison.
+No elapsed-time or transfer-count limit is added by default. User-supplied limits, `overnight_allowed=false`, and `self_transfer_policy=never` remain hard. Otherwise long waits, overnight travel, and unprotected tickets are delivery warnings.
 
 ## Round-trip search
 
 Round-trip search does not concatenate two independently selected one-way winners. Its unit of comparison is a complete outbound-and-return portfolio.
 
-The Product Kernel first discovers regional gateways without replacing the user's real city or station anchors. It then creates complete-journey hypotheses and researches the atomic prices needed to compare them. A joint round-trip fare is observed and counted once. Split one-way tickets are researched independently. Nested round trips, open jaws, mixed atomic itineraries, and required surface access remain separate structures rather than invented component prices.
+The Product Kernel first asks the AI to disclose a Self-access Gateway Pool without a numeric airport cap. For regional requests the user arranges Endpoint Access and Endpoint Egress. It then creates complete-journey hypotheses and researches the atomic flight prices needed to compare them. A joint round-trip fare is observed and counted once. Split one-way tickets, air positioning, nested round trips, open jaws, and mixed atomic itineraries remain separate structures rather than invented component prices.
 
-The portfolio solver accepts only chronological, endpoint-complete combinations of admitted atomic Offers. It includes every mandatory ticket, access, egress, required accommodation, baggage rule, FX conversion, and connection constraint that applies to the selected portfolio.
+The portfolio solver accepts only chronological, Gateway-complete combinations of admitted atomic flight Offers. An Internal Surface Transfer is non-Offer Evidence: one external route search records approximate duration, feasibility, and one Evidence link. A missing public-transport result may use a plausible taxi or road fallback; explicit infeasibility or insufficient time rejects the Journey Alternative. No Surface fare or accommodation amount enters the default ranking.
 
-The first valid portfolio becomes an incumbent, not an automatic final answer. Remaining gateway, date, ticket-structure, and challenger obligations must reach terminal states before the Product Kernel can return a `completed` Outcome.
+The first valid portfolio becomes the current winner. Every further candidate uses one price-challenge frontier; there is no fixed remote-airport phase. Search Effort supplies Research Credits and a percentage Price Challenge Threshold. An outside-pool hub can advance only when its long-haul fare plus mandatory air-positioning lower bound can materially beat the current Mandatory Air Ticket Total. Exhausting affordable research with a verified winner is a bounded completion; exhausting it without a winner returns `draft`.
+
+Candidate Slate v2 is only a price-ranked projection of distinct complete Journey Alternatives already found. It has no target size and never creates Work Items. The cheapest verified date represents each Journey Alternative; alternate dates, Ticketing Structures, and Seller Variants remain nested beneath it.
 
 ## Why there are three Product Kernels
 
@@ -95,7 +96,7 @@ The Harness shares coordination, recovery, Work Items, Receipts, Workers, and St
 | Product Kernel | State it must own | Why the state is not interchangeable |
 | --- | --- | --- |
 | Random loop | Ordered route tree, open frontier, siblings, closure state and efficiency beam | The destination sequence is discovered during a loop search |
-| One-way | Complete-route incumbent, forward and backward labels, residual budgets and Pareto alternatives | The goal is a constrained path to the selected destination |
+| One-way | Complete-route price incumbent, Research Credits, price challenges and Internal Surface Transfer feasibility | The goal is the cheapest verified flight path to the selected destination scope |
 | Round trip | Regional gateways, complete-journey hypotheses, and atomic Offer portfolios | Outbound and return pricing may be joint, split, nested or open-jaw |
 
 Keeping those Modules independent gives each Product Kernel a small Harness-facing Interface while preserving its own Evidence rules, solver, recovery state, and finalization criteria.
@@ -113,7 +114,5 @@ These works influenced the design vocabulary and search discipline. Flight Searc
 ## Detailed implementation references
 
 - Random loop: [`product/random-loop/references/workflow.md`](../product/random-loop/references/workflow.md)
-- One-way frontier exploration: [`FRONTIER-EXPLORATION.md`](../product/one-way/references/FRONTIER-EXPLORATION.md)
-- One-way residual-budget search: [`RESIDUAL-BUDGET-SEARCH.md`](../product/one-way/references/RESIDUAL-BUDGET-SEARCH.md)
-- One-way date scheduling: [`TEMPORAL-CORRIDOR-SCHEDULING.md`](../product/one-way/references/TEMPORAL-CORRIDOR-SCHEDULING.md)
+- One-way Work publication is governed by Research Credits and the Price Challenge Threshold.
 - Round-trip regional contract: [`REGIONAL-ROUND-TRIP-CONTRACT.md`](../product/round-trip/references/REGIONAL-ROUND-TRIP-CONTRACT.md)

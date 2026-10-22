@@ -23,14 +23,14 @@
       "required": ["hypothesis_id", "route_shape", "origin_gateway_nodes", "destination_gateway_nodes", "geographic_cell", "advisory_basis", "research_sequence", "temporal_strategy", "joint_baseline_reason"],
       "properties": {
         "hypothesis_id": {"type": "string"},
-        "route_shape": {"enum": ["closed_airport_pair", "regional_open_jaw", "nested_round_trips", "mixed_atomic_portfolio"]},
+        "route_shape": {"enum": ["closed_airport_pair", "regional_open_jaw", "nested_round_trips", "mixed_atomic_portfolio", "custom_complete_journey"]},
         "origin_gateway_nodes": {"type": "array", "minItems": 1, "items": {"type": "string"}},
         "destination_gateway_nodes": {"type": "array", "minItems": 1, "items": {"type": "string"}},
         "geographic_cell": {"type": "string"},
         "advisory_basis": {"type": "object"},
         "research_sequence": {"type": "array", "minItems": 1, "items": {"type": "string"}},
-        "temporal_strategy": {"const": "ai_led_date_frontier"},
-        "joint_baseline_reason": {"type": "string"},
+        "temporal_strategy": {"enum": ["ai_led_date_frontier", "provider_ranked_window", "exact_selected_offer_refresh"]},
+        "joint_baseline_reason": {"type": ["string", "null"]},
         "screen_candidate": {"type": "object"},
         "task_specs": {"type": "array", "minItems": 1, "items": {"type": "object"}}
       },

@@ -142,6 +142,7 @@
       "source_id": "flixbus",
       "name": "FlixBus",
       "url": "https://www.flixbus.com/",
+      "allowed_hosts": ["flixbus.com", "shop.flixbus.com", "shop.flixbus.de"],
       "source_type": "coach_seller",
       "evidence_role": "payable_offer",
       "modes": ["coach", "bus"],

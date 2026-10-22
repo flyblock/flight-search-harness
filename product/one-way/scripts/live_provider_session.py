@@ -22,6 +22,8 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse, urlsplit, urlunsplit
 
+from flight_search_harness.search_effort import search_effort_policy
+
 
 SESSION_VERSION = "0.7.1"
 FRONTIER_CONTROL_VERSION = "1.2"
@@ -399,6 +401,11 @@ def compact_session(state: dict[str, Any]) -> dict[str, Any]:
                 not in {"tasks_published", "ai_selected_candidate", "ai_selected_frontier_task"}
             ],
         }
+    if isinstance(compact.get("research_credits"), dict):
+        compact["research_credits"] = copy.deepcopy(
+            compact["research_credits"]
+        )
+        compact.pop("budget_ledger", None)
     existing_finalization = compact.get("finalization")
     if not isinstance(existing_finalization, dict):
         existing_finalization = {}
@@ -783,6 +790,7 @@ def _normalized_request(request: dict[str, Any]) -> dict[str, Any]:
             "assigned_source": assigned_source,
             "parent_request_id": request.get("parent_request_id"),
             "parent_request_key": request.get("parent_request_key"),
+            "optimistic_total_cost": request.get("optimistic_total_cost"),
         }
     )
     normalized.setdefault("straight_line_distance_km", None)
@@ -813,6 +821,7 @@ def _canonical_task_signature(request: dict[str, Any]) -> str:
             else None
         ),
         "parent_request_key": request.get("parent_request_key"),
+        "optimistic_total_cost": request.get("optimistic_total_cost"),
     }
     return hashlib.sha256(
         json.dumps(identity, sort_keys=True, separators=(",", ":")).encode("utf-8")
@@ -918,15 +927,70 @@ def _research_task(
         task["mode_transition_buffer"] = copy.deepcopy(
             request["mode_transition_buffer"]
         )
+    task["research_credit_cost"] = research_credit_cost(task)
     return task
 
 
-def _session_budget_limit(config: dict[str, Any]) -> int | None:
-    live = config.get("live_provider_session", {})
-    if isinstance(live, dict) and "query_budget" in live:
-        raw = live["query_budget"]
-        return None if raw is None else max(1, int(raw))
-    return max(1, int(config["search"]["connector_probe_limit"]))
+def price_challenge_assessment(
+    state: dict[str, Any], task: dict[str, Any]
+) -> dict[str, Any]:
+    """Assess one Work Item on the Mandatory Air Ticket Total basis."""
+
+    incumbent = state.get("active_incumbent") or {}
+    money_value = incumbent.get("mandatory_air_ticket_total")
+    incumbent_amount = (
+        money_value.get("amount")
+        if isinstance(money_value, dict)
+        else incumbent.get("total_trip_cost")
+    )
+    if not isinstance(incumbent_amount, (int, float)) or isinstance(
+        incumbent_amount, bool
+    ):
+        return {"disposition": "baseline_required", "optimistic_total": None}
+    if (
+        task.get("request_type") != "internal_surface_transfer"
+        and "flight" not in set(task.get("suggested_modes", []))
+    ):
+        return {
+            "disposition": "non_air_excluded",
+            "optimistic_total": None,
+            "incumbent": float(incumbent_amount),
+        }
+    edge_map = {
+        str(edge.get("edge_id")): edge
+        for edge in state.get("edges", [])
+        if isinstance(edge, dict) and edge.get("edge_id")
+    }
+    optimistic = 0.0
+    for edge_id in task.get("anchor_edge_ids", []):
+        edge = edge_map.get(str(edge_id))
+        if not isinstance(edge, dict) or edge.get("mode") != "flight":
+            continue
+        effective, _ = ENGINE.edge_effective_cost(
+            edge, state["profile"], state["config"]
+        )
+        baggage = ENGINE.to_base(
+            edge["mandatory_baggage_cost"],
+            state["config"],
+            f"edge {edge_id}.mandatory_baggage_cost",
+        )
+        optimistic += effective + baggage
+    raw_optimistic = task.get("optimistic_mandatory_air_ticket_total")
+    if isinstance(raw_optimistic, (int, float)) and not isinstance(
+        raw_optimistic, bool
+    ):
+        optimistic = max(optimistic, float(raw_optimistic))
+    threshold = float(
+        state["research_credits"].get("price_challenge_threshold", 0.05)
+    )
+    cutoff = float(incumbent_amount) * (1.0 - threshold)
+    return {
+        "disposition": "continue" if optimistic < cutoff else "threshold_stop",
+        "optimistic_total": round(optimistic, 2),
+        "incumbent": round(float(incumbent_amount), 2),
+        "price_challenge_threshold": threshold,
+        "competitive_cutoff": round(cutoff, 2),
+    }
 
 
 def _source_selection_mode(config: dict[str, Any]) -> str:
@@ -985,6 +1049,94 @@ def _refresh_budget_ledger(ledger: dict[str, Any]) -> None:
     )
 
 
+def _initial_research_credits(config: dict[str, Any]) -> dict[str, Any]:
+    policy = search_effort_policy(config.get("search_effort"))
+    budget = int(policy["research_credit_budget"])
+    return {
+        "research_credit_ledger_version": "1.0",
+        **policy,
+        "used": 0,
+        "reserved": 0,
+        "remaining": budget,
+        "entries": {},
+        "stop_reason": None,
+    }
+
+
+def research_credit_cost(task: dict[str, Any]) -> int:
+    explicit = task.get("research_credit_cost")
+    if isinstance(explicit, int) and not isinstance(explicit, bool):
+        return max(0, explicit)
+    request_type = str(task.get("request_type") or "")
+    if request_type in {
+        "conventional_reference",
+        "direct_closure",
+        "refresh_quote",
+    }:
+        return 2
+    if request_type == "internal_surface_transfer":
+        return 1
+    return 1
+
+
+def reserve_research_credit(
+    raw_state: Any,
+    *,
+    item_id: str,
+    task_id: str,
+    cost: int,
+) -> dict[str, Any]:
+    state = validate_session(raw_state)
+    ledger = state["research_credits"]
+    if item_id in ledger["entries"]:
+        return compact_session(state)
+    if cost < 0 or cost > int(ledger["remaining"]):
+        raise LiveProviderError("Research Credit budget is exhausted")
+    ledger["entries"][item_id] = {
+        "item_id": item_id,
+        "task_id": task_id,
+        "cost": int(cost),
+        "status": "reserved" if cost else "committed",
+        "reserved_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+    }
+    if cost:
+        ledger["reserved"] = int(ledger["reserved"]) + cost
+        ledger["remaining"] = int(ledger["research_credit_budget"]) - int(
+            ledger["used"]
+        ) - int(ledger["reserved"])
+    return compact_session(state)
+
+
+def record_research_receipt(
+    raw_state: Any,
+    *,
+    item_id: str,
+    execution_origin: str | None,
+    completed: bool,
+) -> dict[str, Any]:
+    state = validate_session(raw_state)
+    ledger = state["research_credits"]
+    entry = ledger["entries"].get(item_id)
+    if not isinstance(entry, dict) or entry.get("status") != "reserved":
+        return compact_session(state)
+    cost = int(entry.get("cost", 0))
+    if execution_origin == "provider_query":
+        entry["status"] = "committed"
+        ledger["used"] = int(ledger["used"]) + cost
+    else:
+        entry["status"] = "released"
+    ledger["reserved"] = max(0, int(ledger["reserved"]) - cost)
+    ledger["remaining"] = int(ledger["research_credit_budget"]) - int(
+        ledger["used"]
+    ) - int(ledger["reserved"])
+    entry["execution_origin"] = execution_origin
+    entry["completed"] = bool(completed)
+    entry["decided_at"] = datetime.now(timezone.utc).isoformat(
+        timespec="seconds"
+    )
+    return compact_session(state)
+
+
 def _budget_remaining(task: dict[str, Any]) -> float | None:
     value = task.get("budget_context", {}).get("remaining_budget")
     if isinstance(value, bool):
@@ -1025,44 +1177,6 @@ def _supersede_tighter_generations(
             task_ids=superseded,
             superseded_by_task_id=new_task["task_id"],
         )
-
-
-def _charge_attempt(
-    ledger: dict[str, Any], task: dict[str, Any], bundle: dict[str, Any], search_round: int
-) -> None:
-    """Charge one admitted Provider attempt exactly once per evidence bundle."""
-    _refresh_budget_ledger(ledger)
-    attempt_id = str(bundle.get("bundle_id") or "")
-    if not attempt_id:
-        raise LiveProviderError("attempt charge requires bundle_id")
-    if attempt_id in set(ledger.get("attempted_attempt_ids", [])):
-        raise LiveProviderError(f"evidence bundle {attempt_id} was already charged")
-    if ledger["remaining"] is not None and int(ledger["remaining"]) <= 0:
-        raise LiveProviderError("provider query budget exhausted")
-    statuses = sorted(
-        {item["evidence_status"] for item in bundle.get("observations", [])}
-    )
-    ledger["attempted_task_ids"].append(task["task_id"])
-    ledger.setdefault("attempted_attempt_ids", []).append(attempt_id)
-    ledger.setdefault("terminal_task_ids", []).append(task["task_id"])
-    _ledger_event(
-        ledger,
-        "attempt_charged",
-        search_round,
-        task_id=task["task_id"],
-        attempt_id=attempt_id,
-        bundle_id=bundle["bundle_id"],
-        evidence_statuses=statuses,
-    )
-    task["attempt_charged"] = True
-    task_bundle_ids = task.setdefault("attempt_bundle_ids", [])
-    if attempt_id not in task_bundle_ids:
-        task_bundle_ids.append(attempt_id)
-    task["attempt_count"] = len(task_bundle_ids)
-    task["attempt_number"] = task["attempt_count"]
-    task.pop("last_reopen", None)
-    task["terminal_round"] = int(search_round)
-    _refresh_budget_ledger(ledger)
 
 
 def _invalidate_finalization(state: dict[str, Any], reason: str) -> None:
@@ -1669,7 +1783,7 @@ def publish_frontier_research_task(
     state["research_tasks"] = _merge_tasks(
         state["research_tasks"],
         provider_plan["requests"],
-        state["budget_ledger"],
+        None,
         int(state.get("search_round", 0)),
     )
     new_tasks = [
@@ -1730,7 +1844,7 @@ def add_research_requirements(
     state["research_tasks"] = _merge_tasks(
         state["research_tasks"],
         provider_plan["requests"],
-        state["budget_ledger"],
+        None,
         int(state.get("search_round", 0)),
     )
     state["provider_coverage_audit"] = _merge_provider_coverage(
@@ -1933,13 +2047,9 @@ def _merge_provider_coverage(
 def initialize_session(config_path: str | Path) -> dict[str, Any]:
     config, profile, nodes, edges = ENGINE.load_bundle(config_path)
     result = ENGINE.solve(config, profile, nodes, edges)
-    budget_ledger = {
-        "limit": _session_budget_limit(config),
-        "attempted_attempt_ids": [],
-        "events": [],
-    }
+    research_credits = _initial_research_credits(config)
     provider_plan = _provider_plan_from_result(result, nodes, config)
-    tasks = _merge_tasks([], provider_plan["requests"], budget_ledger, 0)
+    tasks = _merge_tasks([], provider_plan["requests"], None, 0)
     provider_coverage = _merge_provider_coverage(None, provider_plan, tasks, 0)
     active_incumbent = copy.deepcopy(result.get("active_incumbent"))
     session = {
@@ -1952,9 +2062,10 @@ def initialize_session(config_path: str | Path) -> dict[str, Any]:
         "profile": profile,
         "nodes": _as_node_list(nodes),
         "edges": copy.deepcopy(edges),
+        "internal_surface_transfers": [],
         "research_tasks": tasks,
         "provider_coverage_audit": provider_coverage,
-        "budget_ledger": budget_ledger,
+        "research_credits": research_credits,
         "search_round": 0,
         "active_incumbent": active_incumbent,
         "incumbent_history": [active_incumbent] if active_incumbent else [],
@@ -2031,58 +2142,48 @@ def _upgrade_session(raw: dict[str, Any]) -> dict[str, Any]:
         if isinstance(raw_attempt_count, bool) or not isinstance(raw_attempt_count, int):
             raw_attempt_count = 0
         task["attempt_count"] = max(raw_attempt_count, len(task_bundle_ids))
-    ledger = state.get("budget_ledger")
-    if not isinstance(ledger, dict):
-        attempted_ids = list(bundle_ids_by_task)
-        attempted_bundle_ids = [
-            bundle_id
-            for bundle_ids in bundle_ids_by_task.values()
-            for bundle_id in bundle_ids
-        ]
-        configured_limit = (
-            _session_budget_limit(config) if config else max(1, len(attempted_ids))
-        )
-        ledger = {
-            "limit": (
-                None
-                if configured_limit is None
-                else max(configured_limit, len(attempted_ids), 1)
-            ),
-            "attempted_task_ids": sorted(set(attempted_ids)),
-            "attempted_attempt_ids": attempted_bundle_ids,
-            "terminal_task_ids": sorted(set(attempted_ids)),
-            "events": [],
-        }
-        state["budget_ledger"] = ledger
-    else:
-        attempted_bundle_ids = [
-            bundle_id
-            for bundle_ids in bundle_ids_by_task.values()
-            for bundle_id in bundle_ids
-        ]
-        terminal_ids = [
-            task.get("task_id")
-            for task in tasks
-            if isinstance(task, dict)
-            and task.get("task_id")
-            and task.get("status") in TERMINAL_STATUSES
-        ]
-        ledger.setdefault("attempted_task_ids", list(bundle_ids_by_task))
-        if not ledger.get("attempted_attempt_ids"):
-            ledger["attempted_attempt_ids"] = attempted_bundle_ids or [
-                str(event.get("bundle_id") or f"legacy-task:{event.get('task_id')}")
-                for event in ledger.get("events", [])
-                if event.get("event_type") == "attempt_charged" and event.get("task_id")
-            ] or [f"legacy-task:{task_id}" for task_id in terminal_ids]
-        ledger.setdefault("terminal_task_ids", terminal_ids)
-        ledger.setdefault("events", [])
-        if ledger.get("limit") is not None:
-            ledger["limit"] = max(
-                int(ledger.get("limit", 0)),
-                len(set(ledger["attempted_attempt_ids"])),
-                1,
+        task.setdefault("research_credit_cost", research_credit_cost(task))
+    credits = state.get("research_credits")
+    if not isinstance(credits, dict):
+        credits = _initial_research_credits(config)
+        legacy_ledger = state.get("budget_ledger")
+        legacy_attempt_ids = list(
+            dict.fromkeys(
+                [
+                    bundle_id
+                    for bundle_ids in bundle_ids_by_task.values()
+                    for bundle_id in bundle_ids
+                ]
+                or (
+                    legacy_ledger.get("attempted_attempt_ids", [])
+                    if isinstance(legacy_ledger, dict)
+                    else []
+                )
             )
-    _refresh_budget_ledger(ledger)
+        )
+        for attempt_id in legacy_attempt_ids:
+            credits["entries"][f"legacy:{attempt_id}"] = {
+                "item_id": f"legacy:{attempt_id}",
+                "task_id": None,
+                "cost": 1,
+                "status": "committed",
+                "execution_origin": "provider_query",
+                "legacy_attempt_id": attempt_id,
+            }
+        credits["used"] = len(legacy_attempt_ids)
+        if credits["used"] > credits["research_credit_budget"]:
+            credits["research_credit_budget"] = credits["used"]
+        credits["remaining"] = (
+            int(credits["research_credit_budget"]) - int(credits["used"])
+        )
+        if isinstance(legacy_ledger, dict):
+            credits["legacy_query_budget"] = copy.deepcopy(legacy_ledger)
+        state["research_credits"] = credits
+    else:
+        defaults = _initial_research_credits(config)
+        for key, value in defaults.items():
+            credits.setdefault(key, copy.deepcopy(value))
+    state.pop("budget_ledger", None)
     state.setdefault("search_round", 0)
     state.setdefault("active_incumbent", copy.deepcopy(state.get("result", {}).get("active_incumbent")))
     state.setdefault(
@@ -2098,6 +2199,7 @@ def _upgrade_session(raw: dict[str, Any]) -> dict[str, Any]:
     state.setdefault("stop_assessment", None)
     state.setdefault("no_result_stop_assessment", None)
     state.setdefault("frontier_history", [])
+    state.setdefault("internal_surface_transfers", [])
     if state.get("frontier_control_version") != FRONTIER_CONTROL_VERSION:
         if state.get("finalization_status") != "final":
             migrated_ids: list[str] = []
@@ -2227,8 +2329,8 @@ def validate_session(raw: Any) -> dict[str, Any]:
             )
     if not isinstance(state.get("evidence_bundles"), list):
         raise LiveProviderError("state.evidence_bundles must be an array")
-    if not isinstance(state.get("budget_ledger"), dict):
-        raise LiveProviderError("state.budget_ledger must be an object")
+    if not isinstance(state.get("research_credits"), dict):
+        raise LiveProviderError("state.research_credits must be an object")
     if state.get("active_hypothesis") is not None and not isinstance(
         state.get("active_hypothesis"), dict
     ):
@@ -3507,7 +3609,11 @@ def _result_incumbent(result: dict[str, Any]) -> dict[str, Any] | None:
     route = min(
         routes,
         key=lambda item: (
-            float(item["total_trip_cost"]),
+            float(
+                item.get("mandatory_air_ticket_total", {}).get(
+                    "amount", item["total_trip_cost"]
+                )
+            ),
             float(item.get("total_travel_time_minutes", math.inf)),
             item.get("id", ""),
         ),
@@ -3532,6 +3638,9 @@ def _evaluate_solver_result(
     try:
         nodes = ENGINE.validate_nodes(state["nodes"])
         config = ENGINE.validate_config(state["config"], state["profile"])
+        config["internal_surface_transfers"] = copy.deepcopy(
+            state.get("internal_surface_transfers", [])
+        )
         profile = ENGINE.validate_profile(state["profile"])
         edges = ENGINE.validate_edges(state["edges"], nodes, config)
         eligible_edges: list[dict[str, Any]] = []
@@ -3614,7 +3723,7 @@ def _recompute_session(state: dict[str, Any]) -> dict[str, Any]:
     state["research_tasks"] = _merge_tasks(
         state["research_tasks"],
         provider_plan["requests"],
-        state["budget_ledger"],
+        None,
         int(state.get("search_round", 0)),
     )
     state["provider_coverage_audit"] = _merge_provider_coverage(
@@ -3626,6 +3735,310 @@ def _recompute_session(state: dict[str, Any]) -> dict[str, Any]:
     _sync_hypothesis_tree(state)
     _refresh_frontier_exploration(state)
     return state
+
+
+def _publish_internal_surface_transfer_tasks(
+    state: dict[str, Any], source_task: dict[str, Any]
+) -> None:
+    """Publish the cheapest viable non-Offer bridge, never a Cartesian batch."""
+
+    if int(state.get("research_credits", {}).get("remaining", 0)) < 1:
+        return
+    if any(
+        task.get("request_type") == "internal_surface_transfer"
+        and task.get("status") in {"candidate", "pending"}
+        for task in state.get("research_tasks", [])
+        if isinstance(task, dict)
+    ):
+        return
+
+    flights = sorted(
+        (
+            edge
+            for edge in state.get("edges", [])
+            if isinstance(edge, dict) and edge.get("mode") == "flight"
+        ),
+        key=lambda edge: (str(edge.get("departure")), str(edge.get("arrival"))),
+    )
+    origins = set(state.get("profile", {}).get("origin_airport_nodes", []))
+    destinations = set(
+        state.get("profile", {}).get("destination_airport_nodes", [])
+    )
+    existing_pairs = {
+        (str(item.get("from_node")), str(item.get("to_node")))
+        for item in state.get("internal_surface_transfers", [])
+        if isinstance(item, dict)
+    }
+    existing_tasks = {
+        (
+            str((task.get("internal_surface_transfer_context") or {}).get("from_node") or task.get("from_node")),
+            str((task.get("internal_surface_transfer_context") or {}).get("to_node") or task.get("to_node")),
+        )
+        for task in state.get("research_tasks", [])
+        if task.get("request_type") == "internal_surface_transfer"
+    }
+    next_sequence = max(
+        (int(task.get("sequence", 0)) for task in state.get("research_tasks", [])),
+        default=0,
+    )
+    incumbent = state.get("active_incumbent") or {}
+    incumbent_money = incumbent.get("mandatory_air_ticket_total")
+    incumbent_amount = (
+        float(incumbent_money["amount"])
+        if isinstance(incumbent_money, dict)
+        and isinstance(incumbent_money.get("amount"), (int, float))
+        and not isinstance(incumbent_money.get("amount"), bool)
+        else None
+    )
+    threshold = float(
+        state.get("research_credits", {}).get("price_challenge_threshold", 0.05)
+    )
+    competitive_cutoff = (
+        incumbent_amount * (1.0 - threshold)
+        if incumbent_amount is not None
+        else None
+    )
+    candidates: dict[tuple[str, str], dict[str, Any]] = {}
+    for previous in flights:
+        if previous.get("from_node") not in origins:
+            continue
+        previous_arrival = _datetime(
+            previous.get("arrival"), "previous flight arrival"
+        )
+        for following in flights:
+            if following.get("to_node") not in destinations:
+                continue
+            if previous.get("edge_id") == following.get("edge_id"):
+                continue
+            from_node = str(previous.get("to_node") or "")
+            to_node = str(following.get("from_node") or "")
+            if not from_node or not to_node or from_node == to_node:
+                continue
+            following_departure = _datetime(
+                following.get("departure"), "following flight departure"
+            )
+            available_minutes = int(
+                (following_departure - previous_arrival).total_seconds() // 60
+            )
+            if available_minutes <= 0:
+                continue
+            pair = (from_node, to_node)
+            if pair in existing_pairs or pair in existing_tasks:
+                continue
+            optimistic_air_total = 0.0
+            for edge in (previous, following):
+                effective, _ = ENGINE.edge_effective_cost(
+                    edge, state["profile"], state["config"]
+                )
+                baggage = ENGINE.to_base(
+                    edge["mandatory_baggage_cost"],
+                    state["config"],
+                    f"edge {edge.get('edge_id')}.mandatory_baggage_cost",
+                )
+                optimistic_air_total += effective + baggage
+            if (
+                competitive_cutoff is not None
+                and optimistic_air_total >= competitive_cutoff
+            ):
+                continue
+            candidate = {
+                "from_node": from_node,
+                "to_node": to_node,
+                "available_minutes": available_minutes,
+                "previous_edge_id": previous.get("edge_id"),
+                "following_edge_id": following.get("edge_id"),
+                "previous_arrival": previous["arrival"],
+                "following_departure": following["departure"],
+                "optimistic_mandatory_air_ticket_total": round(
+                    optimistic_air_total, 2
+                ),
+            }
+            current = candidates.get(pair)
+            if current is None or (
+                candidate["optimistic_mandatory_air_ticket_total"],
+                -candidate["available_minutes"],
+                str(candidate["previous_edge_id"]),
+                str(candidate["following_edge_id"]),
+            ) < (
+                current["optimistic_mandatory_air_ticket_total"],
+                -current["available_minutes"],
+                str(current["previous_edge_id"]),
+                str(current["following_edge_id"]),
+            ):
+                candidates[pair] = candidate
+
+    ordered = sorted(
+        candidates.values(),
+        key=lambda item: (
+            item["optimistic_mandatory_air_ticket_total"],
+            item["from_node"],
+            item["to_node"],
+        ),
+    )
+    for candidate in ordered[:1]:
+            from_node = candidate["from_node"]
+            to_node = candidate["to_node"]
+            request = _normalized_request(
+                {
+                    "request_id": f"internal-surface-{from_node}-{to_node}",
+                    "request_type": "internal_surface_transfer",
+                    "origins": [from_node],
+                    "destinations": [to_node],
+                    "from_node": from_node,
+                    "to_node": to_node,
+                    "earliest_departure": candidate["previous_arrival"],
+                    "latest_arrival": candidate["following_departure"],
+                    "suggested_modes": [
+                        "rail",
+                        "bus",
+                        "coach",
+                        "local_transit",
+                        "rideshare",
+                        "car",
+                    ],
+                    "provider_kinds": ["road_routing", "scheduled_transport"],
+                    "endpoint_policy": {
+                        "from": "exact_node",
+                        "to": "exact_node",
+                    },
+                    "date_search": {"mode": "bounded_window"},
+                    "hypothesis_id": source_task.get("hypothesis_id"),
+                    "hypothesis_kind": "complete_journey",
+                    "route_shape": "internal_surface_transfer",
+                }
+            )
+            next_sequence += 1
+            task = _research_task(request, next_sequence)
+            task["research_kind"] = "internal_surface_transfer"
+            task["research_credit_cost"] = 1
+            task["optimistic_mandatory_air_ticket_total"] = candidate[
+                "optimistic_mandatory_air_ticket_total"
+            ]
+            task["internal_surface_transfer_context"] = {
+                "from_node": from_node,
+                "to_node": to_node,
+                "available_minutes": candidate["available_minutes"],
+                "previous_edge_id": candidate["previous_edge_id"],
+                "following_edge_id": candidate["following_edge_id"],
+            }
+            task["status"] = "pending"
+            state["research_tasks"].append(task)
+            existing_tasks.add(pair)
+
+
+def internal_surface_transfer_attempt_identity(raw_transfer: Any) -> str:
+    """Return a semantic replay identity before feasibility normalization."""
+
+    if not isinstance(raw_transfer, dict):
+        raise LiveProviderError("Internal Surface Transfer Capture must be an object")
+    allowed_fields = {
+        "from_node",
+        "to_node",
+        "approximate_duration_minutes",
+        "feasibility",
+        "evidence_url",
+        "observed_at",
+    }
+    if set(raw_transfer) != allowed_fields:
+        raise LiveProviderError(
+            "Internal Surface Transfer Capture has unsupported fields"
+        )
+    duration = raw_transfer.get("approximate_duration_minutes")
+    if isinstance(duration, bool) or not isinstance(duration, int) or duration < 1:
+        raise LiveProviderError("approximate_duration_minutes must be positive")
+    feasibility = raw_transfer.get("feasibility")
+    if feasibility not in {"verified_route", "fallback_plausible", "infeasible"}:
+        raise LiveProviderError("Internal Surface Transfer feasibility is unsupported")
+    canonical = {
+        "from_node": _text(raw_transfer.get("from_node"), "transfer.from_node"),
+        "to_node": _text(raw_transfer.get("to_node"), "transfer.to_node"),
+        "approximate_duration_minutes": duration,
+        "feasibility": feasibility,
+        "evidence_url": _http_url(
+            raw_transfer.get("evidence_url"), "transfer.evidence_url"
+        ),
+        "observed_at": _iso(
+            _datetime(raw_transfer.get("observed_at"), "transfer.observed_at")
+        ),
+    }
+    return hashlib.sha256(
+        json.dumps(
+            canonical,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+
+
+def ingest_internal_surface_transfer(
+    raw_state: Any,
+    task_id: str,
+    raw_transfer: Any,
+) -> dict[str, Any]:
+    state = validate_session(raw_state)
+    task = next(
+        (
+            item
+            for item in state.get("research_tasks", [])
+            if item.get("task_id") == task_id
+        ),
+        None,
+    )
+    if not isinstance(task, dict) or task.get("request_type") != "internal_surface_transfer":
+        raise LiveProviderError("Internal Surface Transfer Work Item is unknown")
+    attempt_identity = internal_surface_transfer_attempt_identity(raw_transfer)
+    context = task.get("internal_surface_transfer_context", {})
+    from_node = _text(raw_transfer.get("from_node"), "transfer.from_node")
+    to_node = _text(raw_transfer.get("to_node"), "transfer.to_node")
+    if from_node != context.get("from_node") or to_node != context.get("to_node"):
+        raise LiveProviderError("Internal Surface Transfer endpoints do not match")
+    duration = raw_transfer.get("approximate_duration_minutes")
+    if isinstance(duration, bool) or not isinstance(duration, int) or duration < 1:
+        raise LiveProviderError("approximate_duration_minutes must be positive")
+    feasibility = raw_transfer.get("feasibility")
+    if feasibility not in {"verified_route", "fallback_plausible", "infeasible"}:
+        raise LiveProviderError("Internal Surface Transfer feasibility is unsupported")
+    evidence_url = _http_url(raw_transfer.get("evidence_url"), "transfer.evidence_url")
+    observed_at = _iso(_datetime(raw_transfer.get("observed_at"), "transfer.observed_at"))
+    buffers = state["config"]["search"]["mode_transition_buffers_minutes"]
+    required_minutes = (
+        int(buffers.get("flight_to_surface", 0))
+        + duration
+        + int(buffers.get("surface_to_flight", 0))
+    )
+    if required_minutes > int(context.get("available_minutes", 0)):
+        feasibility = "infeasible"
+    transfer = {
+        "from_node": from_node,
+        "to_node": to_node,
+        "approximate_duration_minutes": duration,
+        "feasibility": feasibility,
+        "evidence_url": evidence_url,
+        "observed_at": observed_at,
+    }
+    state["internal_surface_transfers"] = [
+        *[
+            item
+            for item in state.get("internal_surface_transfers", [])
+            if (item.get("from_node"), item.get("to_node"))
+            != (from_node, to_node)
+        ],
+        transfer,
+    ]
+    task["status"] = VERIFIED_STATUS if feasibility != "infeasible" else "rejected"
+    task["terminal_capture_sha256"] = attempt_identity
+    task["attempt_count"] = int(task.get("attempt_count", 0)) + 1
+    state["search_round"] = int(state.get("search_round", 0)) + 1
+    state = _recompute_session(state)
+    route_edge_ids = [
+        str(edge_id)
+        for route in state.get("result", {}).get("routes", [])
+        for edge_id in route.get("edge_ids", [])
+    ]
+    _update_active_hypothesis_after_ingest(state, task, route_edge_ids)
+    _publish_internal_surface_transfer_tasks(state, task)
+    return compact_session(state)
 
 
 def ingest_evidence(state: dict[str, Any], raw_bundle: Any) -> dict[str, Any]:
@@ -3673,7 +4086,16 @@ def ingest_evidence(state: dict[str, Any], raw_bundle: Any) -> dict[str, Any]:
     else:
         task["status"] = "rejected"
     next_round = int(state.get("search_round", 0)) + 1
-    _charge_attempt(state["budget_ledger"], task, bundle, next_round)
+    attempt_id = str(bundle.get("bundle_id") or "")
+    task_bundle_ids = task.setdefault("attempt_bundle_ids", [])
+    if attempt_id and attempt_id not in task_bundle_ids:
+        task_bundle_ids.append(attempt_id)
+    task["attempt_count"] = len(task_bundle_ids)
+    task["attempt_number"] = task["attempt_count"]
+    task.pop("last_reopen", None)
+    task["terminal_round"] = next_round
+    if admitted_edge_ids:
+        _publish_internal_surface_transfer_tasks(state, task)
     state["evidence_bundles"].append(bundle)
     state["search_round"] = next_round
     state = _recompute_session(state)
@@ -3691,11 +4113,7 @@ def _summary(state: dict[str, Any]) -> dict[str, Any]:
         "session_id": state["session_id"],
         "trip_scope": state["trip_scope"],
         "tasks": statuses,
-        "query_budget": {
-            "limit": state["budget_ledger"]["limit"],
-            "attempted": state["budget_ledger"]["attempted_count"],
-            "remaining": state["budget_ledger"]["remaining"],
-        },
+        "research_credits": copy.deepcopy(state["research_credits"]),
         "edges": len(state["edges"]),
         "routes": len(state["result"].get("routes", [])),
         "frontier_exploration": {
@@ -3828,18 +4246,6 @@ def _finalization_audit(
             }
         )
     assessment = state.get("stop_assessment")
-    if not isinstance(assessment, dict) or assessment.get("search_round") != int(
-        state.get("search_round", 0)
-    ):
-        issues.append(
-            {
-                "code": "fresh_challenger_stop_assessment_missing",
-                "message": (
-                    "Record a challenger stop assessment at the current search round "
-                    "before finalizing."
-                ),
-            }
-        )
     dispositions: dict[str, int] = {}
     for outcome in outcomes.values():
         if isinstance(outcome, dict):
@@ -3904,11 +4310,194 @@ def _export_result(
         codes = ", ".join(issue["code"] for issue in finalization["issues"])
         raise LiveProviderError(f"finalize-result blocked: {codes}")
     result = copy.deepcopy(evaluation["result"])
+    incumbent = _result_incumbent(result)
+    incumbent_route = next(
+        (
+            route
+            for route in result.get("routes", [])
+            if isinstance(route, dict)
+            and isinstance(incumbent, dict)
+            and route.get("id") == incumbent.get("route_id")
+        ),
+        None,
+    )
+    result["cost_scope"] = (
+        copy.deepcopy(incumbent_route.get("cost_scope"))
+        if isinstance(incumbent_route, dict)
+        else None
+    )
     result["search_status"] = search_status
     result["incomplete"] = search_status != "final"
     result["finalization_reason"] = finalization_reason
-    ledger = copy.deepcopy(state["budget_ledger"])
-    _refresh_budget_ledger(ledger)
+    ledger = copy.deepcopy(state["research_credits"])
+    result["ranking_basis"] = "mandatory_air_ticket_total"
+    result["mandatory_air_ticket_total"] = (
+        copy.deepcopy(incumbent_route.get("mandatory_air_ticket_total"))
+        if isinstance(incumbent_route, dict)
+        else None
+    )
+    result["claim_scope"] = "bounded_verified"
+    result["claim"] = (
+        "Lowest verified Mandatory Air Ticket Total found within the disclosed "
+        "Self-access Gateway Pool, searched scope, and Research Credits."
+    )
+    result["excluded_costs"] = copy.deepcopy(
+        (result.get("cost_scope") or {}).get("excluded_costs", {})
+    )
+    result["internal_surface_transfers"] = copy.deepcopy(
+        incumbent_route.get("internal_surface_transfers", [])
+        if isinstance(incumbent_route, dict)
+        else []
+    )
+    selected_offers: list[dict[str, Any]] = []
+    price_observations: list[dict[str, Any]] = []
+    if isinstance(incumbent_route, dict):
+        for edge in incumbent_route.get("edges", []):
+            if not isinstance(edge, dict) or edge.get("mode") != "flight":
+                continue
+            offer_set = edge.get("offer_set")
+            if not isinstance(offer_set, dict):
+                continue
+            selected_offer_id = offer_set.get("selected_offer_id")
+            selected_snapshot_id = offer_set.get("selected_snapshot_id")
+            offer = next(
+                (
+                    value
+                    for value in offer_set.get("offers", [])
+                    if isinstance(value, dict)
+                    and value.get("offer_id") == selected_offer_id
+                ),
+                None,
+            )
+            snapshot = next(
+                (
+                    value
+                    for value in (offer or {}).get("snapshots", [])
+                    if isinstance(value, dict)
+                    and value.get("snapshot_id") == selected_snapshot_id
+                ),
+                None,
+            )
+            if not isinstance(offer, dict) or not isinstance(snapshot, dict):
+                continue
+            selected = {
+                "edge_id": edge.get("edge_id"),
+                "offer_id": selected_offer_id,
+                "seller": offer.get("provider"),
+                "booking_url": snapshot.get("url"),
+                "price": copy.deepcopy(snapshot.get("price")),
+                "mandatory_baggage_cost": copy.deepcopy(
+                    (snapshot.get("baggage") or {}).get("mandatory_cost")
+                ),
+                "observed_at": snapshot.get("observed_at"),
+                "expires_at": snapshot.get("expires_at"),
+            }
+            selected_offers.append(selected)
+            price_observations.append(
+                {
+                    key: copy.deepcopy(value)
+                    for key, value in {
+                        "offer_id": selected_offer_id,
+                        "observed_at": snapshot.get("observed_at"),
+                        "expires_at": snapshot.get("expires_at"),
+                    }.items()
+                    if value is not None
+                }
+            )
+    result["selected_offers"] = selected_offers
+    result["price_observations"] = price_observations
+    result["freshness"] = {
+        "evaluated_at": _iso(evaluated_at),
+        "status": "fresh" if incumbent_route is not None else "no_winner",
+        "offers": copy.deepcopy(price_observations),
+    }
+    warnings: list[dict[str, Any]] = []
+    if isinstance(incumbent_route, dict):
+        if int(incumbent_route.get("overnight_count", 0)):
+            warnings.append(
+                {
+                    "code": "overnight_wait",
+                    "count": int(incumbent_route["overnight_count"]),
+                }
+            )
+        if int(incumbent_route.get("independent_ticket_transfer_count", 0)):
+            warnings.append(
+                {
+                    "code": "unprotected_self_transfer",
+                    "count": int(
+                        incumbent_route["independent_ticket_transfer_count"]
+                    ),
+                }
+            )
+        for transfer in incumbent_route.get("internal_surface_transfers", []):
+            if (
+                isinstance(transfer, dict)
+                and transfer.get("feasibility") == "fallback_plausible"
+            ):
+                warnings.append(
+                    {
+                        "code": "surface_transfer_fallback_plausible",
+                        "from_node": transfer.get("from_node"),
+                        "to_node": transfer.get("to_node"),
+                    }
+                )
+        if (incumbent_route.get("cost_scope") or {}).get(
+            "gateway_complete_cost_status"
+        ) == "incomplete_unpriced_transfer":
+            warnings.append({"code": "unpriced_internal_surface_transfer"})
+    result["warnings"] = warnings
+    result["search_stopping"] = {
+        "disposition": (
+            "budget_stop"
+            if int(ledger.get("remaining", 0)) <= 0
+            else "threshold_stop"
+        ),
+        "search_effort": ledger["search_effort"],
+        "research_credit_budget": ledger["research_credit_budget"],
+        "research_credits_used": ledger["used"],
+        "research_credits_remaining": ledger["remaining"],
+        "price_challenge_threshold": ledger["price_challenge_threshold"],
+    }
+    origin_gateways = set(
+        state.get("profile", {}).get("origin_airport_nodes", [])
+    )
+    destination_gateways = set(
+        state.get("profile", {}).get("destination_airport_nodes", [])
+    )
+    for route in result.get("routes", []):
+        edges = route.get("edges", []) if isinstance(route, dict) else []
+        flight_edges = [
+            edge
+            for edge in edges
+            if isinstance(edge, dict) and edge.get("mode") == "flight"
+        ]
+        if flight_edges:
+            origin_gateways.add(str(flight_edges[0].get("from_node")))
+            destination_gateways.add(str(flight_edges[-1].get("to_node")))
+    result["searched_scope"] = {
+        "self_access_gateway_pool": {
+            "origin": sorted(value for value in origin_gateways if value),
+            "destination": sorted(value for value in destination_gateways if value),
+        },
+        "search_effort": ledger["search_effort"],
+    }
+    result["unsearched_scope"] = {
+        "claim": (
+            "The winner is bounded by the disclosed scope and Research Credit "
+            "budget, not a global minimum."
+        ),
+        "unsearched_task_ids": [
+            str(task.get("task_id"))
+            for task in state.get("research_tasks", [])
+            if task.get("status") in {"candidate", "pending"}
+        ],
+        "unresolved_low_price_signals": [],
+        "unresolved_task_ids": [
+            str(task.get("task_id"))
+            for task in state.get("research_tasks", [])
+            if task.get("status") in {"rejected", "no_result"}
+        ],
+    }
     statuses: dict[str, int] = {}
     for task in state["research_tasks"]:
         status = str(task.get("status", "unknown"))
@@ -3918,15 +4507,19 @@ def _export_result(
         "trip_scope": state["trip_scope"],
         "source_selection_mode": _source_selection_mode(state["config"]),
         "search_round": int(state.get("search_round", 0)),
-        "query_budget_ledger": {
-            "budget_scope": "external_ai_browser_query_attempts",
-            "limit": ledger["limit"],
-            "attempted": ledger["attempted_count"],
-            "terminal": ledger["terminal_count"],
+        "research_credits": {
+            "budget_scope": "new_external_research",
+            "search_effort": ledger["search_effort"],
+            "budget": ledger["research_credit_budget"],
+            "used": ledger["used"],
+            "reserved": ledger["reserved"],
             "remaining": ledger["remaining"],
+            "price_challenge_threshold": ledger[
+                "price_challenge_threshold"
+            ],
             "pending": statuses.get("pending", 0),
             "task_status_counts": statuses,
-            "events": copy.deepcopy(ledger.get("events", [])),
+            "entries": copy.deepcopy(ledger.get("entries", {})),
         },
         "internal_engine_query_budgets": {
             "budget_scope": (

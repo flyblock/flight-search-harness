@@ -115,8 +115,8 @@ CAPTURE_FIELDS = [
         "field": "price_selection_method",
         "required_when": "fare-bearing flight observation",
         "rule": (
-            "Record lowest_price_view, price_ascending, price_sorted_api, or "
-            "all_visible_compared. A default recommended view is not "
+            "Record lowest_price_view, price_ascending, or all_visible_compared "
+            "from a user-visible Browser page. A default recommended view is not "
             "lowest-price evidence."
         ),
     },
@@ -559,8 +559,8 @@ def task_to_brief(
     date_search["mode"] = date_mode
     date_search["execution_rule"] = (
         "Use one provider calendar/grid query for this corridor when available, retain "
-        "the issued number of distinct low-price/Pareto dates, then open exact dated "
-        "results for evidence. Calendar or month-view prices are discovery hints only."
+        "only low-price signals that may clear the Product's price challenge, then open "
+        "exact dated results for evidence. Calendar or month-view prices are discovery hints only."
         if date_mode in {"bounded_window", "fully_flexible"}
         else "Search every issued exact departure date; do not substitute an unissued date."
     )
@@ -595,8 +595,8 @@ def task_to_brief(
             "script_recommended": _script_recommended(task),
             "selection_advice": copy.deepcopy(task.get("selection_advice")),
             "ai_authority": (
-                "The AI may execute this option or any other candidate/pending option. "
-                "Script recommendation, budget, and quota fields are advisory."
+                "Execute only a published candidate/pending option. The Product owns "
+                "Research Credits and price-threshold admission; do not add diversity work."
             ),
         },
         "request_type": _text(task.get("request_type"), "task.request_type"),

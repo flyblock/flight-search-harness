@@ -658,9 +658,6 @@ class RandomLoopProductAdapter:
                                                 "method": {
                                                     "enum": [
                                                         "browser",
-                                                        "http_recovery",
-                                                        "provider_api",
-                                                        "cache",
                                                     ]
                                                 },
                                                 "detail": {"type": "string"},

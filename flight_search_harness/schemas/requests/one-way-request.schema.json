@@ -31,22 +31,13 @@
         },
         "overnight_allowed": {"type": "boolean", "description": "Whether a connection wait may cross a local calendar day."},
         "self_transfer_policy": {"$ref": "common-defs.schema.json#/$defs/self_transfer_policy"},
-        "origin": {
-          "allOf": [
-            {"$ref": "common-defs.schema.json#/$defs/fixed_region_side"},
-            {"properties": {"endpoint_policy": {"const": "anchor_required"}}}
-          ]
-        },
-        "destination": {
-          "allOf": [
-            {"$ref": "common-defs.schema.json#/$defs/fixed_region_side"},
-            {"properties": {"endpoint_policy": {"const": "anchor_required"}}}
-          ]
-        },
+        "search_effort": {"$ref": "common-defs.schema.json#/$defs/search_effort"},
+        "origin": {"$ref": "common-defs.schema.json#/$defs/fixed_region_side"},
+        "destination": {"$ref": "common-defs.schema.json#/$defs/fixed_region_side"},
         "departure_window": {"$ref": "common-defs.schema.json#/$defs/date_or_datetime_window"},
         "exact_departure_dates": {"$ref": "common-defs.schema.json#/$defs/exact_departure_dates"},
         "budget": {
-          "description": "Optional inclusive hard ceiling for the complete mandatory journey price; null means no ceiling.",
+          "description": "Optional inclusive hard ceiling for Mandatory Air Ticket Total; null means no ceiling. Excluded non-air costs do not consume it.",
           "oneOf": [
             {"$ref": "common-defs.schema.json#/$defs/money"},
             {"type": "null"}
@@ -58,7 +49,8 @@
             {"contains": {"const": "flight"}}
           ]
         },
-        "maximum_total_duration_minutes": {"type": "integer", "minimum": 1, "description": "Inclusive elapsed-time ceiling for the complete one-way journey."}
+        "maximum_total_duration_minutes": {"type": "integer", "minimum": 1, "description": "Optional explicit hard elapsed-time ceiling. Omission leaves long waits as warnings."},
+        "maximum_transfer_count": {"type": "integer", "minimum": 0, "description": "Optional explicit hard transfer-count ceiling. Omission leaves transfer count unbounded by product policy."}
       },
       "additionalProperties": false
     }

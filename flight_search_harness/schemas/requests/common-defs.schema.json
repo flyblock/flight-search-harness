@@ -38,7 +38,7 @@
     },
     "date_or_datetime_window": {
       "type": "object",
-      "description": "A same-representation window whose end must be strictly later than its start.",
+      "description": "A same-representation window whose end must not precede its start; a Product may require a strict interval.",
       "required": ["start", "end"],
       "properties": {
         "start": {
@@ -110,8 +110,21 @@
           "uniqueItems": true,
           "items": {"type": "string", "pattern": "^[A-Z]{2}$"}
         },
+        "search_geography": {
+          "type": "object",
+          "required": ["kind", "country_code"],
+          "properties": {
+            "kind": {"const": "country"},
+            "country_code": {"type": "string", "pattern": "^[A-Z]{2}$"}
+          },
+          "additionalProperties": false,
+          "description": "Optional user-declared whole-country search scope. Omit for a city or bounded region."
+        },
         "policy": {"enum": ["exact", "city_region", "extended_region"]},
-        "endpoint_policy": {"enum": ["anchor_required", "any_admitted_gateway"]},
+        "endpoint_policy": {
+          "enum": ["anchor_required", "any_admitted_gateway"],
+          "description": "Per-side journey scope. anchor_required includes required Endpoint Access or Egress; any_admitted_gateway accepts an Evidence-backed Gateway as the endpoint."
+        },
         "anchor_nodes": {
           "type": "array",
           "minItems": 1,
@@ -181,6 +194,11 @@
     "self_transfer_policy": {
       "enum": ["allow", "never"],
       "description": "Whether independently ticketed flight connections are allowed."
+    },
+    "search_effort": {
+      "enum": ["economy", "standard", "deep"],
+      "default": "standard",
+      "description": "Selects the Product-owned Research Credit budget and Price Challenge Threshold."
     }
   }
 }

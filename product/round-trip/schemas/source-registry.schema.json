@@ -21,6 +21,7 @@
           "source_id": {"type": "string"},
           "name": {"type": "string"},
           "url": {"type": "string", "format": "uri"},
+          "allowed_hosts": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
           "source_type": {"type": "string"},
           "evidence_role": {"enum": ["payable_offer", "payable_offer_when_seller_visible", "research_only_until_payable_seller_verified"]},
           "modes": {"type": "array", "minItems": 1, "items": {"type": "string"}},

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import copy
 import hashlib
 import itertools
 import json
@@ -40,6 +41,13 @@ DEFAULT_BUFFERS = {
     "surface_to_surface": 0,
 }
 STAY_NIGHT_COUNT_SEMANTICS = "destination_endpoint_local_calendar_date_difference"
+ENDPOINT_SURFACE_ROLES = {
+    "origin-access-outbound": "origin_access",
+    "origin-egress-return": "origin_egress",
+    "destination-access-return": "destination_access",
+    "destination-egress-outbound": "destination_egress",
+}
+SURFACE_ROLES = {*ENDPOINT_SURFACE_ROLES, "internal-surface-transfer"}
 
 
 class RoundTripError(ValueError):
@@ -206,6 +214,8 @@ def _fx_context(raw: Any, base_currency: str) -> dict[str, Any] | None:
     if not isinstance(rates_raw, dict) or not rates_raw:
         raise RoundTripError("fx_snapshot.rates must be a non-empty object")
     rates = {str(code).upper(): _amount(rate, f"fx_snapshot.rates.{code}") for code, rate in rates_raw.items()}
+    if any(rate <= 0 for rate in rates.values()):
+        raise RoundTripError("fx_snapshot rates must be greater than zero")
     if rates.get(base_currency, 1.0) != 1.0:
         raise RoundTripError("fx_snapshot base-currency rate must be 1")
     rates[base_currency] = 1.0
@@ -305,8 +315,13 @@ def _validate_bundle(raw: Any) -> dict[str, Any]:
         raise RoundTripError(
             "intent.baggage_policy.paid_baggage_allowed must be boolean"
         )
-    accommodation_policy = intent.get("accommodation_cost_policy", "include_required")
-    if accommodation_policy not in {"include_required", "exclude_from_optimization"}:
+    accommodation_policy = intent.get(
+        "accommodation_cost_policy", "exclude_from_ranking"
+    )
+    if accommodation_policy not in {
+        "exclude_from_ranking",
+        "include_required",
+    }:
         raise RoundTripError("intent.accommodation_cost_policy is unsupported")
     outbound_window = _window(intent.get("outbound_departure_window"), "intent.outbound_departure_window")
     return_window = _window(intent.get("return_departure_window"), "intent.return_departure_window")
@@ -354,9 +369,72 @@ def _validate_bundle(raw: Any) -> dict[str, Any]:
         maximum_stay_nights = _integer(maximum_stay_nights, "intent.maximum_stay_nights")
     if minimum_stay_nights is not None and maximum_stay_nights is not None and minimum_stay_nights > maximum_stay_nights:
         raise RoundTripError("intent.minimum_stay_nights must not exceed intent.maximum_stay_nights")
+    travel_windows = []
+    raw_travel_windows = intent.get("travel_windows")
+    if isinstance(raw_travel_windows, list) and raw_travel_windows:
+        for index, item in enumerate(raw_travel_windows):
+            if not isinstance(item, dict):
+                raise RoundTripError(
+                    f"intent.travel_windows[{index}] must be an object"
+                )
+            minimum = item.get("minimum_stay_nights")
+            maximum = item.get("maximum_stay_nights")
+            if minimum is not None:
+                minimum = _integer(
+                    minimum,
+                    f"intent.travel_windows[{index}].minimum_stay_nights",
+                )
+            if maximum is not None:
+                maximum = _integer(
+                    maximum,
+                    f"intent.travel_windows[{index}].maximum_stay_nights",
+                )
+            if minimum is not None and maximum is not None and minimum > maximum:
+                raise RoundTripError(
+                    f"intent.travel_windows[{index}] has an invalid stay range"
+                )
+            travel_windows.append(
+                {
+                    "travel_window_id": _text(
+                        item.get("travel_window_id"),
+                        f"intent.travel_windows[{index}].travel_window_id",
+                    ),
+                    "outbound_window": _window(
+                        item.get("outbound_departure_window"),
+                        f"intent.travel_windows[{index}].outbound_departure_window",
+                    ),
+                    "return_window": _window(
+                        item.get("return_departure_window"),
+                        f"intent.travel_windows[{index}].return_departure_window",
+                    ),
+                    "minimum_stay_nights": minimum,
+                    "maximum_stay_nights": maximum,
+                }
+            )
+    else:
+        travel_windows = [
+            {
+                "travel_window_id": "travel-window-primary",
+                "outbound_window": outbound_window,
+                "return_window": return_window,
+                "minimum_stay_nights": minimum_stay_nights,
+                "maximum_stay_nights": maximum_stay_nights,
+            }
+        ]
     airport_transit_unknown_policy = intent.get("airport_transit_unknown_policy", "allow_with_warning")
     if airport_transit_unknown_policy not in {"allow_with_warning", "reject"}:
         raise RoundTripError("intent.airport_transit_unknown_policy is unsupported")
+    endpoint_policies = {}
+    for side in ("origin", "destination"):
+        pool = intent.get(f"{side}_pool", {})
+        policy = (
+            pool.get("endpoint_policy", "anchor_required")
+            if isinstance(pool, dict)
+            else "anchor_required"
+        )
+        if policy not in {"anchor_required", "any_admitted_gateway"}:
+            raise RoundTripError(f"intent.{side}_pool.endpoint_policy is unsupported")
+        endpoint_policies[side] = policy
     context: dict[str, Any] = {
         "currency": currency,
         "nodes": nodes,
@@ -390,8 +468,10 @@ def _validate_bundle(raw: Any) -> dict[str, Any]:
         "maximum_return_duration_minutes": maximum_return_duration_minutes,
         "minimum_stay_nights": minimum_stay_nights,
         "maximum_stay_nights": maximum_stay_nights,
+        "travel_windows": travel_windows,
         "airport_transit_unknown_policy": airport_transit_unknown_policy,
         "traveler_count": traveler_count,
+        "endpoint_policies": endpoint_policies,
         "baggage_policy": {
             "required_items": required_baggage_items,
             "paid_baggage_allowed": paid_baggage_allowed,
@@ -456,6 +536,49 @@ def _validate_bundle(raw: Any) -> dict[str, Any]:
                 _integer(transfer["minimum_connection_minutes"], f"{field}.transfer_from_previous.minimum_connection_minutes")
     context["movements"] = movements
 
+    transfers_raw = raw.get("internal_surface_transfers", [])
+    if not isinstance(transfers_raw, list):
+        raise RoundTripError("internal_surface_transfers must be an array")
+    internal_surface_transfers: dict[tuple[str, str], dict[str, Any]] = {}
+    for index, item in enumerate(transfers_raw):
+        field = f"internal_surface_transfers[{index}]"
+        if not isinstance(item, dict):
+            raise RoundTripError(f"{field} must be an object")
+        from_node = _text(item.get("from_node"), f"{field}.from_node")
+        to_node = _text(item.get("to_node"), f"{field}.to_node")
+        if from_node not in nodes or to_node not in nodes or from_node == to_node:
+            raise RoundTripError(f"{field} endpoints are invalid")
+        duration = _integer(
+            item.get("approximate_duration_minutes"),
+            f"{field}.approximate_duration_minutes",
+            minimum=1,
+        )
+        feasibility = item.get("feasibility")
+        if feasibility not in {
+            "verified_route",
+            "fallback_plausible",
+            "infeasible",
+        }:
+            raise RoundTripError(f"{field}.feasibility is unsupported")
+        normalized_transfer = {
+            "from_node": from_node,
+            "to_node": to_node,
+            "approximate_duration_minutes": duration,
+            "feasibility": feasibility,
+            "evidence_url": _http_url(
+                item.get("evidence_url"), f"{field}.evidence_url"
+            ),
+            "observed_at": _dt(
+                item.get("observed_at"), f"{field}.observed_at"
+            ).isoformat(),
+        }
+        key = (from_node, to_node)
+        existing = internal_surface_transfers.get(key)
+        if existing is not None and existing != normalized_transfer:
+            raise RoundTripError(f"conflicting Internal Surface Transfer {key}")
+        internal_surface_transfers[key] = normalized_transfer
+    context["internal_surface_transfers"] = internal_surface_transfers
+
     offers_raw = raw.get("offers")
     if not isinstance(offers_raw, list):
         raise RoundTripError("offers must be an array")
@@ -474,6 +597,14 @@ def _validate_bundle(raw: Any) -> dict[str, Any]:
         scope = item.get("journey_scope")
         if scope not in OFFER_SCOPES:
             raise RoundTripError(f"{field}.journey_scope is unsupported")
+        surface_role = item.get("surface_role")
+        if scope == "surface":
+            if surface_role is not None and surface_role not in SURFACE_ROLES:
+                raise RoundTripError(f"{field}.surface_role is unsupported")
+        elif surface_role is not None:
+            raise RoundTripError(
+                f"{field}.surface_role is allowed only for Surface Offers"
+            )
         direction = item.get("direction")
         if scope == "one_way" and direction not in {"outbound", "return"}:
             raise RoundTripError(f"{field}.direction is required for one_way")
@@ -534,7 +665,12 @@ def _validate_bundle(raw: Any) -> dict[str, Any]:
             accommodation_amount, accommodation_currency = _money(item.get("required_accommodation_cost"), f"{field}.required_accommodation_cost")
             accommodation_cost = _convert(accommodation_amount, accommodation_currency, context, f"{field}.required_accommodation_cost")
         observed_cost = round(transport_and_baggage_cost + accommodation_cost, 2)
-        accommodation_included = accommodation_cost if context["accommodation_cost_policy"] == "include_required" else 0.0
+        mandatory_air_ticket_cost = (
+            round(transport_and_baggage_cost, 2)
+            if "flight" in movement_modes
+            else 0.0
+        )
+        accommodation_included = accommodation_cost
         effective_cost = round(transport_and_baggage_cost + accommodation_included, 2)
         applied_entitlement = None
         tags = set(item.get("entitlement_tags", []))
@@ -571,6 +707,7 @@ def _validate_bundle(raw: Any) -> dict[str, Any]:
             "provider_offer_id": _text(item.get("provider_offer_id"), f"{field}.provider_offer_id"),
             "source_id": _text(item.get("source_id"), f"{field}.source_id"),
             "_effective_cost": effective_cost,
+            "_mandatory_air_ticket_cost": mandatory_air_ticket_cost,
             "_observed_cost": round(observed_cost, 2),
             "_required_accommodation_cost": round(accommodation_cost, 2),
             "_included_accommodation_cost": round(accommodation_included, 2),
@@ -615,7 +752,16 @@ def _validate_bundle(raw: Any) -> dict[str, Any]:
         goals = set(_string_list(offer.get("coverage_end_nodes"), f"offers.{offer['offer_id']}.coverage_end_nodes"))
         if not starts <= set(nodes) or not goals <= set(nodes):
             raise RoundTripError(f"one-way offer {offer['offer_id']} coverage endpoints must be declared nodes")
-        window = outbound_window if offer["direction"] == "outbound" else return_window
+        window = (
+            _window(
+                offer["coverage_departure_window"],
+                f"offers.{offer['offer_id']}.coverage_departure_window",
+            )
+            if offer.get("coverage_departure_window") is not None
+            else outbound_window
+            if offer["direction"] == "outbound"
+            else return_window
+        )
         movement_offer = {movement_id: offer["offer_id"] for movement_id in offer["_used_movement_ids"]}
         complete = any(
             set(path) == set(offer["_used_movement_ids"])
@@ -658,15 +804,33 @@ def _paths(
             return
         for movement in ordered:
             movement_id = movement["movement_id"]
-            if movement_id not in remaining or movement["from_node"] != node:
+            if movement_id not in remaining:
                 continue
             departure = movement["_departure"]
             if current_time is None:
+                if movement["from_node"] != node:
+                    continue
                 if not (first_window[0] <= departure <= first_window[1]) or (not_before is not None and departure < not_before):
                     continue
             else:
                 previous = movements[path[-1]]
+                transfer = None
+                if movement["from_node"] != node:
+                    transfer = context["internal_surface_transfers"].get(
+                        (node, movement["from_node"])
+                    )
+                    if (
+                        not isinstance(transfer, dict)
+                        or transfer.get("feasibility") == "infeasible"
+                    ):
+                        continue
                 buffer = _buffer_minutes(previous, movement, movement_offer[path[-1]], movement_offer[movement_id], context)
+                if transfer is not None:
+                    buffer = (
+                        int(context["buffers"]["flight_to_surface"])
+                        + int(transfer["approximate_duration_minutes"])
+                        + int(context["buffers"]["surface_to_flight"])
+                    )
                 if not context["overnight_allowed"] and departure.date() > current_time.date():
                     continue
                 if previous["mode"] == "flight" and movement["mode"] == "flight":
@@ -728,9 +892,25 @@ def _complete_itinerary(selected: list[dict[str, Any]], context: dict[str, Any])
             stay_nights = (return_departure.date() - outbound_arrival.date()).days
             if stay_nights < 0:
                 continue
-            if context["minimum_stay_nights"] is not None and stay_nights < context["minimum_stay_nights"]:
-                continue
-            if context["maximum_stay_nights"] is not None and stay_nights > context["maximum_stay_nights"]:
+            matching_travel_windows = [
+                item
+                for item in context["travel_windows"]
+                if item["outbound_window"][0]
+                <= first_departure
+                <= item["outbound_window"][1]
+                and item["return_window"][0]
+                <= return_departure
+                <= item["return_window"][1]
+                and (
+                    item["minimum_stay_nights"] is None
+                    or stay_nights >= item["minimum_stay_nights"]
+                )
+                and (
+                    item["maximum_stay_nights"] is None
+                    or stay_nights <= item["maximum_stay_nights"]
+                )
+            ]
+            if not matching_travel_windows:
                 continue
             stay_duration_minutes = int((return_departure - outbound_arrival).total_seconds() // 60)
             final_arrival = movements[return_path[-1]]["_arrival"]
@@ -746,11 +926,20 @@ def _complete_itinerary(selected: list[dict[str, Any]], context: dict[str, Any])
             total_elapsed_minutes = int((final_arrival - first_departure).total_seconds() // 60)
             self_transfer_count = 0
             unknown_transit_connections = []
+            used_internal_surface_transfers = []
             overnight_connection_count = 0
             for directional_path in (outbound, return_path):
                 for previous_id, following_id in zip(directional_path, directional_path[1:]):
                     previous = movements[previous_id]
                     following = movements[following_id]
+                    if previous["to_node"] != following["from_node"]:
+                        transfer = context["internal_surface_transfers"].get(
+                            (previous["to_node"], following["from_node"])
+                        )
+                        if isinstance(transfer, dict):
+                            used_internal_surface_transfers.append(
+                                copy.deepcopy(transfer)
+                            )
                     if following["_departure"].date() > previous["_arrival"].date():
                         overnight_connection_count += 1
                     if previous["mode"] == "flight" and following["mode"] == "flight":
@@ -777,14 +966,23 @@ def _complete_itinerary(selected: list[dict[str, Any]], context: dict[str, Any])
                     "actual_duration_minutes": stay_duration_minutes,
                     "nights": stay_nights,
                     "night_count_semantics": STAY_NIGHT_COUNT_SEMANTICS,
-                    "minimum_stay_nights": context["minimum_stay_nights"],
-                    "maximum_stay_nights": context["maximum_stay_nights"],
+                    "minimum_stay_nights": matching_travel_windows[0][
+                        "minimum_stay_nights"
+                    ],
+                    "maximum_stay_nights": matching_travel_windows[0][
+                        "maximum_stay_nights"
+                    ],
                     "constraints_satisfied": True,
                 },
+                "travel_window_ids": [
+                    item["travel_window_id"]
+                    for item in matching_travel_windows
+                ],
                 "self_transfer_count": self_transfer_count,
                 "self_transfer_policy": context["self_transfer_policy"],
                 "overnight_connection_count": overnight_connection_count,
                 "airport_transit_unknown_connections": unknown_transit_connections,
+                "internal_surface_transfers": used_internal_surface_transfers,
             }
     return None
 
@@ -808,12 +1006,91 @@ def _portfolio(selected: list[dict[str, Any]], context: dict[str, Any]) -> dict[
     kind = _portfolio_kind(selected)
     offer_ids = sorted(offer["offer_id"] for offer in selected)
     token = hashlib.sha256("|".join([kind, *offer_ids]).encode("utf-8")).hexdigest()[:16]
-    total = round(sum(offer["_effective_cost"] for offer in selected), 2)
-    if context["budget"] is not None and total > context["budget"]:
+    observed_total = round(sum(offer["_effective_cost"] for offer in selected), 2)
+    mandatory_air_ticket_total = round(
+        sum(offer["_mandatory_air_ticket_cost"] for offer in selected), 2
+    )
+    if (
+        context["budget"] is not None
+        and mandatory_air_ticket_total > context["budget"]
+    ):
         return None
-    observed_total = round(sum(offer["_observed_cost"] for offer in selected), 2)
+    raw_observed_total = round(
+        sum(offer["_observed_cost"] for offer in selected), 2
+    )
     accommodation_observed = round(sum(offer["_required_accommodation_cost"] for offer in selected), 2)
     accommodation_included = round(sum(offer["_included_accommodation_cost"] for offer in selected), 2)
+    endpoint_amounts = {
+        "origin_access": 0.0,
+        "origin_egress": 0.0,
+        "destination_access": 0.0,
+        "destination_egress": 0.0,
+    }
+    for offer in selected:
+        endpoint_role = ENDPOINT_SURFACE_ROLES.get(str(offer.get("surface_role") or ""))
+        if endpoint_role is not None:
+            endpoint_amounts[endpoint_role] += float(offer["_effective_cost"])
+    origin_policy = context["endpoint_policies"]["origin"]
+    destination_policy = context["endpoint_policies"]["destination"]
+    required_endpoint_roles = set()
+    if origin_policy == "anchor_required":
+        required_endpoint_roles.update({"origin_access", "origin_egress"})
+    if destination_policy == "anchor_required":
+        required_endpoint_roles.update(
+            {"destination_access", "destination_egress"}
+        )
+    if any(
+        endpoint_amounts[role] > 0 and role not in required_endpoint_roles
+        for role in endpoint_amounts
+    ):
+        return None
+    endpoint_total = round(
+        sum(endpoint_amounts[role] for role in required_endpoint_roles), 2
+    )
+    endpoint_roles = {
+        role: {
+            "status": "excluded" if role in required_endpoint_roles else "not_required",
+            "cost": None,
+        }
+        for role in endpoint_amounts
+    }
+    completion_scope = {
+        ("anchor_required", "anchor_required"): "anchor_to_anchor",
+        ("anchor_required", "any_admitted_gateway"): "origin_anchor_to_destination_gateway",
+        ("any_admitted_gateway", "anchor_required"): "origin_gateway_to_destination_anchor",
+        ("any_admitted_gateway", "any_admitted_gateway"): "gateway_to_gateway",
+    }[(origin_policy, destination_policy)]
+    comparison_total = {
+        "amount": mandatory_air_ticket_total,
+        "currency": context["currency"],
+    }
+    cost_scope = {
+        "cost_scope_version": "2.0",
+        "journey_shape": "round_trip",
+        "base_currency": context["currency"],
+        "ranking_basis": "mandatory_air_ticket_total",
+        "origin_endpoint_policy": origin_policy,
+        "destination_endpoint_policy": destination_policy,
+        "completion_scope": completion_scope,
+        "gateway_complete_cost": {
+            "amount": mandatory_air_ticket_total,
+            "currency": context["currency"],
+        },
+        "mandatory_air_ticket_total": copy.deepcopy(comparison_total),
+        "endpoint_roles": endpoint_roles,
+        "endpoint_completion_status": "excluded_from_ranking",
+        "endpoint_completion_cost": None,
+        "anchor_complete_cost": None,
+        "comparison_total": comparison_total,
+        "excluded_costs": {
+            "endpoint_access_and_egress": "not_priced",
+            "internal_surface_transfers": "not_priced",
+            "accommodation": {
+                "amount": accommodation_observed,
+                "currency": context["currency"],
+            },
+        },
+    }
     task_ids = sorted({offer.get("research_task_id") for offer in selected if offer.get("research_task_id")})
     entitlements = sorted({offer["_applied_entitlement"] for offer in selected if offer["_applied_entitlement"]})
     planned_exit_offers = [
@@ -834,11 +1111,17 @@ def _portfolio(selected: list[dict[str, Any]], context: dict[str, Any]) -> dict[
         "itinerary_ids": sorted({offer.get("itinerary_id") for offer in selected if offer.get("itinerary_id")}),
         "offer_snapshot_ids": sorted({offer.get("offer_snapshot_id") for offer in selected if offer.get("offer_snapshot_id")}),
         "evidence_task_ids": task_ids,
-        "total_mandatory_cost": {"amount": total, "currency": context["currency"]},
-        "observed_mandatory_cost_before_entitlements": {"amount": observed_total, "currency": context["currency"]},
+        "mandatory_air_ticket_total": copy.deepcopy(comparison_total),
+        "total_mandatory_cost": copy.deepcopy(comparison_total),
+        "total_observed_cost": {
+            "amount": observed_total,
+            "currency": context["currency"],
+        },
+        "cost_scope": cost_scope,
+        "observed_mandatory_cost_before_entitlements": {"amount": raw_observed_total, "currency": context["currency"]},
         "required_accommodation_cost_observed": {"amount": accommodation_observed, "currency": context["currency"]},
-        "required_accommodation_cost_included": {"amount": accommodation_included, "currency": context["currency"]},
-        "required_accommodation_cost_excluded": {"amount": round(accommodation_observed - accommodation_included, 2), "currency": context["currency"]},
+        "required_accommodation_cost_included": {"amount": 0.0, "currency": context["currency"]},
+        "required_accommodation_cost_excluded": {"amount": accommodation_observed, "currency": context["currency"]},
         "paid_baggage_items_by_offer": {
             offer["offer_id"]: list(offer["_paid_baggage_items"])
             for offer in selected
@@ -846,7 +1129,15 @@ def _portfolio(selected: list[dict[str, Any]], context: dict[str, Any]) -> dict[
         },
         "applied_entitlements": entitlements,
         "planned_exit_offers": planned_exit_offers,
-        "evidence_variants": [{"offer_ids": offer_ids, "offer_snapshot_ids": sorted({offer.get("offer_snapshot_id") for offer in selected if offer.get("offer_snapshot_id")})}],
+        "evidence_variants": [{
+            "offer_ids": offer_ids,
+            "offer_snapshot_ids": sorted({
+                offer.get("offer_snapshot_id")
+                for offer in selected
+                if offer.get("offer_snapshot_id")
+            }),
+            "evidence_task_ids": task_ids,
+        }],
         **itinerary,
     }
 
@@ -876,7 +1167,19 @@ def solve_bundle(raw: Any) -> dict[str, Any]:
                     item["total_mandatory_cost"]["amount"],
                     item["portfolio_kind"],
                 ) == key)
-                variant = {"offer_ids": sorted(offer["offer_id"] for offer in selected), "offer_snapshot_ids": sorted({offer.get("offer_snapshot_id") for offer in selected if offer.get("offer_snapshot_id")})}
+                variant = {
+                    "offer_ids": sorted(offer["offer_id"] for offer in selected),
+                    "offer_snapshot_ids": sorted({
+                        offer.get("offer_snapshot_id")
+                        for offer in selected
+                        if offer.get("offer_snapshot_id")
+                    }),
+                    "evidence_task_ids": sorted({
+                        offer.get("research_task_id")
+                        for offer in selected
+                        if offer.get("research_task_id")
+                    }),
+                }
                 if variant not in existing["evidence_variants"]:
                     existing["evidence_variants"].append(variant)
                 continue

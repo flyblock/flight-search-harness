@@ -150,7 +150,10 @@ def build_research_view(state: dict[str, Any], archive: dict[str, Any] | None = 
         for task in tasks
     )
     baseline_terminal = outcomes.get("conventional-baseline", {}).get("status") in {"complete", "hard_dead", "deferred_low_value"}
-    frontier_enabled = bool(routes) or (not baseline_open and baseline_terminal)
+    # Current Sessions keep this archive for audit only.  Structural/Pareto
+    # diversity is not a reason to spend external Research Credits; continued
+    # work is selected solely by the Product's price-challenge assessment.
+    frontier_enabled = False
     elites = {cell["elite_frontier_id"] for cell in archive.get("quality_cells", [])}
     tasks_by_frontier: dict[str, list[dict[str, Any]]] = {}
     for task in tasks:
@@ -161,7 +164,7 @@ def build_research_view(state: dict[str, Any], archive: dict[str, Any] | None = 
         if frontier_id:
             tasks_by_frontier.setdefault(str(frontier_id), []).append(task)
     actions = []
-    if frontier_enabled:
+    if frontier_enabled:  # legacy implementation retained for old artifacts
         for frontier in archive.get("frontiers", []):
             if frontier.get("complete") or frontier.get("frontier_id") not in elites:
                 continue
@@ -240,7 +243,7 @@ def build_research_view(state: dict[str, Any], archive: dict[str, Any] | None = 
             "complete_trip_obligation_open": bool(not routes and baseline_open),
             "complete_trip_baseline_terminal": bool(baseline_terminal),
             "frontier_exploration_enabled": frontier_enabled,
-            "rule": "Without a complete route, complete-trip baseline and Provider fallbacks precede partial frontier expansion. With an incumbent, frontier actions are structural challengers.",
+            "rule": "The archive is read-only; current Sessions publish only price-competitive research.",
         },
         "archive_summary": {
             "frontier_count": archive.get("frontier_count", 0),

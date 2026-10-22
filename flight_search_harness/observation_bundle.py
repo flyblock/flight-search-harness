@@ -59,7 +59,7 @@ def normalize_attempt(product_id: str, attempt: dict[str, Any]) -> dict[str, Any
             "product_payload": {
                 "observation_version": "0.4.0",
                 "bundle_id": bundle_id,
-                "coverage_complete": bool(attempt.get("coverage_complete", True)),
+                "coverage_complete": bool(attempt.get("coverage_complete", False)),
                 "observations": expanded,
             },
         }

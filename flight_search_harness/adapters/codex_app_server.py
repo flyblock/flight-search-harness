@@ -251,6 +251,8 @@ class CodexAppServerBrowserAdapter:
         output_schema = work.get("attempt_schema")
         if not isinstance(output_schema, dict):
             raise HarnessProtocolError("browser work is missing attempt_schema")
+        work_projection = copy.deepcopy(work)
+        work_projection.pop("attempt_schema", None)
         prompt = (
             "Execute this bounded travel browser task using the visible browser tools available "
             "to you. Do not edit repository files. Preserve only facts visible in the executed "
@@ -270,7 +272,7 @@ class CodexAppServerBrowserAdapter:
                     "action_id": action_id,
                     "product_id": work.get("product_id"),
                     "task_id": work.get("task_id"),
-                    "work_projection": work,
+                    "work_projection": work_projection,
                     "required_payload_schema": output_schema,
                 },
                 ensure_ascii=False,
@@ -308,13 +310,15 @@ class CodexAppServerBrowserAdapter:
                 work.get("attempt_schema"), dict
             ):
                 raise HarnessProtocolError("batch browser work is missing attempt_schema")
+            work_projection = copy.deepcopy(work)
+            work_projection.pop("attempt_schema", None)
             tasks.append(
                 {
                     "item_id": request["item_id"],
                     "action_id": request["action_id"],
                     "product_id": work.get("product_id"),
                     "task_id": work.get("task_id"),
-                    "work_projection": work,
+                    "work_projection": work_projection,
                     "required_payload_schema": work.get("attempt_schema"),
                 }
             )

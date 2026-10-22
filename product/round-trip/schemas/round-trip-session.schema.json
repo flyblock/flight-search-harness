@@ -3,7 +3,7 @@
   "$id": "https://example.invalid/flight-search-harness/product/round-trip/schemas/round-trip-session.schema.json",
   "title": "Regional round-trip Session v0.4.0",
   "type": "object",
-  "required": ["session_version", "session_id", "trip_scope", "scenario", "product_revision", "search_round", "hypotheses", "active_hypothesis_id", "research_tasks", "gateway_candidates", "region_scopes", "evidence_bundles", "movements", "offers", "solver_projection", "result", "finalization_status"],
+  "required": ["session_version", "session_id", "trip_scope", "scenario", "product_revision", "search_round", "hypotheses", "active_hypothesis_id", "research_tasks", "gateway_candidates", "region_scopes", "research_credits", "internal_surface_transfers", "evidence_bundles", "movements", "offers", "solver_projection", "result", "finalization_status"],
   "properties": {
     "session_version": {"const": "0.4.0"},
     "session_id": {"type": "string"},
@@ -23,6 +23,8 @@
     "region_scopes": {"type": "object", "required": ["origin", "destination"], "properties": {"origin": {"type": "object"}, "destination": {"type": "object"}}, "additionalProperties": false},
     "solver_projection": {"type": "object"},
     "temporal_signals": {"type": "array", "items": {"type": "object"}},
+    "research_credits": {"type": "object"},
+    "internal_surface_transfers": {"type": "array", "items": {"type": "object"}},
     "evidence_bundles": {"type": "array", "items": {"type": "object"}},
     "movements": {"type": "array", "items": {"type": "object"}},
     "offers": {"type": "array", "items": {"type": "object"}},

@@ -3,32 +3,58 @@
 from __future__ import annotations
 
 import copy
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Protocol
 
+from .price_freshness import offer_price_deadline, offset_timestamp
 
-HARNESS_VERSION = "1.3.0"
+
+HARNESS_VERSION = "2.0.0"
 REQUEST_VERSION = "4.0"
 OUTCOME_VERSION = "2.0"
 OUTCOME_KINDS = {"draft", "blocked", "failed", "completed"}
-RESULT_FRESHNESS_TTL_SECONDS = 900
 
 
 def result_price_freshness(
     completed_at: str | None = None,
     *,
+    price_observations: list[dict[str, Any]] | None = None,
+    price_valid_until: str | None = None,
     now_utc: datetime | None = None,
 ) -> dict[str, str]:
-    completed = (
-        datetime.now(timezone.utc)
-        if completed_at is None
-        else datetime.fromisoformat(completed_at.replace("Z", "+00:00"))
+    def utc_datetime(value: str, field: str) -> datetime:
+        try:
+            return offset_timestamp(value, field)
+        except ValueError as exc:
+            raise HarnessProtocolError(str(exc)) from exc
+
+    completed = datetime.now(timezone.utc) if completed_at is None else utc_datetime(
+        completed_at, "completed_at"
     )
-    if completed.tzinfo is None or completed.utcoffset() is None:
-        raise HarnessProtocolError("completed_at must include a timezone")
-    completed = completed.astimezone(timezone.utc)
-    valid_until = completed + timedelta(seconds=RESULT_FRESHNESS_TTL_SECONDS)
+    if price_valid_until is not None:
+        valid_until = utc_datetime(price_valid_until, "price_valid_until")
+    elif price_observations:
+        observation_deadlines = []
+        for index, observation in enumerate(price_observations):
+            if not isinstance(observation, dict):
+                raise HarnessProtocolError(
+                    f"price_observations[{index}] must be an object"
+                )
+            explicit_expiry = observation.get("expires_at")
+            try:
+                observation_deadlines.append(
+                    offer_price_deadline(
+                        observation.get("observed_at"), explicit_expiry
+                    )
+                )
+            except ValueError as exc:
+                raise HarnessProtocolError(
+                    f"price_observations[{index}] is invalid: {exc}"
+                ) from exc
+        valid_until = min(observation_deadlines)
+    else:
+        valid_until = offer_price_deadline(completed.isoformat())
     current = (now_utc or datetime.now(timezone.utc)).astimezone(timezone.utc)
     return {
         "completed_at": completed.isoformat(timespec="seconds"),
@@ -207,24 +233,6 @@ def _build_adapter_research_item(
     }
 
 
-def _observation_bundle_schema() -> dict[str, Any]:
-    """Return the compact raw Observation alternative advertised by an Adapter."""
-
-    return {
-        "type": "object",
-        "required": ["kind", "bundle_id", "source", "observations"],
-        "properties": {
-            "kind": {"const": "observation_bundle"},
-            "bundle_id": {"type": "string", "minLength": 1},
-            "source": {"type": "object"},
-            "coverage_complete": {"type": "boolean"},
-            "discovered_nodes": {"type": "array"},
-            "observations": {"type": "array", "minItems": 1},
-        },
-        "additionalProperties": False,
-    }
-
-
 class BrowserAdapter(Protocol):
     """AI/browser seam used by live Codex browser execution."""
 
@@ -315,4 +323,8 @@ class ProductAdapter(Protocol):
         ...
 
     def finalize(self, product_directory: Path, reason: str) -> dict[str, Any]:
+        ...
+
+    def reopen_expired_result(self, product_directory: Path) -> bool:
+        """Reopen a completed Result only for exact price Evidence refresh."""
         ...

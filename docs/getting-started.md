@@ -7,9 +7,9 @@ Flight Search Harness turns a natural-language travel request into a durable, re
 - Windows 10 or later
 - PowerShell
 - Python 3.10 or later
-- Codex desktop with an authorized Browser/computer-use capability for live Provider research
+- an agent host with an authorized built-in interactive browser/computer-use capability or equivalent browser automation; Codex desktop is the tested reference host
 
-Live searches use public travel pages through the authorized browser and require no paid flight-search API subscription.
+Live searches operate user-visible Provider pages through the host's authorized Browser, equivalent browser automation, or native computer-use capability.
 
 The installed Harness uses only the Python standard library. Its launcher resolves the Plugin internally while preserving the caller's current directory, so the default `runs/` Store belongs to the user's workspace rather than the Plugin installation.
 
@@ -31,7 +31,7 @@ Find a low-cost flight loop using these airport pools, date window, leg bounds, 
 ```
 
 ```text
-Find the lowest-cost one-way journey from my origin region to my destination region within this date window.
+Find the lowest one-way Mandatory Air Ticket Total from my origin region to my destination region within this date window. Use standard Search Effort and disclose the Self-access Gateway Pool and excluded non-air costs.
 ```
 
 ```text
@@ -57,13 +57,11 @@ Install the extracted Plugin folder through Codex's local Plugin workflow and st
 
 ## Install one Skill
 
-Install only the journey shape you need:
-
-```powershell
-npx skills add flyblock/flight-search-harness --skill low-cost-round-trip-flight-search
-```
-
-Use `low-cost-one-way-travel-flight-search` or `low-cost-random-loop-flight-search` for the other journey shapes. Once the matching GitHub Release is public, the Skill resolver obtains its verified-version Harness archive from the Release asset and returns the launcher, shared runtime, and public request Schema references to Codex. Later uses reuse that runtime. A private repository or draft Release requires installing the complete local Plugin instead because anonymous standalone download is unavailable.
+Install the complete Plugin from this local source snapshot. Use
+`low-cost-one-way-travel-flight-search` or
+`low-cost-random-loop-flight-search` for the other journey shapes. Skill
+resolvers use only a bundled or already installed local Harness runtime; they do
+not contact an upstream repository.
 
 ## Start and resume from the CLI
 
@@ -88,8 +86,9 @@ Repeat the resume command when the Harness publishes another Lease. Inspect prog
 ```powershell
 python <plugin-directory>/scripts/run_flight_harness.py status --run-id <run-id>
 python <plugin-directory>/scripts/run_flight_harness.py metrics --run-id <run-id>
+python <plugin-directory>/scripts/run_flight_harness.py deliver --run-id <run-id>
 ```
 
-Every Run is stored under `runs/<run-id>/`. A Run may return `draft`, `blocked`, `failed`, or `completed`; only `completed` has passed the selected Product Kernel's finalization rules.
+Every Run is stored under `runs/<run-id>/`. A Run may return `draft`, `blocked`, `failed`, or `completed`; only `completed` has passed the selected Product Kernel's finalization rules. Use `deliver` after completion and present a Result only when it returns `kind=deliverable`.
 
 See [CLI reference](cli.md) for every command and [architecture](architecture.md) for the lifecycle and Module boundaries.

@@ -14,7 +14,6 @@ MAX_SOURCE_HINTS = 3
 PRICE_SELECTION_METHODS = {
     "lowest_price_view",
     "price_ascending",
-    "price_sorted_api",
     "all_visible_compared",
 }
 
@@ -123,7 +122,7 @@ def apply_foundation(
         "rule": (
             "Before capturing a fare, establish the lowest compatible result "
             "through the Provider's lowest-price view, ascending price sort, "
-            "price-sorted API, or comparison of all visible results. Default "
+            "or comparison of all visible Browser results. Default "
             "recommended ordering and an unopened lower-price label are not "
             "lowest-price evidence."
         ),
@@ -138,11 +137,39 @@ def validate_first_attempt(
         return
     expected = str(required_source["source_id"])
     observed = _observed_source_ids(attempt)
-    if expected not in observed or observed - {expected}:
+    if expected not in observed or (
+        observed - {expected}
+        and not _required_source_closed_before_fallback(attempt, expected)
+    ):
         raise HarnessProtocolError(
             f"fixed-route first flight attempt requires source_id={expected}; "
             f"observed={sorted(observed) or ['<missing>']}"
         )
+
+
+def _required_source_closed_before_fallback(
+    attempt: dict[str, Any], expected_source_id: str
+) -> bool:
+    payload = attempt.get("product_payload")
+    observations = payload.get("observations") if isinstance(payload, dict) else None
+    if not isinstance(observations, list):
+        return False
+    expected_terminal = False
+    fallback_verified = False
+    for observation in observations:
+        if not isinstance(observation, dict):
+            continue
+        source_ids = _observed_source_ids(
+            {"product_payload": {"observations": [observation]}}
+        )
+        status = observation.get("evidence_status")
+        if expected_source_id in source_ids and status in {"no_result", "rejected"}:
+            expected_terminal = True
+        elif source_ids - {expected_source_id} and status == "verified_observed":
+            fallback_verified = True
+        elif source_ids - {expected_source_id}:
+            return False
+    return expected_terminal and fallback_verified
 
 
 def validate_price_ordering(attempt: dict[str, Any]) -> None:

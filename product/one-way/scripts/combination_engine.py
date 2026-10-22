@@ -21,14 +21,14 @@ TRIP_MODE = "fixed_destination"
 NODE_TYPES = {"airport", "railway_station", "bus_terminal", "ferry_terminal", "city_destination"}
 MODES = {"flight", "rail", "bus", "coach", "ferry", "local_transit", "walk", "rideshare", "car"}
 POOL_POLICIES = {"exact", "city_region", "extended_region"}
-COST_CATEGORIES = {
+COST_CATEGORIES = (
     "origin_ground_cost",
     "airfare",
     "intermediate_ground_cost",
     "destination_ground_cost",
     "required_accommodation_cost",
     "other_mandatory_costs",
-}
+)
 COST_CATEGORY_ALIASES = {
     "origin_ground": "origin_ground_cost",
     "intermediate_ground": "intermediate_ground_cost",
@@ -40,6 +40,7 @@ AIRPORT_TRANSIT_UNKNOWN_POLICIES = {"allow_with_warning", "reject"}
 ACCOMMODATION_COST_POLICIES = {
     "include_required",
     "exclude_from_optimization",
+    "exclude_from_ranking",
 }
 
 
@@ -419,6 +420,19 @@ def validate_profile(raw: Any) -> dict[str, Any]:
         "destination_airport_nodes",
     ):
         profile[field] = string_list(profile.get(field, []), field, required=False)
+    endpoint_policy = profile.get(
+        "endpoint_policy",
+        {"origin": "anchor_required", "destination": "anchor_required"},
+    )
+    if not isinstance(endpoint_policy, dict):
+        raise PlannerError("endpoint_policy must be an object")
+    normalized_endpoint_policy = {}
+    for side in ("origin", "destination"):
+        policy = endpoint_policy.get(side, "anchor_required")
+        if policy not in {"anchor_required", "any_admitted_gateway"}:
+            raise PlannerError(f"endpoint_policy.{side} is unsupported")
+        normalized_endpoint_policy[side] = policy
+    profile["endpoint_policy"] = normalized_endpoint_policy
     profile["allowed_modes"] = string_list(profile.get("allowed_modes", sorted(MODES)), "allowed_modes", upper=False)
     unsupported = sorted(set(profile["allowed_modes"]) - MODES)
     if unsupported:
@@ -543,6 +557,14 @@ def validate_region_pool(raw: Any, field: str, default_currency: str) -> dict[st
     pool["policy"] = str(pool.get("policy", "exact")).lower()
     if pool["policy"] not in POOL_POLICIES:
         raise PlannerError(f"{field}.policy must be exact, city_region, or extended_region")
+    pool["endpoint_policy"] = str(
+        pool.get("endpoint_policy", "anchor_required")
+    ).lower()
+    if pool["endpoint_policy"] not in {
+        "anchor_required",
+        "any_admitted_gateway",
+    }:
+        raise PlannerError(f"{field}.endpoint_policy is unsupported")
     pool["seed_nodes"] = string_list(pool.get("seed_nodes"), f"{field}.seed_nodes")
     access_limit = pool.get("max_access_time_minutes")
     egress_limit = pool.get("max_egress_time_minutes")
@@ -757,8 +779,10 @@ def validate_config(raw: Any, profile: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(search, dict):
         raise PlannerError("search must be an object")
     defaults = {
-        "max_total_travel_minutes": 4320,
-        "max_transfers": 12,
+        # These are user-owned hard constraints.  New Sessions leave them
+        # unset; finite graph traversal is bounded by admitted edges/nodes.
+        "max_total_travel_minutes": None,
+        "max_transfers": None,
         "max_routes": None,
         "labels_per_node": None,
         "connector_probe_limit": 20,
@@ -771,8 +795,19 @@ def validate_config(raw: Any, profile: dict[str, Any]) -> dict[str, Any]:
     }
     for key, default in defaults.items():
         search.setdefault(key, default)
-    for key in ("max_total_travel_minutes", "max_transfers", "connector_probe_limit", "minimum_connection_minutes"):
-        search[key] = integer(search[key], f"search.{key}", minimum=0 if key == "minimum_connection_minutes" else 1)
+    for key in ("max_total_travel_minutes", "max_transfers"):
+        if search[key] is not None:
+            search[key] = integer(
+                search[key],
+                f"search.{key}",
+                minimum=0 if key == "max_transfers" else 1,
+            )
+    for key in ("connector_probe_limit", "minimum_connection_minutes"):
+        search[key] = integer(
+            search[key],
+            f"search.{key}",
+            minimum=0 if key == "minimum_connection_minutes" else 1,
+        )
     for key in ("max_routes", "labels_per_node"):
         if search[key] is not None:
             search[key] = integer(search[key], f"search.{key}", minimum=1)
@@ -1121,7 +1156,10 @@ def to_base(value: dict[str, Any], config: dict[str, Any], field: str) -> float:
 def edge_effective_cost(edge: dict[str, Any], profile: dict[str, Any], config: dict[str, Any]) -> tuple[float, str | None]:
     raw = to_base(edge["cost"], config, f"edge {edge['edge_id']}.cost")
     if edge["cost_category"] == "required_accommodation_cost":
-        if profile["accommodation_cost_policy"] == "exclude_from_optimization":
+        if profile["accommodation_cost_policy"] in {
+            "exclude_from_optimization",
+            "exclude_from_ranking",
+        }:
             return 0.0, None
         return raw, None
     tags = set(edge["entitlement_tags"])
@@ -1362,10 +1400,24 @@ def frontier_settings(config: dict[str, Any], profile: dict[str, Any]) -> dict[s
         )
     ).lower() == "ai_led"
     settings: dict[str, Any] = {
-        "max_hops": search["max_transfers"] + 1,
+        "max_hops": (
+            search["max_transfers"] + 1
+            if search["max_transfers"] is not None
+            else 1_000_000
+        ),
         "max_labels_per_node": search["labels_per_node"] or 1_000_000,
         "max_total_cost": budget_in_base,
-        "max_total_minutes": search["max_total_travel_minutes"],
+        "max_total_minutes": (
+            search["max_total_travel_minutes"]
+            if search["max_total_travel_minutes"] is not None
+            else int(
+                (
+                    utc(parse_datetime(profile["date_window"]["end"], "date_window.end"))
+                    - utc(parse_datetime(profile["date_window"]["start"], "date_window.start"))
+                ).total_seconds()
+                // 60
+            )
+        ),
         "minimum_connection_minutes": search["minimum_connection_minutes"],
         "mode_transition_buffers_minutes": copy.deepcopy(
             search["mode_transition_buffers_minutes"]
@@ -1507,13 +1559,13 @@ def _initial_incumbent(
         best = min(
             routes,
             key=lambda item: (
-                item["total_trip_cost"],
+                item["mandatory_air_ticket_total"]["amount"],
                 item["total_travel_time_minutes"],
                 item["id"],
             ),
         )
         return {
-            "total_cost": best["total_trip_cost"],
+            "total_cost": best["mandatory_air_ticket_total"]["amount"],
             "edge_ids": list(best["edge_ids"]),
             "source": "observed_complete_route",
             "route_id": best["id"],
@@ -1577,7 +1629,14 @@ def run_residual_budget_search(
     ).lower() == "ai_led"
     residual_config = {
         "search_intensity": requested.get("search_intensity", "standard"),
-        "max_hops": requested.get("max_hops", config["search"]["max_transfers"] + 1),
+        "max_hops": requested.get(
+            "max_hops",
+            (
+                config["search"]["max_transfers"] + 1
+                if config["search"]["max_transfers"] is not None
+                else 1_000_000
+            ),
+        ),
         "max_labels_per_node": requested.get(
             "max_labels_per_node", config["search"]["labels_per_node"]
         ) or 1_000_000,
@@ -1590,7 +1649,17 @@ def run_residual_budget_search(
         "mode_transition_buffers_minutes": copy.deepcopy(
             config["search"]["mode_transition_buffers_minutes"]
         ),
-        "max_total_minutes": config["search"]["max_total_travel_minutes"],
+        "max_total_minutes": (
+            config["search"]["max_total_travel_minutes"]
+            if config["search"]["max_total_travel_minutes"] is not None
+            else int(
+                (
+                    utc(parse_datetime(profile["date_window"]["end"], "date_window.end"))
+                    - utc(parse_datetime(profile["date_window"]["start"], "date_window.start"))
+                ).total_seconds()
+                // 60
+            )
+        ),
         "allowed_research_modes": list(profile["allowed_modes"]),
         "date_window": profile["date_window"],
         "currency_decimal_places": config["currency_decimal_places"],
@@ -1961,6 +2030,39 @@ def route_pool_audit(
     return audit
 
 
+def _internal_surface_transfer(
+    config: dict[str, Any], from_node: str, to_node: str
+) -> dict[str, Any] | None:
+    for transfer in config.get("internal_surface_transfers", []):
+        if (
+            isinstance(transfer, dict)
+            and transfer.get("from_node") == from_node
+            and transfer.get("to_node") == to_node
+            and transfer.get("feasibility")
+            in {"verified_route", "fallback_plausible"}
+        ):
+            return transfer
+    return None
+
+
+def _transition_minutes(
+    previous: dict[str, Any], following: dict[str, Any], config: dict[str, Any]
+) -> int | None:
+    if previous["to_node"] == following["from_node"]:
+        return mode_transition_buffer_minutes(previous, following, config)[0]
+    transfer = _internal_surface_transfer(
+        config, previous["to_node"], following["from_node"]
+    )
+    if transfer is None:
+        return None
+    buffers = config["search"]["mode_transition_buffers_minutes"]
+    return (
+        int(buffers.get("flight_to_surface", 0))
+        + int(transfer["approximate_duration_minutes"])
+        + int(buffers.get("surface_to_flight", 0))
+    )
+
+
 def complete_route_audit(
     path: list[dict[str, Any]], profile: dict[str, Any], config: dict[str, Any]
 ) -> dict[str, Any]:
@@ -1977,7 +2079,7 @@ def complete_route_audit(
     if path[-1]["to_node"] not in set(profile["destination_end_nodes"]):
         reason_codes.append("DESTINATION_END_NODE_OUTSIDE_PROFILE")
     if any(
-        previous["to_node"] != following["from_node"]
+        _transition_minutes(previous, following, config) is None
         for previous, following in zip(path, path[1:])
     ):
         reason_codes.append("DISCONNECTED_PATH")
@@ -1996,14 +2098,18 @@ def complete_route_audit(
     if any(arrival <= departure for departure, arrival in zip(departures, arrivals)):
         reason_codes.append("NON_POSITIVE_EDGE_DURATION")
     for index, (previous, following) in enumerate(zip(path, path[1:])):
-        required, _ = mode_transition_buffer_minutes(previous, following, config)
+        required = _transition_minutes(previous, following, config)
+        if required is None:
+            continue
         if departures[index + 1] < arrivals[index] + timedelta(minutes=required):
             reason_codes.append("CONNECTION_BUFFER_VIOLATION")
             break
     elapsed = (arrivals[-1] - departures[0]).total_seconds() / 60
-    if elapsed > config["search"]["max_total_travel_minutes"]:
+    maximum_total_minutes = config["search"]["max_total_travel_minutes"]
+    if maximum_total_minutes is not None and elapsed > maximum_total_minutes:
         reason_codes.append("MAX_TOTAL_TRAVEL_TIME_EXCEEDED")
-    if len(path) > config["search"]["max_transfers"] + 1:
+    maximum_transfers = config["search"]["max_transfers"]
+    if maximum_transfers is not None and len(path) > maximum_transfers + 1:
         reason_codes.append("MAX_TRANSFERS_EXCEEDED")
     overnight_count = sum(
         max(
@@ -2209,6 +2315,7 @@ def build_route(path: list[dict[str, Any]], profile: dict[str, Any], config: dic
     normalized_edges: list[dict[str, Any]] = []
     required_accommodation_cost_observed = 0.0
     required_accommodation_cost_included = 0.0
+    mandatory_air_ticket_total = 0.0
     flight_indexes = [index for index, edge in enumerate(path) if edge["mode"] == "flight"]
     first_flight_index = flight_indexes[0] if flight_indexes else len(path)
     last_flight_index = flight_indexes[-1] if flight_indexes else -1
@@ -2228,6 +2335,8 @@ def build_route(path: list[dict[str, Any]], profile: dict[str, Any], config: dic
         edge_duration += active_duration
         effective_cost, entitlement = edge_effective_cost(edge, profile, config)
         baggage_cost = to_base(edge["mandatory_baggage_cost"], config, f"edge {edge['edge_id']}.mandatory_baggage_cost")
+        if edge["mode"] == "flight":
+            mandatory_air_ticket_total += effective_cost + baggage_cost
         applied_cost_category = edge["cost_category"]
         if edge["mode"] != "flight" and applied_cost_category in {
             "origin_ground_cost",
@@ -2274,6 +2383,98 @@ def build_route(path: list[dict[str, Any]], profile: dict[str, Any], config: dic
     elapsed = (utc(final_arrival) - utc(first_departure)).total_seconds() / 60
     wait = max(0.0, elapsed - edge_duration)
     total = sum(breakdown.values())
+    origin_policy = profile["endpoint_policy"]["origin"]
+    destination_policy = profile["endpoint_policy"]["destination"]
+    origin_endpoint_cost = (
+        round(breakdown["origin_ground_cost"], 2)
+        if origin_policy == "anchor_required"
+        else 0.0
+    )
+    destination_endpoint_cost = (
+        round(breakdown["destination_ground_cost"], 2)
+        if destination_policy == "anchor_required"
+        else 0.0
+    )
+    endpoint_completion_cost = round(
+        origin_endpoint_cost + destination_endpoint_cost, 2
+    )
+    gateway_complete_cost = round(total - endpoint_completion_cost, 2)
+    completion_scope = {
+        ("anchor_required", "anchor_required"): "anchor_to_anchor",
+        ("anchor_required", "any_admitted_gateway"): "origin_anchor_to_destination_gateway",
+        ("any_admitted_gateway", "anchor_required"): "origin_gateway_to_destination_anchor",
+        ("any_admitted_gateway", "any_admitted_gateway"): "gateway_to_gateway",
+    }[(origin_policy, destination_policy)]
+    mandatory_air_ticket_total = round(mandatory_air_ticket_total, 2)
+    comparison_total = {
+        "amount": mandatory_air_ticket_total,
+        "currency": profile["currency"],
+    }
+    unpriced_internal_surface_transfer_count = sum(
+        previous_edge["to_node"] != next_edge["from_node"]
+        for previous_edge, next_edge in zip(path, path[1:])
+    )
+    gateway_cost_is_complete = unpriced_internal_surface_transfer_count == 0
+    cost_scope = {
+        "cost_scope_version": "2.0",
+        "journey_shape": "one_way",
+        "base_currency": profile["currency"],
+        "ranking_basis": "mandatory_air_ticket_total",
+        "origin_endpoint_policy": origin_policy,
+        "destination_endpoint_policy": destination_policy,
+        "completion_scope": completion_scope,
+        "gateway_complete_cost_status": (
+            "complete_observed" if gateway_cost_is_complete else "incomplete_unpriced_transfer"
+        ),
+        "gateway_complete_cost": (
+            {
+                "amount": gateway_complete_cost,
+                "currency": profile["currency"],
+            }
+            if gateway_cost_is_complete
+            else None
+        ),
+        "mandatory_air_ticket_total": copy.deepcopy(comparison_total),
+        "endpoint_roles": {
+            "origin_access": {
+                "status": (
+                    "excluded"
+                    if origin_policy == "anchor_required"
+                    else "not_required"
+                ),
+                "cost": (
+                    None
+                ),
+            },
+            "origin_egress": {"status": "not_applicable", "cost": None},
+            "destination_access": {"status": "not_applicable", "cost": None},
+            "destination_egress": {
+                "status": (
+                    "excluded"
+                    if destination_policy == "anchor_required"
+                    else "not_required"
+                ),
+                "cost": (
+                    None
+                ),
+            },
+        },
+        "endpoint_completion_status": "excluded_from_ranking",
+        "endpoint_completion_cost": None,
+        "anchor_complete_cost": None,
+        "comparison_total": comparison_total,
+        "excluded_costs": {
+            "endpoint_access_and_egress": "not_priced",
+            "internal_surface_transfers": {
+                "status": "not_priced",
+                "count": unpriced_internal_surface_transfer_count,
+            },
+            "accommodation": {
+                "amount": round(required_accommodation_cost_observed, 2),
+                "currency": profile["currency"],
+            },
+        },
+    }
     edge_ids = [edge["edge_id"] for edge in path]
     overnight_count = 0
     for previous_edge, next_edge in zip(path, path[1:]):
@@ -2322,10 +2523,25 @@ def build_route(path: list[dict[str, Any]], profile: dict[str, Any], config: dic
             }
         )
     mode_transition_audits = []
+    internal_surface_transfers = []
     for previous_edge, next_edge in zip(path, path[1:]):
-        required_minutes, transition_kind = mode_transition_buffer_minutes(
-            previous_edge, next_edge, config
+        transfer = (
+            _internal_surface_transfer(
+                config, previous_edge["to_node"], next_edge["from_node"]
+            )
+            if previous_edge["to_node"] != next_edge["from_node"]
+            else None
         )
+        if transfer is not None:
+            internal_surface_transfers.append(copy.deepcopy(transfer))
+            required_minutes = _transition_minutes(
+                previous_edge, next_edge, config
+            )
+            transition_kind = "internal_surface_transfer"
+        else:
+            required_minutes, transition_kind = mode_transition_buffer_minutes(
+                previous_edge, next_edge, config
+            )
         available_minutes = (
             utc(parse_datetime(next_edge["departure"], "next departure"))
             - utc(parse_datetime(previous_edge["arrival"], "previous arrival"))
@@ -2342,7 +2558,19 @@ def build_route(path: list[dict[str, Any]], profile: dict[str, Any], config: dic
     return {
         "id": route_identifier(edge_ids),
         "edge_ids": edge_ids,
-        "node_path": [path[0]["from_node"], *[edge["to_node"] for edge in path]],
+        "node_path": [
+            path[0]["from_node"],
+            *[
+                node_id
+                for index, edge in enumerate(path)
+                for node_id in (
+                    [edge["to_node"]]
+                    if index == len(path) - 1
+                    or edge["to_node"] == path[index + 1]["from_node"]
+                    else [edge["to_node"], path[index + 1]["from_node"]]
+                )
+            ],
+        ],
         "edges": normalized_edges,
         "departure": iso(first_departure),
         "arrival": iso(final_arrival),
@@ -2359,6 +2587,11 @@ def build_route(path: list[dict[str, Any]], profile: dict[str, Any], config: dic
             2,
         ),
         "total_trip_cost": round(total, 2),
+        "total_trip_cost_scope": "observed_audit_excludes_unpriced_costs",
+        "mandatory_air_ticket_total": comparison_total,
+        "ranking_basis": "mandatory_air_ticket_total",
+        "cost_scope": cost_scope,
+        "internal_surface_transfers": internal_surface_transfers,
         "raw_ground_cost_before_entitlements": round(raw_ground_cost, 2),
         "cost_breakdown": {key: round(value, 2) for key, value in breakdown.items()},
         "total_travel_time_minutes": round(elapsed, 2),
@@ -2512,7 +2745,11 @@ def enumerate_routes(edges: list[dict[str, Any]], profile: dict[str, Any], confi
     end = utc(parse_datetime(profile["date_window"]["end"], "date_window.end"))
     destinations = set(profile["destination_end_nodes"])
     max_minutes = config["search"]["max_total_travel_minutes"]
-    max_edges = config["search"]["max_transfers"] + 1
+    max_edges = (
+        config["search"]["max_transfers"] + 1
+        if config["search"]["max_transfers"] is not None
+        else max(1, len(edges))
+    )
     max_routes = config["search"]["max_routes"]
     sequence = 0
     heap: list[tuple[float, float, int, dict[str, Any]]] = []
@@ -2546,16 +2783,30 @@ def enumerate_routes(edges: list[dict[str, Any]], profile: dict[str, Any], confi
         if len(label["path"]) >= max_edges:
             continue
         feasible_edges: list[dict[str, Any]] = []
-        for edge in outgoing.get(label["node"], []):
+        candidate_edges = list(outgoing.get(label["node"], []))
+        if label["path"]:
+            for transfer in config.get("internal_surface_transfers", []):
+                if (
+                    isinstance(transfer, dict)
+                    and transfer.get("from_node") == label["node"]
+                    and transfer.get("feasibility")
+                    in {"verified_route", "fallback_plausible"}
+                ):
+                    candidate_edges.extend(
+                        outgoing.get(str(transfer.get("to_node")), [])
+                    )
+        for edge in candidate_edges:
             if edge["to_node"] in label["visited"]:
                 continue
             departure = utc(parse_datetime(edge["departure"], "edge departure"))
             arrival = utc(parse_datetime(edge["arrival"], "edge arrival"))
             required_ready = label["arrival"]
             if label["path"]:
-                required_minutes, _ = mode_transition_buffer_minutes(
+                required_minutes = _transition_minutes(
                     label["path"][-1], edge, config
                 )
+                if required_minutes is None:
+                    continue
                 required_ready = required_ready.timestamp() + required_minutes * 60
                 if departure.timestamp() < required_ready:
                     continue
@@ -2564,7 +2815,11 @@ def enumerate_routes(edges: list[dict[str, Any]], profile: dict[str, Any], confi
             if arrival > end:
                 continue
             if label["path"]:
-                transit_audit = airport_transfer_audit(label["path"][-1], edge, config)
+                transit_audit = (
+                    airport_transfer_audit(label["path"][-1], edge, config)
+                    if label["path"][-1]["to_node"] == edge["from_node"]
+                    else None
+                )
                 if transit_audit is not None and not transit_audit["allowed"]:
                     continue
             feasible_edges.append(edge)
@@ -2582,11 +2837,13 @@ def enumerate_routes(edges: list[dict[str, Any]], profile: dict[str, Any], confi
             arrival = utc(parse_datetime(edge["arrival"], "edge arrival"))
             first_departure = label["first_departure"] or departure
             elapsed = (arrival - first_departure).total_seconds() / 60
-            if elapsed > max_minutes:
+            if max_minutes is not None and elapsed > max_minutes:
                 continue
             effective, _ = edge_effective_cost(edge, profile, config)
             baggage = to_base(edge["mandatory_baggage_cost"], config, f"edge {edge['edge_id']}.mandatory_baggage_cost")
-            next_cost = label["cost"] + effective + baggage
+            next_cost = label["cost"] + (
+                effective + baggage if edge["mode"] == "flight" else 0.0
+            )
             budget_base = (
                 math.inf
                 if profile["budget"] is None
@@ -2626,7 +2883,9 @@ def normalize(values: list[float]) -> list[float]:
 def rank_routes(routes: list[dict[str, Any]]) -> dict[str, list[str]]:
     if not routes:
         return {key: [] for key in ("lowest_price", "shortest_time", "convenience", "balanced", "extreme_savings", "pareto")}
-    costs = normalize([route["total_trip_cost"] for route in routes])
+    costs = normalize(
+        [route["mandatory_air_ticket_total"]["amount"] for route in routes]
+    )
     times = normalize([route["total_travel_time_minutes"] for route in routes])
     transfers = normalize([float(route["transfer_count"]) for route in routes])
     uncertainty = normalize([route["evidence_uncertainty"] for route in routes])
@@ -2640,16 +2899,16 @@ def rank_routes(routes: list[dict[str, Any]]) -> dict[str, list[str]]:
         }
     rankings: dict[str, list[str]] = {}
     for strategy in ("lowest_price", "shortest_time", "convenience", "balanced", "extreme_savings"):
-        rankings[strategy] = [route["id"] for route in sorted(routes, key=lambda item: (item["ranking_scores"][strategy], item["total_trip_cost"], item["id"]))]
+        rankings[strategy] = [route["id"] for route in sorted(routes, key=lambda item: (item["ranking_scores"][strategy], item["mandatory_air_ticket_total"]["amount"], item["id"]))]
     pareto: list[dict[str, Any]] = []
     for candidate in routes:
         dominated = any(
             other["id"] != candidate["id"]
-            and other["total_trip_cost"] <= candidate["total_trip_cost"]
+            and other["mandatory_air_ticket_total"]["amount"] <= candidate["mandatory_air_ticket_total"]["amount"]
             and other["total_travel_time_minutes"] <= candidate["total_travel_time_minutes"]
             and other["evidence_uncertainty"] <= candidate["evidence_uncertainty"]
             and (
-                other["total_trip_cost"] < candidate["total_trip_cost"]
+                other["mandatory_air_ticket_total"]["amount"] < candidate["mandatory_air_ticket_total"]["amount"]
                 or other["total_travel_time_minutes"] < candidate["total_travel_time_minutes"]
                 or other["evidence_uncertainty"] < candidate["evidence_uncertainty"]
             )
@@ -2657,7 +2916,7 @@ def rank_routes(routes: list[dict[str, Any]]) -> dict[str, list[str]]:
         )
         if not dominated:
             pareto.append(candidate)
-    rankings["pareto"] = [route["id"] for route in sorted(pareto, key=lambda item: (item["total_trip_cost"], item["total_travel_time_minutes"], item["id"]))]
+    rankings["pareto"] = [route["id"] for route in sorted(pareto, key=lambda item: (item["mandatory_air_ticket_total"]["amount"], item["total_travel_time_minutes"], item["id"]))]
     return rankings
 
 
@@ -2691,16 +2950,49 @@ def solve(config: dict[str, Any], profile: dict[str, Any], nodes: dict[str, dict
             ),
         }
     )
-    final = residual["incumbent"]
-    active_incumbent = {
-        "route_id": final.get("final_route_id") or initial_incumbent.get("route_id"),
-        "total_trip_cost": final["final_total_cost"],
-        "currency": config["base_currency"],
-        "edge_ids": list(final.get("final_edge_ids", [])),
-        "source": "residual_budget_search"
-        if final.get("improved")
-        else initial_incumbent["source"],
-    }
+    if routes:
+        selected_route = min(
+            routes,
+            key=lambda item: (
+                item["mandatory_air_ticket_total"]["amount"],
+                item["total_travel_time_minutes"],
+                item["id"],
+            ),
+        )
+        active_incumbent = {
+            "route_id": selected_route["id"],
+            "mandatory_air_ticket_total": copy.deepcopy(
+                selected_route["mandatory_air_ticket_total"]
+            ),
+            "total_trip_cost": selected_route["mandatory_air_ticket_total"][
+                "amount"
+            ],
+            "total_observed_cost": {
+                "amount": selected_route["total_trip_cost"],
+                "currency": config["base_currency"],
+            },
+            "currency": config["base_currency"],
+            "edge_ids": list(selected_route["edge_ids"]),
+            "source": "verified_mandatory_air_ticket_ranking",
+            "ranking_basis": "mandatory_air_ticket_total",
+        }
+    else:
+        active_incumbent = {
+            "route_id": initial_incumbent.get("route_id"),
+            "mandatory_air_ticket_total": (
+                {
+                    "amount": initial_incumbent["total_cost"],
+                    "currency": config["base_currency"],
+                }
+                if initial_incumbent.get("total_cost") is not None
+                else None
+            ),
+            "total_trip_cost": initial_incumbent.get("total_cost"),
+            "currency": config["base_currency"],
+            "edge_ids": list(initial_incumbent.get("edge_ids", [])),
+            "source": initial_incumbent["source"],
+            "ranking_basis": "mandatory_air_ticket_total",
+        }
     incumbent_accommodation_audit = accommodation_cost_audit_for_edge_ids(
         active_incumbent["edge_ids"], edges, profile, config
     )

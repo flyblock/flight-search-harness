@@ -25,7 +25,7 @@ Keep the destination open throughout a random-loop search.
 - If a Provider can represent only part of an airport or date scope, return exact, non-overlapping `scope_partitions`. Search the supported remainder first with `source_disposition: "retry_current"`; advance only the unsupported remainder with `source_disposition: "advance_source"`.
 - Use `source_unavailable` and `scope_unsupported` only for technical inability to execute the whole issued scope. Use `no_market_result` for an executed market miss, and use `scope_incomplete` or `research_only` when the question remains unresolved.
 - Submit every field-complete Offer visible in the executed scope so the Product Kernel owns admission and ranking.
-- When a Provider separates recommended results from price ordering, use its lowest-price view or price-sorted API for fare capture. A label advertising a lower fare is only a lead until the corresponding result is opened and inspected.
+- When a Provider separates recommended results from price ordering, use its Browser-visible lowest-price view or ascending price order for fare capture. A label advertising a lower fare is only a lead until the corresponding result is opened and inspected.
 
 ## Evidence
 

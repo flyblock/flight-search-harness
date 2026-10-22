@@ -3,12 +3,21 @@
 from __future__ import annotations
 
 import argparse
+import copy
 import json
 import os
 import tempfile
 from datetime import date, datetime, time
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+from flight_search_harness.canonical_values import (
+    CanonicalValueError,
+    normalize_node_identity,
+    reconcile_node,
+)
+from flight_search_harness.search_effort import normalize_search_effort
 
 
 VERSION = "0.4.0"
@@ -62,7 +71,10 @@ def _node(raw: Any, field: str) -> dict[str, Any]:
     country_code = raw.get("country_code")
     if country_code is not None and (not isinstance(country_code, str) or len(country_code) != 2 or country_code.upper() != country_code):
         raise MaterializationError(f"{field}.country_code must be an uppercase two-letter code")
-    return node
+    try:
+        return normalize_node_identity(node)
+    except CanonicalValueError as exc:
+        raise MaterializationError(f"{field}: {exc}") from exc
 
 
 def _nodes(raw: Any, field: str, *, required: bool) -> list[dict[str, Any]]:
@@ -106,6 +118,7 @@ def _side(raw: Any, field: str, currency: str) -> dict[str, Any]:
         "region_id": _text(raw.get("region_id"), f"{field}.region_id"),
         "label": _text(raw.get("label"), f"{field}.label"),
         "country_codes": list(raw.get("country_codes", [])),
+        "search_geography": copy.deepcopy(raw.get("search_geography")),
         "policy": policy,
         "endpoint_policy": endpoint_policy,
         "anchor_nodes": anchors,
@@ -121,7 +134,6 @@ def _side(raw: Any, field: str, currency: str) -> dict[str, Any]:
         "expansion": {
             "enabled": bool(enabled),
             "provider_kinds": list(expansion.get("provider_kinds", ["browser_search", "region_catalog", "scheduled_transport", "road_routing"])),
-            "max_discovered_nodes": int(expansion.get("max_discovered_nodes", 24)),
             "require_observed_evidence": bool(expansion.get("require_observed_evidence", True)),
         },
     }
@@ -219,26 +231,58 @@ def _parse_date(value: Any, field: str) -> date:
         raise MaterializationError(f"{field} must be an ISO date") from exc
 
 
-def _window(raw: Any, field: str, utc_offset: str | None) -> dict[str, str]:
+def _window(
+    raw: Any,
+    field: str,
+    timezone_name: str | None,
+    utc_offset_fallback: str | None = None,
+) -> dict[str, str]:
     if not isinstance(raw, dict):
         raise MaterializationError(f"{field} must be an object")
     start_value = raw.get("start")
     end_value = raw.get("end")
     zone = None
-    if utc_offset is not None:
-        try:
-            zone = datetime.fromisoformat("2000-01-01T00:00:00" + utc_offset).tzinfo
-        except ValueError as exc:
-            raise MaterializationError(f"{field} UTC offset is invalid") from exc
+
+    def local_zone() -> Any:
+        nonlocal zone
+        if zone is not None:
+            return zone
+        if timezone_name in {"UTC", "Etc/UTC"}:
+            zone = datetime.fromisoformat("2000-01-01T00:00:00+00:00").tzinfo
+            return zone
+        if timezone_name is not None:
+            try:
+                zone = ZoneInfo(timezone_name)
+                return zone
+            except ZoneInfoNotFoundError:
+                pass
+        if utc_offset_fallback is not None:
+            try:
+                zone = datetime.fromisoformat(
+                    "2000-01-01T00:00:00" + utc_offset_fallback
+                ).tzinfo
+                return zone
+            except ValueError:
+                pass
+        raise MaterializationError(
+            f"{field} date-only values require a resolvable IANA timezone"
+        )
 
     def normalize(value: Any, item_field: str, *, end: bool) -> datetime:
         text = _text(value, item_field)
-        try:
-            parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
-        except ValueError:
-            if zone is None:
-                raise MaterializationError(f"{item_field} is date-only, so its anchor node must declare utc_offset")
-            parsed = datetime.combine(_parse_date(text, item_field), time(23, 59) if end else time(0, 0), zone)
+        if "T" not in text:
+            parsed = datetime.combine(
+                _parse_date(text, item_field),
+                time.max if end else time.min,
+                local_zone(),
+            )
+        else:
+            try:
+                parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+            except ValueError as exc:
+                raise MaterializationError(
+                    f"{item_field} must be an ISO date or offset datetime"
+                ) from exc
         if parsed.tzinfo is None and zone is not None:
             parsed = parsed.replace(tzinfo=zone)
         if parsed.tzinfo is None or parsed.utcoffset() is None:
@@ -262,25 +306,119 @@ def materialize_intent(raw: Any) -> dict[str, Any]:
     currency = _text(raw.get("currency"), "currency").upper()
     origin = _side(raw.get("origin"), "origin", currency)
     destination = _side(raw.get("destination"), "destination", currency)
-    origin_offset = origin["anchor_nodes"][0].get("utc_offset")
-    destination_offset = destination["anchor_nodes"][0].get("utc_offset")
+    origin_timezones = {
+        str(node.get("timezone")) for node in origin["anchor_nodes"]
+    }
+    destination_timezones = {
+        str(node.get("timezone")) for node in destination["anchor_nodes"]
+    }
+    if len(origin_timezones) != 1 or len(destination_timezones) != 1:
+        raise MaterializationError(
+            "date-window Anchors on one side must share one timezone"
+        )
+    origin_timezone = next(iter(origin_timezones))
+    destination_timezone = next(iter(destination_timezones))
+    origin_offsets = {
+        str(node.get("utc_offset"))
+        for node in origin["anchor_nodes"]
+        if node.get("utc_offset") is not None
+    }
+    destination_offsets = {
+        str(node.get("utc_offset"))
+        for node in destination["anchor_nodes"]
+        if node.get("utc_offset") is not None
+    }
+    origin_offset = next(iter(origin_offsets)) if len(origin_offsets) == 1 else None
+    destination_offset = (
+        next(iter(destination_offsets)) if len(destination_offsets) == 1 else None
+    )
     travel_window = raw.get("travel_window")
     outbound_raw = raw.get("outbound_departure_window", travel_window)
     return_raw = raw.get("return_departure_window", travel_window)
     if outbound_raw is None or return_raw is None:
         raise MaterializationError("provide travel_window or both directional departure windows")
-    outbound_window = _window(outbound_raw, "outbound_departure_window", origin_offset)
-    return_window = _window(return_raw, "return_departure_window", destination_offset)
+    outbound_window = _window(
+        outbound_raw,
+        "outbound_departure_window",
+        origin_timezone,
+        origin_offset,
+    )
+    return_window = _window(
+        return_raw,
+        "return_departure_window",
+        destination_timezone,
+        destination_offset,
+    )
     minimum_stay_nights = _optional_nonnegative_integer(raw.get("minimum_stay_nights"), "minimum_stay_nights")
     maximum_stay_nights = _optional_nonnegative_integer(raw.get("maximum_stay_nights"), "maximum_stay_nights")
     if minimum_stay_nights is not None and maximum_stay_nights is not None and minimum_stay_nights > maximum_stay_nights:
         raise MaterializationError("minimum_stay_nights must not exceed maximum_stay_nights")
+    travel_windows_raw = raw.get("travel_windows")
+    travel_windows = []
+    if isinstance(travel_windows_raw, list) and travel_windows_raw:
+        for index, item in enumerate(travel_windows_raw):
+            if not isinstance(item, dict):
+                raise MaterializationError(
+                    f"travel_windows[{index}] must be an object"
+                )
+            minimum = _optional_nonnegative_integer(
+                item.get("minimum_stay_nights"),
+                f"travel_windows[{index}].minimum_stay_nights",
+            )
+            maximum = _optional_nonnegative_integer(
+                item.get("maximum_stay_nights"),
+                f"travel_windows[{index}].maximum_stay_nights",
+            )
+            if minimum is not None and maximum is not None and minimum > maximum:
+                raise MaterializationError(
+                    f"travel_windows[{index}] minimum_stay_nights must not exceed maximum_stay_nights"
+                )
+            travel_windows.append(
+                {
+                    "travel_window_id": _text(
+                        item.get("travel_window_id"),
+                        f"travel_windows[{index}].travel_window_id",
+                    ),
+                    "outbound_departure_window": _window(
+                        item.get("outbound_departure_window"),
+                        f"travel_windows[{index}].outbound_departure_window",
+                        origin_timezone,
+                        origin_offset,
+                    ),
+                    "return_departure_window": _window(
+                        item.get("return_departure_window"),
+                        f"travel_windows[{index}].return_departure_window",
+                        destination_timezone,
+                        destination_offset,
+                    ),
+                    "minimum_stay_nights": minimum,
+                    "maximum_stay_nights": maximum,
+                    **(
+                        {"label": _text(item.get("label"), f"travel_windows[{index}].label")}
+                        if item.get("label") is not None
+                        else {}
+                    ),
+                }
+            )
+    else:
+        travel_windows = [
+            {
+                "travel_window_id": "travel-window-primary",
+                "outbound_departure_window": copy.deepcopy(outbound_window),
+                "return_departure_window": copy.deepcopy(return_window),
+                "minimum_stay_nights": minimum_stay_nights,
+                "maximum_stay_nights": maximum_stay_nights,
+            }
+        ]
     all_nodes: list[dict[str, Any]] = []
     seen: dict[str, dict[str, Any]] = {}
     for node in [*origin["anchor_nodes"], *destination["anchor_nodes"], *origin["seed_gateway_nodes"], *destination["seed_gateway_nodes"]]:
         existing = seen.get(node["node_id"])
-        if existing is not None and existing != node:
-            raise MaterializationError(f"conflicting node {node['node_id']}")
+        if existing is not None:
+            try:
+                reconcile_node(existing, node)
+            except CanonicalValueError as exc:
+                raise MaterializationError(str(exc)) from exc
         if existing is None:
             seen[node["node_id"]] = node
             all_nodes.append(node)
@@ -319,6 +457,16 @@ def materialize_intent(raw: Any) -> dict[str, Any]:
     airport_transit_unknown_policy = raw.get("airport_transit_unknown_policy", "allow_with_warning")
     if airport_transit_unknown_policy not in {"allow_with_warning", "reject"}:
         raise MaterializationError("airport_transit_unknown_policy is unsupported")
+    accommodation_cost_policy = raw.get(
+        "accommodation_cost_policy", "exclude_from_ranking"
+    )
+    if accommodation_cost_policy not in {
+        "exclude_from_ranking",
+        "include_required",
+    }:
+        raise MaterializationError(
+            "accommodation_cost_policy is unsupported"
+        )
     scenario: dict[str, Any] = {
         "scenario_version": VERSION,
         "base_currency": currency,
@@ -330,13 +478,15 @@ def materialize_intent(raw: Any) -> dict[str, Any]:
             "destination_pool": {key: value for key, value in destination.items() if key not in {"anchor_nodes", "seed_gateway_nodes"}} | {"anchor_node_ids": [item["node_id"] for item in destination["anchor_nodes"]], "seed_gateway_node_ids": [item["node_id"] for item in destination["seed_gateway_nodes"]]},
             "outbound_departure_window": outbound_window,
             "return_departure_window": return_window,
+            "travel_windows": travel_windows,
             "traveler_count": traveler_count,
             "baggage_policy": baggage_policy,
-            "accommodation_cost_policy": raw.get("accommodation_cost_policy", "include_required"),
+            "accommodation_cost_policy": accommodation_cost_policy,
             "date_flexibility": date_flexibility,
             "budget": _optional_money(raw.get("budget"), "budget", currency),
             "overnight_allowed": overnight_allowed,
             "self_transfer_policy": self_transfer_policy,
+            "search_effort": normalize_search_effort(raw.get("search_effort")),
             "maximum_outbound_duration_minutes": maximum_outbound_duration_minutes,
             "maximum_return_duration_minutes": maximum_return_duration_minutes,
             "airport_transit_unknown_policy": airport_transit_unknown_policy,

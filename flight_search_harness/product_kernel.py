@@ -12,6 +12,7 @@ from typing import Any
 
 from .contracts import HarnessBlockedError, HarnessProtocolError, ProductAdapter
 from .mission_contracts import blocked, complete, draft, need_work
+from .request_values import validate_inline_schema
 
 
 TRANSITION_VERSION = "3.0"
@@ -162,6 +163,12 @@ class AdapterProductKernel:
         self._adapter.initialize(request, product_directory)
         return self._transition([], self._next_effect(product_directory))
 
+    def reopen_expired_result(self, product_directory: Path) -> bool:
+        reopen = getattr(self._adapter, "reopen_expired_result", None)
+        if not callable(reopen):
+            return False
+        return bool(reopen(product_directory))
+
     def advance(
         self,
         product_directory: Path,
@@ -249,6 +256,18 @@ class AdapterProductKernel:
         item: dict[str, Any],
         receipt: dict[str, Any],
     ) -> dict[str, Any] | None:
+        if (
+            item.get("last_error")
+            and receipt.get("execution_origin") == "provider_query"
+        ):
+            raise HarnessProtocolError(
+                "Receipt correction must reuse captured facts and may not repeat Provider research"
+            )
+        record_research_receipt = getattr(
+            self._adapter, "record_research_receipt", None
+        )
+        if callable(record_research_receipt):
+            record_research_receipt(product_directory, item, receipt)
         if receipt.get("status") != "complete":
             reason = str(receipt.get("reason") or "Mission worker did not complete the item")
             raise HarnessBlockedError(
@@ -264,10 +283,19 @@ class AdapterProductKernel:
         item_kind = item.get("kind")
         internal = item.get("payload", {})
         if item_kind in {"browser_research", "semantic_judgment"}:
+            work = internal.get("work")
+            if not isinstance(work, dict):
+                raise HarnessProtocolError("research Mission item is missing work")
+            validate_inline_schema(
+                payload,
+                work.get("attempt_schema"),
+                path="receipt.payload",
+            )
             action = copy.deepcopy(internal.get("action"))
             if not isinstance(action, dict):
                 raise HarnessProtocolError("research Mission item is missing action")
             action["_receipt_id"] = receipt.get("receipt_id")
+            action["_receipt_received_at"] = receipt.get("received_at")
             payload = self._adapter.normalize_attempt(payload)
             state = self._adapter.load_state(product_directory)
             if not self._adapter.attempt_committed(state, action, payload):
@@ -406,6 +434,16 @@ class AdapterProductKernel:
                     copy.deepcopy(plan.get("action_required"))
                     if isinstance(plan.get("action_required"), dict)
                     else {"type": "mission_has_no_executable_work"},
+                )
+            if plan_kind == "draft":
+                return draft(
+                    str(
+                        plan.get("reason")
+                        or "Search Mission stopped without a verified result."
+                    ),
+                    copy.deepcopy(plan.get("action_required"))
+                    if isinstance(plan.get("action_required"), dict)
+                    else {"type": "resume_mission"},
                 )
             raise HarnessProtocolError(
                 f"unsupported Product Adapter transition plan: {plan_kind}"

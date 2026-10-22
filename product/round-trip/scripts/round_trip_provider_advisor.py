@@ -12,7 +12,7 @@ from typing import Any
 VERSION = "0.5.0"
 MAX_SOURCE_HINTS = 3
 FAMILY_SOURCE_HINTS = {
-    "region_pool_fare_screen": ["kiwi-com", "google-flights", "skyscanner"],
+    "region_pool_fare_screen": ["google-flights", "skyscanner", "kiwi-com"],
     "joint_quote": ["google-flights", "skyscanner", "kiwi-com"],
     "split_outbound": ["kiwi-com", "trip-com", "google-flights"],
     "split_return": ["kiwi-com", "trip-com", "google-flights"],
@@ -51,7 +51,12 @@ def load_registry(registry_path: str | Path | None = None) -> dict[str, Any]:
 
 
 def task_family(task: dict[str, Any]) -> str:
-    if task.get("research_kind") == "refresh":
+    if task.get("journey_scope") == "surface":
+        return "surface_access"
+    if (
+        task.get("research_kind") == "refresh"
+        or isinstance(task.get("query_shape", {}).get("price_refresh"), dict)
+    ):
         return "refresh"
     if task.get("research_kind") == "region_pool_fare_screen":
         return "region_pool_fare_screen"
@@ -66,8 +71,6 @@ def task_family(task: dict[str, Any]) -> str:
         )
     if scope == "atomic_itinerary":
         return "nested_atomic"
-    if scope == "surface":
-        return "surface_access"
     raise ProviderAdvisorError(
         f"cannot derive task family from task {task.get('task_id')}"
     )

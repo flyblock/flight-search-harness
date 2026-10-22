@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import copy
 import json
 import sys
 from pathlib import Path
@@ -14,13 +15,15 @@ from .adapters import (
     RandomLoopProductAdapter,
     RoundTripProductAdapter,
 )
-from .contracts import result_price_freshness
+from .contracts import HarnessProtocolError, result_price_freshness
 from .mission_runner import SearchMissionHarness
 from .mission_store import MissionStore
 from .mission_workers import BrowserMissionWorker, ExternalMissionWorker
 from .product_kernel import AdapterProductKernel
+from .result_projection import delivery_price_observations, project_delivery
 from .run_store import RunStore
 from .suite_layout import SuiteLayout
+from .worker_projection import project_worker_turn
 
 
 def _print_json(value: Any) -> None:
@@ -89,6 +92,14 @@ def build_parser() -> argparse.ArgumentParser:
     status.add_argument("--run-id", required=True)
     metrics = sub.add_parser("metrics")
     metrics.add_argument("--run-id", required=True)
+    deliver = sub.add_parser("deliver")
+    deliver.add_argument("--run-id", required=True)
+    deliver.add_argument(
+        "--view",
+        choices=["presentation", "full"],
+        default="presentation",
+        help="presentation is compact; full exposes the complete Product result",
+    )
     return parser
 
 
@@ -98,7 +109,12 @@ def _status(store: RunStore, run_id: str) -> dict[str, Any]:
         run.get("last_outcome"), dict
     ):
         freshness = result_price_freshness(
-            str(run["last_outcome"].get("completed_at") or run["updated_at"])
+            str(run["last_outcome"].get("completed_at") or run["updated_at"]),
+            price_valid_until=(
+                str(run["last_outcome"]["price_valid_until"])
+                if run["last_outcome"].get("price_valid_until") is not None
+                else None
+            ),
         )
         run["last_outcome"].update(freshness)
         if isinstance(run["last_outcome"].get("result"), dict):
@@ -121,6 +137,122 @@ def _status(store: RunStore, run_id: str) -> dict[str, Any]:
     return {"run": run, "active_work": active_work}
 
 
+def _delivery_blocked(
+    run: dict[str, Any], reason: str, action_required: Any
+) -> dict[str, Any]:
+    return {
+        "delivery_version": "1.0",
+        "kind": "delivery_blocked",
+        "run_id": run["run_id"],
+        "product_id": run["product_id"],
+        "reason": reason,
+        "action_required": action_required,
+    }
+
+
+def _deliver(
+    store: RunStore, run_id: str, *, view: str = "presentation"
+) -> dict[str, Any]:
+    """Expose a final Result only through the completed, current Run contract."""
+
+    run = store.load_manifest(run_id)
+    last_outcome = run.get("last_outcome")
+    if (
+        run.get("status") != "completed"
+        or not isinstance(last_outcome, dict)
+        or last_outcome.get("kind") != "completed"
+        or run.get("result_ref") != "product/final.json"
+    ):
+        action_required = (
+            copy.deepcopy(last_outcome.get("action_required"))
+            if isinstance(last_outcome, dict)
+            else None
+        )
+        return _delivery_blocked(
+            run,
+            "Run has no completed Outcome and cannot be delivered.",
+            action_required or {"type": "resume_search_mission"},
+        )
+    try:
+        result = _read_json(
+            store.product_directory(run_id) / "final.json",
+            label="final Result",
+        )
+    except ValueError as exc:
+        return _delivery_blocked(
+            run,
+            str(exc),
+            {"type": "repair_final_result"},
+        )
+    try:
+        freshness = result_price_freshness(
+            price_observations=delivery_price_observations(result),
+            completed_at=str(
+                last_outcome.get("completed_at") or run.get("updated_at")
+            ),
+        )
+    except HarnessProtocolError as exc:
+        return _delivery_blocked(
+            run,
+            f"final Result freshness is invalid: {exc}",
+            {"type": "repair_final_result"},
+        )
+    if freshness["price_freshness"] != "current":
+        return _delivery_blocked(
+            run,
+            "Completed Result price Evidence has expired and cannot be delivered as current.",
+            {
+                "type": "refresh_price_evidence",
+                "result_ref": "product/final.json",
+                "price_valid_until": freshness["price_valid_until"],
+            },
+        )
+    return {
+        "delivery_version": "1.0",
+        "kind": "deliverable",
+        "run_id": run["run_id"],
+        "product_id": run["product_id"],
+        **freshness,
+        "full_result_ref": "product/final.json",
+        "result": (
+            result
+            if view == "full"
+            else project_delivery(
+                str(run["product_id"]),
+                result,
+                full_result_ref="product/final.json",
+            )
+        ),
+    }
+
+
+def _attach_worker_turn(
+    store: RunStore, outcome: dict[str, Any]
+) -> dict[str, Any]:
+    """Attach a compact, non-persisted external Worker turn to CLI output."""
+
+    action = outcome.get("action_required")
+    if not isinstance(action, dict) or action.get("type") != "execute_mission_lease":
+        return outcome
+    run_id = outcome.get("run_id")
+    if not isinstance(run_id, str) or not run_id:
+        return outcome
+    missions = MissionStore(store)
+    lease = missions.active_lease(missions.load(run_id))
+    if not isinstance(lease, dict):
+        return outcome
+    projected = copy.deepcopy(outcome)
+    worker_turn = project_worker_turn(lease)
+    projected["action_required"] = {
+        "type": "execute_worker_turn",
+        "run_id": run_id,
+        "item_count": len(worker_turn["items"]),
+        "expires_at": worker_turn.get("expires_at"),
+    }
+    projected["worker_turn"] = worker_turn
+    return projected
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -131,6 +263,10 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "metrics":
         _print_json(store.metrics(args.run_id))
         return 0
+    if args.command == "deliver":
+        delivery = _deliver(store, args.run_id, view=args.view)
+        _print_json(delivery)
+        return 0 if delivery["kind"] == "deliverable" else 2
     receipt_batch_path = getattr(args, "receipt_batch", None)
     if receipt_batch_path and args.worker != "external":
         parser.error("--receipt-batch requires --worker external")
@@ -189,6 +325,8 @@ def main(argv: list[str] | None = None) -> int:
         else {"kind": "resume", "run_id": args.run_id}
     )
     outcome = harness.run(command, worker)
+    if args.worker == "external":
+        outcome = _attach_worker_turn(store, outcome)
     _print_json(outcome)
     return 2 if outcome["kind"] == "failed" else 0
 

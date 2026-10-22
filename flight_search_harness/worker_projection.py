@@ -8,6 +8,7 @@ import json
 from typing import Any
 
 PROJECTION_VERSION = "2.0"
+WORKER_TURN_VERSION = "1.0"
 
 
 def canonical_bytes(value: Any) -> bytes:
@@ -32,6 +33,7 @@ def project_item(
         "hypothesis_id": payload.get("hypothesis_id"),
         "research_kind": payload.get("research_kind"),
         "journey_scope": payload.get("journey_scope"),
+        "research_credit_cost": payload.get("research_credit_cost", 0),
     }
     if item.get("kind") == "choice":
         projected_payload.update(
@@ -223,9 +225,147 @@ def project_work(
         "admission": _compact_contract(evidence_contract),
         "terminal_admission": _compact_contract(brief.get("terminal_evidence_contract")),
         "attempt_schema": copy.deepcopy(work.get("attempt_schema")),
+        "receipt_example": copy.deepcopy(brief.get("observations_template")),
     }
     projection["execution"] = execution_metadata(projection)
     return projection
+
+
+def project_worker_turn(lease: dict[str, Any]) -> dict[str, Any]:
+    """Return the small, executable view of one externally handled Lease.
+
+    Lease fencing, immutable Work Item references, protocol versions, and
+    attempt Schemas remain Harness concerns.  The external Worker receives the
+    research question, the facts it must capture, and a ready-to-fill Receipt
+    submission.  The complete Work Item remains available by reference for
+    exceptional contract debugging, but is not part of the normal Interface.
+    """
+
+    claim = lease.get("claim") if isinstance(lease.get("claim"), dict) else {}
+    items = [
+        _project_worker_turn_item(item)
+        for item in lease.get("items", [])
+        if isinstance(item, dict)
+    ]
+    continuation = digest(
+        {
+            "run_id": lease.get("run_id"),
+            "lease_id": lease.get("lease_id"),
+            "mission_revision": lease.get("mission_revision"),
+            "claim_id": claim.get("claim_id"),
+        }
+    )[:32]
+    return {
+        "worker_turn_version": WORKER_TURN_VERSION,
+        "kind": "worker_turn",
+        "run_id": lease.get("run_id"),
+        "continuation": continuation,
+        "expires_at": claim.get("expires_at"),
+        "items": items,
+        "receipt_submission": {
+            "receipts": [copy.deepcopy(item["receipt_template"]) for item in items]
+        },
+        "derived_by_harness": [
+            "lease_id",
+            "mission_revision",
+            "claim_id",
+            "worker_instance_id",
+            "receipt_version",
+            "attempt_number",
+            "receipt_id",
+            "received_at",
+        ],
+    }
+
+
+def _project_worker_turn_item(item: dict[str, Any]) -> dict[str, Any]:
+    payload = item.get("payload") if isinstance(item.get("payload"), dict) else {}
+    attempt_number = item.get("attempt_number")
+    if item.get("kind") == "choice":
+        receipt_payload = {
+            "action_key": "<published-action-key>",
+            "reason": "<concrete-reason>",
+        }
+        return {
+            "item_id": item.get("item_id"),
+            "attempt_number": attempt_number,
+            "kind": "choice",
+            "actions": copy.deepcopy(payload.get("actions", [])),
+            "correction": _correction(item),
+            "receipt_template": {
+                "item_id": item.get("item_id"),
+                "status": "complete",
+                "payload": receipt_payload,
+            },
+        }
+
+    work = payload.get("work") if isinstance(payload.get("work"), dict) else {}
+    constraints = {
+        key: copy.deepcopy(work.get(key))
+        for key in (
+            "traveler_requirements",
+            "price_improvement",
+            "price_ordering",
+            "capture_requirements",
+            "conditional_requirements",
+            "no_result",
+            "offer_collection_policy",
+            "provider_batch_protocol",
+            "temporal_execution",
+        )
+        if work.get(key) is not None
+    }
+    source = {
+        key: copy.deepcopy(work.get(key))
+        for key in ("assigned_source", "required_source", "source_options")
+        if work.get(key) not in (None, [])
+    }
+    example = work.get("receipt_example")
+    receipt_payload = (
+        copy.deepcopy(example)
+        if work.get("product_id") == "one_way"
+        and payload.get("research_kind") == "internal_surface_transfer"
+        and isinstance(example, dict)
+        else {
+            "kind": "observations",
+            "product_payload": (
+                copy.deepcopy(example) if isinstance(example, dict) else {}
+            ),
+        }
+    )
+    return {
+        "item_id": item.get("item_id"),
+        "attempt_number": attempt_number,
+        "kind": item.get("kind"),
+        "task_id": payload.get("task_id"),
+        "research_kind": payload.get("research_kind"),
+        "journey_scope": payload.get("journey_scope"),
+        "objective": work.get("objective"),
+        "query": copy.deepcopy(work.get("query")),
+        "constraints": constraints,
+        "source": source or None,
+        "admission": copy.deepcopy(work.get("admission")),
+        "terminal_admission": copy.deepcopy(work.get("terminal_admission")),
+        "execution": copy.deepcopy(work.get("execution")),
+        "correction": _correction(item),
+        "receipt_template": {
+            "item_id": item.get("item_id"),
+            "status": "complete",
+            "payload": receipt_payload,
+        },
+    }
+
+
+def _correction(item: dict[str, Any]) -> dict[str, Any] | None:
+    error = item.get("last_error")
+    if not isinstance(error, str) or not error.strip():
+        return None
+    return {
+        "message": error.strip(),
+        "preserve_valid_captured_facts": True,
+        "must_not_repeat_provider_research": True,
+        "load_full_item_only_if_needed": True,
+    }
 
 
 def execution_metadata(projection: dict[str, Any]) -> dict[str, Any]:
@@ -273,6 +413,12 @@ def execution_metadata(projection: dict[str, Any]) -> dict[str, Any]:
         "provider_id": provider_id,
         "batchable": batchable,
         "batch_key": digest(batch_basis) if batchable else None,
+        "live_research_capability_order": [
+            "host_builtin_browser",
+            "equivalent_authorized_browser",
+            "native_computer_use",
+        ],
+        "browser_only": True,
     }
 
 
@@ -294,6 +440,9 @@ def _compact_query(query: dict[str, Any], research_kind: str) -> dict[str, Any]:
     if research_kind in {
         "region_scope_definition",
         "region_pool_fare_screen",
+        "price_challenge_screen",
+        "internal_surface_transfer",
+        "portfolio_frontier_screen",
         "structural_challenger_definition",
     }:
         return copy.deepcopy(query)

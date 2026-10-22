@@ -210,9 +210,6 @@ def normalize_observation(
     method = str(acquisition.get("method") or "").strip()
     if method not in {
         "browser",
-        "http_recovery",
-        "provider_api",
-        "cache",
         "legacy_unspecified",
     }:
         raise ScopeCoverageError("acquisition.method is unsupported")

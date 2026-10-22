@@ -18,10 +18,11 @@
     "base_currency": {"type": "string", "pattern": "^[A-Z]{3}$"},
     "currency_decimal_places": {"type": "integer", "minimum": 0, "maximum": 6},
     "accommodation_cost_policy": {
-      "enum": ["include_required", "exclude_from_optimization"],
-      "default": "include_required",
+      "enum": ["exclude_from_ranking", "include_required", "exclude_from_optimization"],
+      "default": "exclude_from_ranking",
       "description": "Materialized copy of the Profile policy; runtime rejects a mismatch."
     },
+    "search_effort": {"enum": ["economy", "standard", "deep"], "default": "standard"},
     "fx_to_base": {
       "type": "object",
       "additionalProperties": {"type": "number", "exclusiveMinimum": 0}
@@ -59,8 +60,8 @@
     "search": {
       "type": "object",
       "properties": {
-        "max_total_travel_minutes": {"type": "integer", "minimum": 1},
-        "max_transfers": {"type": "integer", "minimum": 1},
+        "max_total_travel_minutes": {"type": ["integer", "null"], "minimum": 1},
+        "max_transfers": {"type": ["integer", "null"], "minimum": 0},
         "max_routes": {"type": ["integer", "null"], "minimum": 1, "default": null},
         "labels_per_node": {"type": ["integer", "null"], "minimum": 1, "default": null},
         "reference_cost": {"type": ["number", "null"], "minimum": 0},

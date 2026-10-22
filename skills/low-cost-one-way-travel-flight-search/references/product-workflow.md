@@ -1,36 +1,34 @@
 # One-way Product Kernel workflow
 
-Use this reference for one-way product decisions. The resolver's `mission_runtime_ref` provides the shared Search Mission lifecycle, Receipt format, recovery procedure, and Outcome handling.
+All live Provider research operates public user-visible Provider pages through the host's authorized Browser or computer-use capability.
 
-## Inputs and constraints
+Use this reference for One-way product decisions. The resolver's `mission_runtime_ref` owns the shared Search Mission lifecycle and Receipt mechanics.
 
-Capture the origin and destination `anchor_nodes` and optional `seed_gateway_nodes`, `departure_window`, adult count, accepted modes, Base Currency, the shared baggage policy, overnight permission, self-transfer policy, transport entitlements, and any hard budget, duration, connection, or accessibility constraints. Request Provider prices in the Base Currency; the Harness owns any system FX normalization needed for other observed currencies.
+## Scope and ranking
 
-When `endpoint_policy` is `anchor_required`, the Product Kernel publishes explicit priced access and egress Research Questions between accepted city anchors and seed gateways. An airport-to-airport fare alone cannot satisfy the complete-journey baseline.
+For a city or region, the AI defines a finite Self-access Gateway Pool without a numeric airport limit. Use `any_admitted_gateway`; the user arranges travel to the origin Gateway and from the destination Gateway. Exact airport requests use `anchor_required` with that airport as Anchor and Gateway. Current Runs do not price or publish Endpoint Access or Endpoint Egress.
 
-Use `null` for an unbounded budget or regional ground-cost ceiling; do not substitute a large monetary sentinel.
+Rank complete feasible Journey Alternatives only by **Mandatory Air Ticket Total**: every required flight Offer, including air positioning and self-transfer flights, plus mandatory baggage and airline fees. Surface transport, Internal Surface Transfer prices, accommodation, and other non-air costs never enter ranking, budget pruning, or price challenges. `gateway_complete_cost` is only an audit value when every included cost is actually known; it is incomplete when an Internal Surface Transfer is unpriced. `total_trip_cost` is optional observed-cost audit data, not a ranking field.
 
-Map date flexibility to `exact_dates`, `bounded_window`, or `fully_flexible` without expanding `departure_window`. Include unavoidable intermediate lodging unless the user explicitly excludes a discretionary stay. Apply an entitlement only to a matching observed surface Offer while preserving the original amount and duration.
+Use `standard` Search Effort by default. Its Product-owned Research Credit budget and Price Challenge Threshold control stopping. Do not add a wall-clock, airport-count, remote-airport, candidate-count, or Slate-size quota. A user-supplied budget, duration limit, transfer-count limit, `overnight_allowed=false`, or `self_transfer_policy=never` is hard; otherwise long waits, overnight travel, and unprotected transfers are warnings.
 
-## Search decisions
+## Research
 
-- A complete origin-pool-to-destination-pool quote is the first obligation. Partial suffixes, reverse predecessors, and frontier branches may inform later challengers but do not satisfy product acceptance.
-- The one-way Provider foundation excludes AZair. Google Flights is the binding first flight attempt only when a verified query shape represents the Work Item's actual expanding scope. Otherwise begin with a capability-matched Provider instead of narrowing the question.
-- Before capturing a flight fare, establish the lowest compatible result through the Provider's lowest-price view, ascending price sort, price-sorted API, or comparison of all visible results. Record `price_selection_method`; default recommended ordering does not establish the lowest fare.
-- Preserve every technical scope rejection. Reopen the same Work Item for an untried, capability-matched Provider rather than replacing the Run or converting a technical rejection into a market no-result.
-- After a complete incumbent exists, investigate materially different, Evidence-backed challengers across useful dates, Providers, modes, and corridors. Frontier choices are non-binding research decisions derived from admitted Evidence; they never prove an unknown connection.
-- Select a published `action_key` for each `choice` Work Item and give a concrete reason. Route edges, Provider assignments, and completion state come from the active Product Kernel contract.
+1. Establish the first verified complete flight candidate.
+2. Continue only with an airfare candidate whose optimistic Mandatory Air Ticket Total can clear the configured percentage Price Challenge Threshold and whose Work Item fits remaining Research Credits.
+3. Do not spend Work on Pareto comfort, structural diversity, a fixed number of alternatives, or a separate remote-airport phase. Alternatives are natural by-products of pursuing the price winner.
+4. Charge credits only for real new Provider research: structured research costs 1, an exact payable quote costs 2, and an Internal Surface Transfer check costs 1. Representation correction, Evidence replay, and non-Provider work cost 0 and must not repeat a query.
 
-## Evidence
+The Provider foundation may require a named first source when it supports the actual scope. Before capturing a fare, establish the lowest compatible result using a lowest-price view, ascending order, price-sorted interface, or comparison of all visible results. Calendar and topology signals remain research-only until an exact dated payable Offer is observed.
 
-A priced movement needs current visible Evidence with exact endpoints, offset-aware schedule, mandatory total, currency, seller or operator, URL, observation time, baggage terms, and service identity. Preserve an indivisible multi-leg ticket as one atomic Offer and never invent component prices.
+## Evidence and transfers
 
-Calendar views, topology, historical schedules, estimates, and hypotheses remain research-only Observations. Surface movement requires its own exact operator or seller Evidence. Strict live multi-currency comparison requires explicit current FX Evidence.
+A flight Capture needs business facts: endpoints, offset-aware schedule, payable price and currency, mandatory baggage, carrier or operator, flight identity when displayed, Seller or Provider page, booking URL, and observation time. The Adapter or Product Kernel derives bundle, observation, edge, itinerary, Offer, and Receipt identities. Preserve indivisible multi-leg pricing as one atomic Offer; never invent component prices.
 
-For planned exit at a ticketed connection, preserve the complete ticketed path, planned exit, unused segments, baggage restrictions, and full atomic price. Treat a connection as protected only when payable Evidence establishes that protection.
+When two required flight endpoints differ, issue at most one external Internal Surface Transfer check at a time. Capture only `from_node`, `to_node`, approximate duration, feasibility, one Evidence URL, and observation time. This is a non-Offer feasibility bridge, never a zero-price TravelEdge. A verified route or plausible taxi/road fallback may connect the flights. Explicit infeasibility or duration plus buffers exceeding the available window rejects that combination. Do not research a Surface price.
 
-## Completion
+## Completion and delivery
 
-Completion requires a verified end-to-end route that passes hard constraints, terminal dispositions for every selected hypothesis, an explanation for pending work, and a fresh Product Kernel stop assessment after the latest Evidence or hypothesis change. A complete candidate, a saved draft, or Harness recovery does not complete the Run.
+Research Credit exhaustion with a fresh verified winner is bounded completion. Exhaustion without a winner returns `draft`. No manual stop assessment or target alternative count is required.
 
-Report the selected route first with chronological movements, waits, mandatory total, ticket boundaries, sellers or operators, Evidence freshness, and materially different verified alternatives when useful. Describe it as the best verified route within the Evidence and constraints actually investigated, not a global lowest price.
+Deliver the cheapest verified Mandatory Air Ticket Total first and state the bounded claim. Include the Self-access Gateway Pool, excluded costs, Search Effort, credits used and remaining, threshold, unsearched and unresolved scope, Internal Surface Transfer Evidence, selected Sellers and booking links, freshness, and warnings. Do not claim a global minimum.

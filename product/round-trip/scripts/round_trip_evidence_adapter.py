@@ -6,15 +6,26 @@ import argparse
 import copy
 import json
 import math
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 
+from flight_search_harness.canonical_values import (
+    CanonicalValueError,
+    normalize_node_identity,
+    reconcile_node,
+)
 
 VERSION = "0.4.0"
 REGISTRY_VERSION = "0.5.0"
 STATUSES = {"ai_proposed", "verified_observed", "research_observed", "no_result", "rejected"}
+DATE_COVERAGE_VALUES = {
+    "sampled_date_pair",
+    "exact_dates",
+    "bounded_window",
+}
+MAX_REPORTED_CLOCK_SKEW = timedelta(minutes=5)
 
 
 class EvidenceAdapterError(ValueError):
@@ -57,17 +68,12 @@ def _normalize_observed_at(
 ) -> dict[str, Any]:
     reported = _timestamp(value, field)
     parsed = datetime.fromisoformat(reported.replace("Z", "+00:00"))
-    trusted_raw, trusted = trusted_time
-    if parsed <= trusted:
-        return {"observed_at": reported}
-    return {
-        "observed_at": trusted_raw,
-        "observed_at_normalization": {
-            "reason": "reported_observed_at_after_trusted_evaluation_time",
-            "reported_observed_at": reported,
-            "trusted_evaluation_at": trusted_raw,
-        },
-    }
+    _, trusted = trusted_time
+    if parsed > trusted + MAX_REPORTED_CLOCK_SKEW:
+        raise EvidenceAdapterError(
+            f"{field} is later than the trusted Receipt admission time"
+        )
+    return {"observed_at": reported}
 
 
 def _normalize_proposed_at(
@@ -77,17 +83,12 @@ def _normalize_proposed_at(
 ) -> dict[str, Any]:
     reported = _timestamp(value, field)
     parsed = datetime.fromisoformat(reported.replace("Z", "+00:00"))
-    trusted_raw, trusted = trusted_time
-    if parsed <= trusted:
-        return {"proposed_at": reported}
-    return {
-        "proposed_at": trusted_raw,
-        "proposed_at_normalization": {
-            "reason": "reported_proposed_at_after_trusted_evaluation_time",
-            "reported_proposed_at": reported,
-            "trusted_evaluation_at": trusted_raw,
-        },
-    }
+    _, trusted = trusted_time
+    if parsed > trusted + MAX_REPORTED_CLOCK_SKEW:
+        raise EvidenceAdapterError(
+            f"{field} is later than the trusted Receipt admission time"
+        )
+    return {"proposed_at": reported}
 
 
 def _observation_time_fields(identity: dict[str, Any]) -> dict[str, Any]:
@@ -107,6 +108,14 @@ def _date_only(value: Any, field: str) -> str:
         return datetime.fromisoformat(raw).date().isoformat()
     except ValueError as exc:
         raise EvidenceAdapterError(f"{field} must be an ISO date") from exc
+
+
+def _date_coverage(value: Any, field: str) -> str:
+    if not isinstance(value, str) or value not in DATE_COVERAGE_VALUES:
+        raise EvidenceAdapterError(
+            f"{field} must be one of {sorted(DATE_COVERAGE_VALUES)}"
+        )
+    return value
 
 
 def _identifier_list(value: Any, field: str) -> list[str]:
@@ -154,26 +163,20 @@ def _provider_scope(
             f"{field}.coverage_semantics must be provider_ranked_window"
         )
     price_selection_method = identity.get("price_selection_method")
-    if price_selection_method != "price_sorted_api":
+    if price_selection_method not in {
+        "lowest_price_view",
+        "price_ascending",
+        "all_visible_compared",
+    }:
         raise EvidenceAdapterError(
-            f"{field} requires price_selection_method=price_sorted_api"
-        )
-    if identity.get("source_id") == "google-flights":
-        raise EvidenceAdapterError(
-            f"{field} cannot use manual Google Flights evidence to close pool coverage"
+            f"{field} requires Browser-visible lowest-price ordering"
         )
     registered_source = source_registry.get(str(identity.get("source_id")))
     if not isinstance(registered_source, dict):
         raise EvidenceAdapterError(
-            f"{field} requires a registered structured Provider"
+            f"{field} requires a registered Browser Provider"
         )
-    expected_host = urlsplit(str(registered_source.get("url") or "")).hostname
-    observed_host = urlsplit(str(identity.get("url") or "")).hostname
-    if not expected_host or not observed_host or not (
-        observed_host == expected_host
-        or observed_host.endswith("." + expected_host)
-        or expected_host.endswith("." + observed_host)
-    ):
+    if not _source_matches_url(registered_source, identity.get("url")):
         raise EvidenceAdapterError(
             f"{field} source_id does not match the observed Provider URL"
         )
@@ -269,7 +272,58 @@ def _registry(path: str | Path | None = None) -> dict[str, dict[str, Any]]:
         raise EvidenceAdapterError(f"cannot read source registry: {exc}") from exc
     if not isinstance(raw, dict) or raw.get("registry_version") != REGISTRY_VERSION:
         raise EvidenceAdapterError(f"source registry must use version {REGISTRY_VERSION}")
-    return {item["source_id"]: item for item in raw.get("sources", [])}
+    entries = [
+        *raw.get("sources", []),
+        *raw.get("dynamic_source_rules", []),
+    ]
+    return {
+        item["source_id"]: item
+        for item in entries
+        if isinstance(item, dict) and item.get("source_id")
+    }
+
+
+def _source_matches_url(source: dict[str, Any], value: Any) -> bool:
+    """Match a source against its canonical host and explicit booking aliases."""
+
+    observed_host = (urlsplit(str(value or "")).hostname or "").lower()
+    if not observed_host:
+        return False
+    hosts = {
+        str(host).strip().lower()
+        for host in source.get("allowed_hosts", [])
+        if isinstance(host, str) and host.strip()
+    }
+    canonical_host = (urlsplit(str(source.get("url") or "")).hostname or "").lower()
+    if canonical_host:
+        hosts.add(canonical_host)
+    return any(
+        observed_host == host
+        or observed_host.endswith("." + host)
+        for host in hosts
+    )
+
+
+def resolve_source_id(
+    value: Any,
+    reported_source_id: Any = None,
+    registry_path: str | Path | None = None,
+) -> str | None:
+    """Resolve a registered source from an observed Provider URL when unique."""
+
+    sources = _registry(registry_path)
+    matches = [
+        source_id
+        for source_id, source in sources.items()
+        if isinstance(source, dict)
+        and source.get("url")
+        and _source_matches_url(source, value)
+    ]
+    if len(matches) == 1:
+        return matches[0]
+    if isinstance(reported_source_id, str) and reported_source_id.strip():
+        return reported_source_id.strip()
+    return None
 
 
 def _node(raw: Any, field: str) -> dict[str, Any]:
@@ -281,7 +335,10 @@ def _node(raw: Any, field: str) -> dict[str, Any]:
     result["location"] = _text(raw.get("location"), f"{field}.location")
     result["country_or_region"] = _text(raw.get("country_or_region"), f"{field}.country_or_region")
     result["timezone"] = _text(raw.get("timezone"), f"{field}.timezone")
-    return result
+    try:
+        return normalize_node_identity(result)
+    except CanonicalValueError as exc:
+        raise EvidenceAdapterError(f"{field}: {exc}") from exc
 
 
 def _provenance(
@@ -373,6 +430,33 @@ def _gateway_signal(
     )
     result.pop("signal_kind", None)
 
+    if result["kind"] in {
+        "portfolio_frontier_fare",
+        "price_challenge_fare",
+    } and raw.get("temporal_signal_version") == "2.0":
+        dates = raw.get("itinerary_dates")
+        if not isinstance(dates, dict):
+            raise EvidenceAdapterError(
+                f"{field}.itinerary_dates must be an object"
+            )
+        result.pop("outbound_date", None)
+        result.pop("return_date", None)
+        result["temporal_signal_version"] = "2.0"
+        result["itinerary_dates"] = {
+            "outbound_departure_local_date": _date_only(
+                dates.get("outbound_departure_local_date"),
+                f"{field}.itinerary_dates.outbound_departure_local_date",
+            ),
+            "outbound_destination_arrival_local_date": _date_only(
+                dates.get("outbound_destination_arrival_local_date"),
+                f"{field}.itinerary_dates.outbound_destination_arrival_local_date",
+            ),
+            "return_departure_local_date": _date_only(
+                dates.get("return_departure_local_date"),
+                f"{field}.itinerary_dates.return_departure_local_date",
+            ),
+        }
+
     canonical_fare = raw.get("dated_fare_amount")
     alias_fare = raw.get("lowest_displayed_total")
     normalized_fare = (
@@ -399,23 +483,21 @@ def _gateway_signal(
             if normalized_fare is not None
             else normalized_alias_fare
         )
-        date_coverage = raw.get("date_coverage", "sampled_date_pair")
-        if date_coverage not in {
-            "sampled_date_pair",
-            "exact_dates",
-            "bounded_window",
-        }:
-            raise EvidenceAdapterError(
-                f"{field}.date_coverage is unsupported"
-            )
-        result["date_coverage"] = date_coverage
+        result["date_coverage"] = _date_coverage(
+            raw.get("date_coverage", "sampled_date_pair"),
+            f"{field}.date_coverage",
+        )
     elif raw.get("date_coverage") is not None:
         raise EvidenceAdapterError(
             f"{field}.date_coverage requires dated_fare_amount"
         )
     result.pop("lowest_displayed_total", None)
 
-    for amount_field in ("complete_cost_lower_bound", "access_cost"):
+    for amount_field in (
+        "complete_cost_lower_bound",
+        "access_cost",
+        "positioning_airfare_lower_bound",
+    ):
         if raw.get(amount_field) is not None:
             result[amount_field] = _gateway_signal_amount(
                 raw[amount_field], f"{field}.{amount_field}"
@@ -452,6 +534,10 @@ def _gateway_signal(
         )
     if opposite_gateway_node_id is None:
         opposite_gateway_node_id = legacy_opposite_gateway_node_id
+    if opposite_gateway_node_id is None and side == "origin":
+        opposite_gateway_node_id = raw.get(
+            "outbound_destination_gateway_node_id"
+        )
     legacy_candidate_node_id = raw.get(legacy_candidate_field)
     if (
         legacy_candidate_node_id is not None
@@ -485,6 +571,7 @@ def _gateway_signal(
             "dated_fare_amount",
             "complete_cost_lower_bound",
             "access_cost",
+            "positioning_airfare_lower_bound",
         )
         for value in [result.get(amount_field)]
         if isinstance(value, dict)
@@ -539,8 +626,32 @@ def _temporal_signal(raw: Any, field: str, identity: dict[str, Any]) -> dict[str
             raw.get("return_destination_gateway_node_id", result["origin_gateway_node_id"]),
             f"{field}.return_destination_gateway_node_id",
         )
-        result["outbound_date"] = _date_only(raw.get("outbound_date"), f"{field}.outbound_date")
-        result["return_date"] = _date_only(raw.get("return_date"), f"{field}.return_date")
+        if raw.get("temporal_signal_version") == "2.0":
+            dates = raw.get("itinerary_dates")
+            if not isinstance(dates, dict):
+                raise EvidenceAdapterError(
+                    f"{field}.itinerary_dates must be an object"
+                )
+            result.pop("outbound_date", None)
+            result.pop("return_date", None)
+            result["temporal_signal_version"] = "2.0"
+            result["itinerary_dates"] = {
+                "outbound_departure_local_date": _date_only(
+                    dates.get("outbound_departure_local_date"),
+                    f"{field}.itinerary_dates.outbound_departure_local_date",
+                ),
+                "outbound_destination_arrival_local_date": _date_only(
+                    dates.get("outbound_destination_arrival_local_date"),
+                    f"{field}.itinerary_dates.outbound_destination_arrival_local_date",
+                ),
+                "return_departure_local_date": _date_only(
+                    dates.get("return_departure_local_date"),
+                    f"{field}.itinerary_dates.return_departure_local_date",
+                ),
+            }
+        else:
+            result["outbound_date"] = _date_only(raw.get("outbound_date"), f"{field}.outbound_date")
+            result["return_date"] = _date_only(raw.get("return_date"), f"{field}.return_date")
         result["atomic_total"] = _money(raw.get("atomic_total"), f"{field}.atomic_total")
         if raw.get("outbound_atomic_total") is not None or raw.get("return_atomic_total") is not None:
             raise EvidenceAdapterError(f"{field} joint total must not be allocated to directions")
@@ -556,8 +667,32 @@ def _temporal_signal(raw: Any, field: str, identity: dict[str, Any]) -> dict[str
     else:
         result["origin_gateway_node_id"] = _text(raw.get("origin_gateway_node_id"), f"{field}.origin_gateway_node_id")
         result["destination_gateway_node_id"] = _text(raw.get("destination_gateway_node_id"), f"{field}.destination_gateway_node_id")
-        result["outbound_date"] = _date_only(raw.get("outbound_date"), f"{field}.outbound_date")
-        result["return_date"] = _date_only(raw.get("return_date"), f"{field}.return_date")
+        if raw.get("temporal_signal_version") == "2.0":
+            dates = raw.get("itinerary_dates")
+            if not isinstance(dates, dict):
+                raise EvidenceAdapterError(
+                    f"{field}.itinerary_dates must be an object"
+                )
+            result.pop("outbound_date", None)
+            result.pop("return_date", None)
+            result["temporal_signal_version"] = "2.0"
+            result["itinerary_dates"] = {
+                "outbound_departure_local_date": _date_only(
+                    dates.get("outbound_departure_local_date"),
+                    f"{field}.itinerary_dates.outbound_departure_local_date",
+                ),
+                "outbound_destination_arrival_local_date": _date_only(
+                    dates.get("outbound_destination_arrival_local_date"),
+                    f"{field}.itinerary_dates.outbound_destination_arrival_local_date",
+                ),
+                "return_departure_local_date": _date_only(
+                    dates.get("return_departure_local_date"),
+                    f"{field}.itinerary_dates.return_departure_local_date",
+                ),
+            }
+        else:
+            result["outbound_date"] = _date_only(raw.get("outbound_date"), f"{field}.outbound_date")
+            result["return_date"] = _date_only(raw.get("return_date"), f"{field}.return_date")
         result["outbound_atomic_total"] = _money(raw.get("outbound_atomic_total"), f"{field}.outbound_atomic_total")
         result["return_atomic_total"] = _money(raw.get("return_atomic_total"), f"{field}.return_atomic_total")
         if raw.get("atomic_total") is not None:
@@ -593,6 +728,7 @@ def adapt_observations(
     temporal_signals: dict[str, dict[str, Any]] = {}
     provider_scopes: list[dict[str, Any]] = []
     ai_proposals: list[dict[str, Any]] = []
+    internal_surface_transfers: list[dict[str, Any]] = []
     normalized: list[dict[str, Any]] = []
     for index, observation in enumerate(observations):
         field = f"observations[{index}]"
@@ -630,6 +766,61 @@ def adapt_observations(
             ai_proposals.append(copy.deepcopy(normalized_proposal))
             normalized.append(normalized_proposal)
             continue
+        transfer = observation.get("internal_surface_transfer")
+        if transfer is not None:
+            if status != "verified_observed" or not isinstance(transfer, dict):
+                raise EvidenceAdapterError(
+                    f"{field}.internal_surface_transfer requires verified_observed Evidence"
+                )
+            duration = transfer.get("approximate_duration_minutes")
+            if (
+                isinstance(duration, bool)
+                or not isinstance(duration, int)
+                or duration < 1
+            ):
+                raise EvidenceAdapterError(
+                    f"{field}.internal_surface_transfer.approximate_duration_minutes must be positive"
+                )
+            feasibility = transfer.get("feasibility")
+            if feasibility not in {
+                "verified_route",
+                "fallback_plausible",
+                "infeasible",
+            }:
+                raise EvidenceAdapterError(
+                    f"{field}.internal_surface_transfer.feasibility is unsupported"
+                )
+            normalized_transfer = {
+                "from_node": _text(
+                    transfer.get("from_node"),
+                    f"{field}.internal_surface_transfer.from_node",
+                ),
+                "to_node": _text(
+                    transfer.get("to_node"),
+                    f"{field}.internal_surface_transfer.to_node",
+                ),
+                "approximate_duration_minutes": duration,
+                "feasibility": feasibility,
+                "evidence_url": _http(
+                    transfer.get("evidence_url"),
+                    f"{field}.internal_surface_transfer.evidence_url",
+                ),
+                **_normalize_observed_at(
+                    transfer.get("observed_at"),
+                    f"{field}.internal_surface_transfer.observed_at",
+                    trusted_time,
+                ),
+            }
+            internal_surface_transfers.append(normalized_transfer)
+            normalized.append(
+                {
+                    "evidence_status": "verified_observed",
+                    "internal_surface_transfer": copy.deepcopy(
+                        normalized_transfer
+                    ),
+                }
+            )
+            continue
         reported_identity = {
             "observation_id": _text(observation.get("observation_id"), f"{field}.observation_id"),
             "source_id": _text(observation.get("source_id"), f"{field}.source_id"),
@@ -659,16 +850,10 @@ def adapt_observations(
                 "reason": _text(observation.get("reason"), f"{field}.reason"),
             }
             if observation.get("date_coverage") is not None:
-                date_coverage = observation["date_coverage"]
-                if date_coverage not in {
-                    "sampled_date_pair",
-                    "exact_dates",
-                    "bounded_window",
-                }:
-                    raise EvidenceAdapterError(
-                        f"{field}.date_coverage is unsupported"
-                    )
-                terminal["date_coverage"] = date_coverage
+                terminal["date_coverage"] = _date_coverage(
+                    observation["date_coverage"],
+                    f"{field}.date_coverage",
+                )
             if observation.get("provider_scope") is not None:
                 if status != "no_result":
                     raise EvidenceAdapterError(
@@ -736,32 +921,51 @@ def adapt_observations(
                 )
                 provider_scopes.append(normalized_scope)
             if observation.get("date_coverage") is not None:
-                date_coverage = observation["date_coverage"]
-                if date_coverage not in {
-                    "sampled_date_pair",
-                    "exact_dates",
-                    "bounded_window",
-                }:
-                    raise EvidenceAdapterError(
-                        f"{field}.date_coverage is unsupported"
-                    )
-                normalized_research["date_coverage"] = date_coverage
+                normalized_research["date_coverage"] = _date_coverage(
+                    observation["date_coverage"],
+                    f"{field}.date_coverage",
+                )
             normalized.append(normalized_research)
             continue
         raw_movements = observation.get("movements")
-        offer = observation.get("offer")
-        if not isinstance(raw_movements, list) or not raw_movements or not isinstance(offer, dict):
-            raise EvidenceAdapterError(f"{field} verified evidence requires movements and one offer")
-        if any(offer.get(key) != reported_identity[key] for key in ("source_id", "provider", "url", "observed_at")):
-            raise EvidenceAdapterError(f"{field} observation identity must match the payable offer")
-        role = sources.get(identity["source_id"], {}).get("evidence_role", "unregistered_ai_choice")
+        raw_offers = observation.get("offers")
+        if raw_offers is None and isinstance(observation.get("offer"), dict):
+            raw_offers = [observation["offer"]]
+        if (
+            not isinstance(raw_movements, list)
+            or not raw_movements
+            or not isinstance(raw_offers, list)
+            or not raw_offers
+            or not all(isinstance(item, dict) for item in raw_offers)
+        ):
+            raise EvidenceAdapterError(
+                f"{field} verified evidence requires movements and payable offers"
+            )
+        source_definition = sources.get(identity["source_id"])
+        if not isinstance(source_definition, dict):
+            if (urlsplit(identity["url"]).hostname or "").endswith(".invalid"):
+                source_definition = {"evidence_role": "payable_offer"}
+            else:
+                raise EvidenceAdapterError(
+                    f"{field}.source_id is not registered or resolved"
+                )
+        role = source_definition.get("evidence_role")
         if role == "research_only_until_payable_seller_verified":
             raise EvidenceAdapterError(f"{field} research-only source cannot directly produce verified payable evidence")
-        _text(offer.get("seller"), f"{field}.offer.seller")
+        registered_url = source_definition.get("url")
+        if isinstance(registered_url, str) and registered_url:
+            if not _source_matches_url(source_definition, identity["url"]):
+                raise EvidenceAdapterError(
+                    f"{field}.source_id does not match the Observation URL"
+                )
         for node_index, node_raw in enumerate(observation.get("nodes", [])):
             node = _node(node_raw, f"{field}.nodes[{node_index}]")
-            if node["node_id"] in nodes and nodes[node["node_id"]] != node:
-                raise EvidenceAdapterError(f"conflicting node {node['node_id']}")
+            existing_node = nodes.get(node["node_id"])
+            if existing_node is not None:
+                try:
+                    node = reconcile_node(existing_node, node)
+                except CanonicalValueError as exc:
+                    raise EvidenceAdapterError(str(exc)) from exc
             nodes[node["node_id"]] = node
         for movement in raw_movements:
             if not isinstance(movement, dict):
@@ -785,19 +989,57 @@ def adapt_observations(
             if movement_id in movements and movements[movement_id] != movement:
                 raise EvidenceAdapterError(f"conflicting movement {movement_id}")
             movements[movement_id] = copy.deepcopy(movement)
-        offer_id = _text(offer.get("offer_id"), f"{field}.offer.offer_id")
-        normalized_offer = {
-            **copy.deepcopy(offer),
-            **_observation_time_fields(identity),
-        }
-        if offer_id in offers and offers[offer_id] != normalized_offer:
-            raise EvidenceAdapterError(f"conflicting offer {offer_id}")
-        offers[offer_id] = normalized_offer
+        observation_offer_ids = []
+        for offer_index, raw_offer in enumerate(raw_offers):
+            offer_field = f"{field}.offers[{offer_index}]"
+            offer = copy.deepcopy(raw_offer)
+            for key in ("source_id", "provider", "observed_at"):
+                if offer.get(key) is None:
+                    offer[key] = reported_identity[key]
+            if offer.get("url") is None:
+                offer["url"] = reported_identity["url"]
+            if any(
+                offer.get(key) != reported_identity[key]
+                for key in ("source_id", "provider", "observed_at")
+            ):
+                raise EvidenceAdapterError(
+                    f"{offer_field} source identity must match its Observation"
+                )
+            offer["url"] = _http(offer.get("url"), f"{offer_field}.url")
+            direct_source = not any(
+                marker in str(source_definition.get("source_type") or "")
+                for marker in ("metasearch", "aggregator")
+            )
+            if (
+                direct_source
+                and isinstance(registered_url, str)
+                and registered_url
+                and not _source_matches_url(source_definition, offer["url"])
+            ):
+                raise EvidenceAdapterError(
+                    f"{offer_field}.url does not match the Observation source"
+                )
+            _text(offer.get("seller"), f"{offer_field}.seller")
+            offer_id = _text(offer.get("offer_id"), f"{offer_field}.offer_id")
+            normalized_offer = {
+                **offer,
+                **_observation_time_fields(identity),
+                "observation_id": identity["observation_id"],
+            }
+            if offer_id in offers and offers[offer_id] != normalized_offer:
+                raise EvidenceAdapterError(f"conflicting offer {offer_id}")
+            offers[offer_id] = normalized_offer
+            observation_offer_ids.append(offer_id)
         normalized.append(
             {
                 **identity,
                 "evidence_status": status,
-                "offer_id": offer_id,
+                "offer_ids": observation_offer_ids,
+                **(
+                    {"seller_listing": copy.deepcopy(observation["seller_listing"])}
+                    if isinstance(observation.get("seller_listing"), dict)
+                    else {}
+                ),
                 "discovery_provenance": _provenance(
                     observation.get("discovery_provenance"),
                     f"{field}.discovery_provenance",
@@ -806,13 +1048,46 @@ def adapt_observations(
                 ),
             }
         )
-    if len(statuses) != 1:
-        raise EvidenceAdapterError("one evidence bundle must contain exactly one evidence_status")
-    evidence_status = next(iter(statuses))
+    mixed_terminal_with_offer = (
+        "verified_observed" in statuses
+        and statuses <= {"verified_observed", "rejected", "no_result"}
+    )
+    if len(statuses) != 1 and not mixed_terminal_with_offer:
+        raise EvidenceAdapterError(
+            "one evidence bundle contains incompatible evidence_status values"
+        )
+    evidence_status = (
+        "verified_observed"
+        if mixed_terminal_with_offer
+        else next(iter(statuses))
+    )
+    if provider_scopes:
+        winner_scopes = [
+            scope
+            for scope in provider_scopes
+            if scope.get("scope_disposition") == "winner"
+        ]
+        if any(
+            len(scope.get("temporal_signal_ids", [])) != 1
+            for scope in winner_scopes
+        ):
+            raise EvidenceAdapterError(
+                "each Provider-ranked winner scope must reference one local winner"
+            )
+        referenced_signal_ids = {
+            signal_id
+            for scope in provider_scopes
+            for signal_id in scope.get("temporal_signal_ids", [])
+        }
+        if referenced_signal_ids != set(temporal_signals):
+            raise EvidenceAdapterError(
+                "Provider-ranked scopes must reference every submitted temporal signal"
+            )
     return {
         "evidence_version": VERSION,
         "bundle_id": bundle_id,
         "task_id": task_id,
+        "admitted_at": trusted_time[0],
         "evidence_status": evidence_status,
         "coverage_complete": coverage_complete,
         "nodes": list(nodes.values()),
@@ -820,6 +1095,7 @@ def adapt_observations(
         "temporal_signals": list(temporal_signals.values()),
         "provider_scopes": provider_scopes,
         "ai_proposals": ai_proposals,
+        "internal_surface_transfers": internal_surface_transfers,
         "movements": list(movements.values()),
         "offers": list(offers.values()),
         "observations": normalized,

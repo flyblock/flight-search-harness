@@ -58,6 +58,7 @@ class BrowserMissionWorker:
                             "receipt_version": "2.0",
                             "item_id": item["item_id"],
                             "attempt_number": int(item["attempt_number"]),
+                            "execution_origin": entry["execution_origin"],
                             "status": "complete",
                             "payload": payload,
                         }
@@ -95,10 +96,19 @@ class BrowserMissionWorker:
             requests = []
             for item in pending:
                 payload = item.get("payload", {})
+                execution_work = copy.deepcopy(payload.get("work"))
+                if item.get("last_error") is not None and isinstance(
+                    execution_work, dict
+                ):
+                    execution_work["correction_context"] = {
+                        "attempt_number": item.get("attempt_number"),
+                        "last_error": str(item.get("last_error")),
+                        "must_not_repeat_provider_research": True,
+                    }
                 requests.append(
                     {
                         "item_id": item["item_id"],
-                        "work": copy.deepcopy(payload.get("work")),
+                        "work": execution_work,
                         "action_id": _operation_id(item, context),
                     }
                 )
@@ -106,10 +116,16 @@ class BrowserMissionWorker:
             duration = int((time.perf_counter() - started) * 1000)
             if batch_result.get("kind") in {"blocked", "failed", "draft"}:
                 self._capture_browser_state(batch_result)
-                provider_queries = 1
+                provider_queries = int(
+                    any(
+                        _execution_origin(item) == "provider_query"
+                        for item in pending
+                    )
+                )
                 for item in pending:
                     entries[item["item_id"]] = {
                         "payload": copy.deepcopy(batch_result),
+                        "execution_origin": _execution_origin(item),
                         "metrics": _timing_metrics(
                             started,
                             len(canonical_bytes(item.get("payload", {}).get("work", {}))),
@@ -123,7 +139,12 @@ class BrowserMissionWorker:
                 raise HarnessProtocolError("batch Browser Adapter must return attempts_by_item")
             self._capture_browser_state(batch_result)
             batch_usage = _pop_usage(batch_result)
-            provider_queries = 1
+            provider_queries = int(
+                any(
+                    _execution_origin(item) == "provider_query"
+                    for item in pending
+                )
+            )
             for item_index, item in enumerate(pending):
                 payload = attempts.get(item["item_id"])
                 if not isinstance(payload, dict):
@@ -133,6 +154,7 @@ class BrowserMissionWorker:
                 usage = _pop_usage(payload)
                 entries[item["item_id"]] = {
                     "payload": payload,
+                    "execution_origin": _execution_origin(item),
                     "metrics": {
                         "worker_duration_ms": duration,
                         "work_payload_bytes": len(canonical_bytes(item.get("payload", {}).get("work", {}))),
@@ -147,6 +169,7 @@ class BrowserMissionWorker:
                 provider_queries += queried
                 entries[item["item_id"]] = {
                     "payload": payload,
+                    "execution_origin": _execution_origin(item),
                     "metrics": item_metrics,
                 }
         return {"items": entries, "provider_queries": provider_queries}
@@ -192,6 +215,7 @@ class BrowserMissionWorker:
                 execution_work["correction_context"] = {
                     "attempt_number": item.get("attempt_number"),
                     "last_error": str(item.get("last_error")),
+                    "must_not_repeat_provider_research": True,
                 }
             operation_id = _operation_id(item, context)
             result = self.browser.execute(
@@ -207,7 +231,11 @@ class BrowserMissionWorker:
                 )
             self._capture_browser_state(result)
             usage = _pop_usage(result)
-            return result, _timing_metrics(started, work_bytes, result, usage), 1
+            return (
+                result,
+                _timing_metrics(started, work_bytes, result, usage),
+                1 if _execution_origin(item) == "provider_query" else 0,
+            )
         raise HarnessProtocolError(f"unsupported Mission item kind: {item.get('kind')}")
 
     def _browser_context(self, context: dict[str, Any]) -> dict[str, Any]:
@@ -374,6 +402,22 @@ def bind_external_receipt_batch(
                 f"external Receipt targets an unknown pending Work Item: {identifier}"
             )
         receipt = copy.deepcopy(raw_receipt)
+        compact_receipt = (
+            "receipt_version" not in raw_receipt
+            or "attempt_number" not in raw_receipt
+        )
+        if (
+            compact_receipt
+            and receipt.get("status") == "complete"
+            and "execution_origin" not in receipt
+        ):
+            receipt["execution_origin"] = (
+                "non_provider"
+                if attempt.get("kind") == "semantic_judgment"
+                else "evidence_replay"
+                if attempt.get("last_error")
+                else "provider_query"
+            )
         _bind_derived_field(
             receipt,
             "receipt_version",
@@ -423,6 +467,18 @@ def _operation_id(item: dict[str, Any], context: dict[str, Any]) -> str:
     return (
         f"{lease_id}:{item['item_id']}:attempt-"
         f"{int(item.get('attempt_number', 1))}"
+    )
+
+
+def _execution_origin(item: dict[str, Any]) -> str:
+    if item.get("kind") == "semantic_judgment":
+        return "non_provider"
+    if item.get("last_error") is not None:
+        return "evidence_replay"
+    return (
+        "provider_query"
+        if item.get("kind") == "browser_research"
+        else "non_provider"
     )
 
 

@@ -9,7 +9,7 @@
     "base_currency": {"type": "string", "pattern": "^[A-Z]{3}$"},
     "intent": {
       "type": "object",
-      "required": ["intent_id", "traveler_count", "baggage_policy", "origin_anchor_nodes", "destination_anchor_nodes", "origin_pool", "destination_pool", "outbound_departure_window", "return_departure_window", "accommodation_cost_policy", "date_flexibility", "overnight_allowed", "self_transfer_policy", "airport_transit_unknown_policy", "allowed_modes", "mode_transition_buffers_minutes", "max_portfolio_offers", "max_solver_offers"],
+      "required": ["intent_id", "traveler_count", "baggage_policy", "origin_anchor_nodes", "destination_anchor_nodes", "origin_pool", "destination_pool", "outbound_departure_window", "return_departure_window", "travel_windows", "accommodation_cost_policy", "date_flexibility", "overnight_allowed", "self_transfer_policy", "search_effort", "airport_transit_unknown_policy", "allowed_modes", "mode_transition_buffers_minutes", "max_portfolio_offers", "max_solver_offers"],
       "properties": {
         "intent_id": {"type": "string", "minLength": 1},
         "origin_anchor_nodes": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string"}},
@@ -18,15 +18,17 @@
         "destination_pool": {"$ref": "#/$defs/pool"},
         "outbound_departure_window": {"$ref": "#/$defs/window"},
         "return_departure_window": {"$ref": "#/$defs/window"},
+        "travel_windows": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/travel_window"}},
         "minimum_stay_nights": {"type": "integer", "minimum": 0, "description": "Minimum destination stay measured by destination-endpoint local calendar dates."},
         "maximum_stay_nights": {"type": "integer", "minimum": 0, "description": "Maximum destination stay measured by destination-endpoint local calendar dates."},
         "traveler_count": {"type": "integer", "minimum": 1},
         "baggage_policy": {"$ref": "#/$defs/baggage_policy"},
-        "accommodation_cost_policy": {"enum": ["include_required", "exclude_from_optimization"]},
+        "accommodation_cost_policy": {"enum": ["exclude_from_ranking", "include_required"]},
         "date_flexibility": {"type": "object"},
         "budget": {"type": ["object", "null"]},
         "overnight_allowed": {"type": "boolean"},
         "self_transfer_policy": {"enum": ["allow", "never"]},
+        "search_effort": {"enum": ["economy", "standard", "deep"]},
         "maximum_outbound_duration_minutes": {"type": ["integer", "null"], "minimum": 1},
         "maximum_return_duration_minutes": {"type": ["integer", "null"], "minimum": 1},
         "airport_transit_unknown_policy": {"enum": ["allow_with_warning", "reject"]},
@@ -44,8 +46,9 @@
   "additionalProperties": false,
   "$defs": {
     "window": {"type": "object", "required": ["start", "end"], "properties": {"start": {"type": "string", "format": "date-time"}, "end": {"type": "string", "format": "date-time"}}, "additionalProperties": false},
+    "travel_window": {"type": "object", "required": ["travel_window_id", "outbound_departure_window", "return_departure_window", "minimum_stay_nights", "maximum_stay_nights"], "properties": {"travel_window_id": {"type": "string"}, "label": {"type": "string"}, "outbound_departure_window": {"$ref": "#/$defs/window"}, "return_departure_window": {"$ref": "#/$defs/window"}, "minimum_stay_nights": {"type": ["integer", "null"], "minimum": 0}, "maximum_stay_nights": {"type": ["integer", "null"], "minimum": 0}}, "additionalProperties": false},
     "node": {"type": "object", "required": ["node_id", "node_type", "location", "country_or_region", "timezone"], "properties": {"node_id": {"type": "string"}, "node_type": {"enum": ["airport", "railway_station", "bus_terminal", "ferry_terminal", "city_destination"]}, "location": {"type": "string"}, "country_or_region": {"type": "string"}, "country_code": {"type": "string"}, "timezone": {"type": "string"}, "utc_offset": {"type": "string"}}, "additionalProperties": true},
-    "pool": {"type": "object", "required": ["region_id", "label", "country_codes", "policy", "endpoint_policy", "max_access_time_minutes", "max_egress_time_minutes", "max_ground_cost", "allowed_ground_modes", "expansion", "anchor_node_ids", "seed_gateway_node_ids"], "properties": {"region_id": {"type": "string"}, "label": {"type": "string"}, "country_codes": {"type": "array", "items": {"type": "string"}}, "policy": {"enum": ["exact", "city_region", "extended_region"]}, "endpoint_policy": {"enum": ["anchor_required", "any_admitted_gateway"]}, "max_access_time_minutes": {"type": ["integer", "null"], "minimum": 0}, "max_egress_time_minutes": {"type": ["integer", "null"], "minimum": 0}, "max_ground_cost": {"type": ["object", "null"]}, "allowed_ground_modes": {"type": "array", "items": {"$ref": "#/$defs/mode"}}, "expansion": {"type": "object"}, "anchor_node_ids": {"type": "array", "items": {"type": "string"}}, "seed_gateway_node_ids": {"type": "array", "items": {"type": "string"}}}, "additionalProperties": false},
+    "pool": {"type": "object", "required": ["region_id", "label", "country_codes", "policy", "endpoint_policy", "max_access_time_minutes", "max_egress_time_minutes", "max_ground_cost", "allowed_ground_modes", "expansion", "anchor_node_ids", "seed_gateway_node_ids"], "properties": {"region_id": {"type": "string"}, "label": {"type": "string"}, "country_codes": {"type": "array", "items": {"type": "string"}}, "search_geography": {"type": ["object", "null"], "properties": {"kind": {"const": "country"}, "country_code": {"type": "string", "pattern": "^[A-Z]{2}$"}}, "required": ["kind", "country_code"], "additionalProperties": false}, "policy": {"enum": ["exact", "city_region", "extended_region"]}, "endpoint_policy": {"enum": ["anchor_required", "any_admitted_gateway"]}, "max_access_time_minutes": {"type": ["integer", "null"], "minimum": 0}, "max_egress_time_minutes": {"type": ["integer", "null"], "minimum": 0}, "max_ground_cost": {"type": ["object", "null"]}, "allowed_ground_modes": {"type": "array", "items": {"$ref": "#/$defs/mode"}}, "expansion": {"type": "object"}, "anchor_node_ids": {"type": "array", "items": {"type": "string"}}, "seed_gateway_node_ids": {"type": "array", "items": {"type": "string"}}}, "additionalProperties": false},
     "baggage_policy": {"type": "object", "required": ["required_items", "paid_baggage_allowed"], "properties": {"required_items": {"type": "array", "uniqueItems": true, "items": {"type": "string", "minLength": 1}}, "paid_baggage_allowed": {"type": "boolean"}}, "additionalProperties": false},
     "mode": {"enum": ["flight", "rail", "bus", "coach", "ferry", "local_transit", "walk", "rideshare", "car"]}
   }

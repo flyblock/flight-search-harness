@@ -7,7 +7,7 @@
   "required": ["adapter_version", "task", "source", "observations"],
   "properties": {
     "adapter_version": {"const": "0.7.1"},
-    "bundle_id": {"type": "string", "minLength": 1},
+    "bundle_id": {"type": "string", "minLength": 1, "description": "Legacy/integration override. Current Harness Work derives this identity from the item-bound Receipt."},
     "task": {"$ref": "#/$defs/issued_task"},
     "source": {"$ref": "#/$defs/source"},
     "discovered_nodes": {
@@ -248,7 +248,7 @@
             "departure": {"type": "string", "format": "date-time"},
             "arrival": {"type": "string", "format": "date-time"},
             "price": {"$ref": "#/$defs/exact_money"},
-            "price_selection_method": {"enum": ["lowest_price_view", "price_ascending", "price_sorted_api", "all_visible_compared"]},
+            "price_selection_method": {"enum": ["lowest_price_view", "price_ascending", "all_visible_compared"]},
             "baggage": {"$ref": "#/$defs/baggage"},
             "flight_identity": {"$ref": "#/$defs/flight_identity"},
             "operator": {"type": "string", "minLength": 1},

@@ -1,8 +1,9 @@
 """Validate AI-owned regional gateway scope proposals.
 
-This module deliberately contains no city-to-airport dictionary.  The AI owns
-semantic enumeration; deterministic code owns boundedness, accounting, and
-region-pool fare-screen compilation.
+This module deliberately contains no city-to-airport dictionary. The AI owns
+semantic enumeration; deterministic code owns Evidence admission and
+region-pool fare-screen compilation. Search Effort bounds external research,
+not membership in the Self-access Gateway Pool.
 """
 
 from __future__ import annotations
@@ -61,7 +62,6 @@ def initial_region_scopes(scenario: dict[str, Any]) -> dict[str, dict[str, Any]]
             for node_id in anchor_ids
             if node_id in node_map and node_map[node_id].get("node_type") == "airport"
         ]
-        max_candidates = int(pool.get("expansion", {}).get("max_discovered_nodes", 12))
         if pool.get("policy") == "exact" and exact_airports:
             result[side] = {
                 "scope_version": VERSION,
@@ -80,7 +80,6 @@ def initial_region_scopes(scenario: dict[str, Any]) -> dict[str, dict[str, Any]]
                 ],
                 "excluded_seed_nodes": [],
                 "coverage": {str(node["node_id"]): "exact_anchor" for node in exact_airports},
-                "max_candidates": max_candidates,
                 "proposal_history": [],
             }
         else:
@@ -93,7 +92,6 @@ def initial_region_scopes(scenario: dict[str, Any]) -> dict[str, dict[str, Any]]
                 "candidate_records": [],
                 "excluded_seed_nodes": [],
                 "coverage": {},
-                "max_candidates": max_candidates,
                 "proposal_history": [],
             }
     return result
@@ -116,7 +114,7 @@ def region_scope_task_spec(side: str, scenario: dict[str, Any]) -> dict[str, Any
         "question": (
             f"Which airports materially belong to or can practically serve the declared {side} "
             "region under its ground-access constraints? Check core, nearby-city, "
-            "surface-connected, cross-border, and specialized airports in this one bounded "
+            "surface-connected, cross-border, and specialized airports in this one semantic "
             "pass; do not treat supplied examples as an exhaustive airport list."
         ),
         "query_shape": {
@@ -127,13 +125,12 @@ def region_scope_task_spec(side: str, scenario: dict[str, Any]) -> dict[str, Any
             "anchor_nodes": [node_map[node_id] for node_id in intent[f"{side}_anchor_nodes"]],
             "country_codes": list(pool.get("country_codes", [])),
             "seed_gateway_hints": seed_nodes,
-            "max_candidates": int(pool.get("expansion", {}).get("max_discovered_nodes", 12)),
             "max_access_time_minutes": pool["max_access_time_minutes"],
             "max_egress_time_minutes": pool["max_egress_time_minutes"],
             "max_ground_cost": copy.deepcopy(pool["max_ground_cost"]),
             "allowed_ground_modes": list(pool["allowed_ground_modes"]),
             "decision_rule": (
-                "AI proposes a bounded representative airport scope. Every seed hint must be "
+                "AI proposes the disclosed Self-access Gateway Pool without a numeric airport cap. Every seed hint must be "
                 "included or explicitly excluded with a reason, and the proposal must account "
                 "for plausible non-core gateways. Production code contains no city-to-airport "
                 "dictionary."
@@ -154,13 +151,8 @@ def normalize_region_scope_proposal(
     if raw.get("region_id") != pool["region_id"]:
         raise AIExplorationError("region scope proposal region_id does not match Session")
     candidates_raw = raw.get("candidates")
-    max_candidates = int(pool.get("expansion", {}).get("max_discovered_nodes", 12))
     if not isinstance(candidates_raw, list) or not candidates_raw:
         raise AIExplorationError("region scope proposal requires at least one candidate")
-    if len(candidates_raw) > max_candidates:
-        raise AIExplorationError(
-            f"region scope proposal exceeds max_candidates={max_candidates}"
-        )
     candidates = []
     seen_nodes: set[str] = set()
     for index, item in enumerate(candidates_raw):
@@ -232,7 +224,6 @@ def normalize_region_scope_proposal(
         "coverage": {
             item["node"]["node_id"]: "scope_defined" for item in candidates
         },
-        "max_candidates": max_candidates,
         "scope_reason": _text(raw.get("scope_reason"), "region_scope.scope_reason"),
     }
 

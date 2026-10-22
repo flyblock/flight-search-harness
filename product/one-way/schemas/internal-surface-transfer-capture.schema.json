@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/flight-search-harness/product/one-way/schemas/internal-surface-transfer-capture.schema.json",
+  "title": "One-way Internal Surface Transfer Capture v1",
+  "description": "Non-Offer feasibility Evidence. It never represents a TravelEdge, Seller, source identity, or price.",
+  "type": "object",
+  "required": [
+    "from_node",
+    "to_node",
+    "approximate_duration_minutes",
+    "feasibility",
+    "evidence_url",
+    "observed_at"
+  ],
+  "properties": {
+    "from_node": {"type": "string", "minLength": 1},
+    "to_node": {"type": "string", "minLength": 1},
+    "approximate_duration_minutes": {"type": "integer", "minimum": 1},
+    "feasibility": {
+      "enum": ["verified_route", "fallback_plausible", "infeasible"]
+    },
+    "evidence_url": {
+      "type": "string",
+      "format": "uri",
+      "pattern": "^https?://"
+    },
+    "observed_at": {"type": "string", "format": "date-time"}
+  },
+  "additionalProperties": false
+}

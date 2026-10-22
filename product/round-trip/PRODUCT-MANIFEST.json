@@ -1,7 +1,7 @@
 {
   "schema_version": "1.0.0",
   "product_id": "round_trip",
-  "version": "1.3.0",
+  "version": "2.0.0",
   "package_files": [
     "PRODUCT-MANIFEST.json",
     "data/source-registry.json",
@@ -13,6 +13,7 @@
     "schemas/round-trip-hypothesis-suggestions.schema.json",
     "schemas/round-trip-intent.schema.json",
     "schemas/round-trip-observations.schema.json",
+    "schemas/round-trip-result.schema.json",
     "schemas/round-trip-scenario.schema.json",
     "schemas/round-trip-session.schema.json",
     "schemas/round-trip-temporal-schedule.schema.json",
@@ -21,11 +22,14 @@
     "scripts/round_trip_ai_exploration.py",
     "scripts/round_trip_evidence_adapter.py",
     "scripts/round_trip_hypothesis_generator.py",
+    "scripts/round_trip_identity.py",
     "scripts/round_trip_intent_materializer.py",
     "scripts/round_trip_portfolio_solver.py",
     "scripts/round_trip_provider_advisor.py",
     "scripts/round_trip_session.py",
+    "scripts/round_trip_scope_compiler.py",
     "scripts/round_trip_solver_projection.py",
+    "scripts/round_trip_task_compatibility.py",
     "scripts/round_trip_temporal_scheduler.py"
   ]
 }

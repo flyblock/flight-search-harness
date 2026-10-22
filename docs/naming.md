@@ -4,7 +4,7 @@ These conventions keep authored content, Python identifiers, JSON contracts, CLI
 
 ## Canonical prose
 
-- Use the exact glossary term when referring to a domain concept: **Flight Search Harness**, **Plugin**, **Skill**, **Product Kernel**, **Product Adapter**, **Search Mission**, **Work Item**, **Lease**, **Receipt**, **Evidence**, **Observation**, **Offer**, **Run**, **Outcome**, **Worker**, and **Store**.
+- Use the exact glossary term when referring to a domain concept: **Flight Search Harness**, **Plugin**, **Skill**, **Product Kernel**, **Product Adapter**, **Search Mission**, **Work Item**, **Lease**, **Receipt**, **Evidence**, **Observation**, **Offer**, **Journey Alternative**, **Ticketing Structure**, **Seller Variant**, **Offer Snapshot**, **Candidate Slate**, **Search Effort**, **Research Credit**, **Price Challenge Threshold**, **Run**, **Outcome**, **Worker**, **Store**, **Anchor**, **Gateway**, **Self-access Gateway Pool**, **Core Itinerary**, **Internal Surface Transfer**, **Endpoint Access**, **Endpoint Egress**, **Gateway-complete Cost**, **Endpoint Completion Cost**, **Anchor-complete Cost**, **Mandatory Air Ticket Total**, **Endpoint Policy**, **Local Date**, **Offset Timestamp**, and **Destination Stay Nights**.
 - Capitalize canonical domain terms in prose. Use lowercase only when a word has its ordinary, non-domain meaning.
 - Use **Flight Search Harness** on first mention. Use **Harness** only after the referent is clear.
 - Use **Plugin** for the portable installation unit, **Harness** for the running system, and **Skill** for an agent workflow entry point. Do not use the three terms interchangeably.

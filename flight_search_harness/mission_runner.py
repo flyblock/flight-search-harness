@@ -15,6 +15,7 @@ from .contracts import (
     result_price_freshness,
 )
 from .mission_contracts import ProductKernel, SearchWorker, validate_receipt_batch
+from .mission_metrics import normalize_checkpoint_metrics
 from .mission_store import MissionStore
 from .request_values import validate_public_request
 from .result_projection import summarize
@@ -61,13 +62,30 @@ class SearchMissionHarness:
                     raise HarnessProtocolError("Search Mission resume requires run_id")
                 with self.store.run_lock(run_id):
                     manifest = self.store.recover_initializing(run_id)
-                    terminal = self._terminal_outcome(manifest)
-                    if terminal is not None:
-                        return terminal
                     kernel = self.kernels_by_product.get(manifest["product_id"])
                     if kernel is None:
                         raise HarnessProtocolError(
                             f"no Product Kernel for {manifest['product_id']}"
+                        )
+                    terminal = self._terminal_outcome(manifest)
+                    if terminal is not None:
+                        reopen = getattr(kernel, "reopen_expired_result", None)
+                        reopened = bool(
+                            terminal.get("kind") == "completed"
+                            and terminal.get("price_freshness") == "expired"
+                            and callable(reopen)
+                            and reopen(self.store.product_directory(run_id))
+                        )
+                        if not reopened:
+                            return terminal
+                        manifest = self.store.load_manifest(run_id)
+                        manifest["status"] = "running"
+                        manifest["last_outcome"] = None
+                        self.store.save_manifest(manifest)
+                        self._append_event(
+                            manifest,
+                            "mission_price_refresh_reopened",
+                            result_ref=manifest.get("result_ref"),
                         )
                     if self._initialization_incomplete(manifest):
                         manifest, mission = self._initialize_locked(manifest, kernel)
@@ -225,7 +243,12 @@ class SearchMissionHarness:
         outcome = copy.deepcopy(stored)
         if status == "completed":
             freshness = result_price_freshness(
-                str(stored.get("completed_at") or manifest["updated_at"])
+                str(stored.get("completed_at") or manifest["updated_at"]),
+                price_valid_until=(
+                    str(stored["price_valid_until"])
+                    if stored.get("price_valid_until") is not None
+                    else None
+                ),
             )
             outcome.update(freshness)
         if status == "completed" and "result" not in outcome:
@@ -835,6 +858,17 @@ class SearchMissionHarness:
             for result in transition.get("receipt_results", [])
             if isinstance(result, dict) and isinstance(result.get("item_id"), str)
         }
+        for identifier, receipt in receipts.items():
+            decision = decisions.get(identifier, {})
+            self._append_event(
+                manifest,
+                "mission_receipt_decided",
+                receipt_id=receipt.get("receipt_id"),
+                item_id=identifier,
+                attempt_number=receipt.get("attempt_number"),
+                decision=decision.get("status"),
+                error=decision.get("error"),
+            )
         mission, lease = self.missions.apply_admissions(
             mission, receipts, decisions
         )
@@ -851,8 +885,11 @@ class SearchMissionHarness:
             ).encode("utf-8")
         ).hexdigest()
         try:
+            checkpoint_metrics = normalize_checkpoint_metrics(
+                batch.get("metrics"), list(receipts.values())
+            )
             self.missions.record_metrics(
-                mission, batch.get("metrics"), checkpoint_id=checkpoint_id
+                mission, checkpoint_metrics, checkpoint_id=checkpoint_id
             )
         except Exception:
             pass
@@ -903,7 +940,13 @@ class SearchMissionHarness:
                 raise HarnessProtocolError("complete effect requires result")
             result_ref = self.store.write_product_final_result(manifest["run_id"], result)
             summary = summarize(manifest["product_id"], result, full_result_ref=result_ref)
-            freshness = result_price_freshness()
+            freshness = result_price_freshness(
+                price_observations=(
+                    result.get("price_observations")
+                    if isinstance(result.get("price_observations"), list)
+                    else None
+                )
+            )
             summary.update(freshness)
             manifest = self.store.load_manifest(manifest["run_id"])
             manifest["status"] = "completed"

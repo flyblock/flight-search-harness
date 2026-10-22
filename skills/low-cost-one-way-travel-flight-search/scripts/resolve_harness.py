@@ -8,18 +8,12 @@ import shutil
 import sys
 import tempfile
 import time
-import urllib.request
 import uuid
 import zipfile
 from pathlib import Path, PurePosixPath, PureWindowsPath
 
 
-HARNESS_VERSION = "1.3.0"
-REPOSITORY = "flyblock/flight-search-harness"
-ARCHIVE_URL = (
-    f"https://github.com/{REPOSITORY}/releases/download/v{HARNESS_VERSION}/"
-    f"flight-search-harness-v{HARNESS_VERSION}.zip"
-)
+HARNESS_VERSION = "2.0.0"
 REQUEST_SCHEMAS = {
     "low-cost-one-way-travel-flight-search": "flight_search_harness/schemas/requests/one-way-request.schema.json",
     "low-cost-random-loop-flight-search": "flight_search_harness/schemas/requests/random-loop-request.schema.json",
@@ -214,54 +208,9 @@ def _release_install_lock(lock_path: Path, token: str) -> None:
 
 
 def _download_harness(destination: Path) -> Path:
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    lock_path = destination.parent / f".{HARNESS_VERSION}.install.lock"
-    try:
-        lock_token = _acquire_install_lock(lock_path)
-    except HarnessResolutionError:
-        if _is_matching_harness(destination):
-            return destination
-        raise
-    try:
-        with tempfile.TemporaryDirectory(
-            prefix="flight-search-harness-", dir=destination.parent
-        ) as temporary_directory:
-            temporary_root = Path(temporary_directory)
-            archive_path = temporary_root / "release.zip"
-            request = urllib.request.Request(
-                ARCHIVE_URL,
-                headers={"User-Agent": "flight-search-harness-bootstrap"},
-            )
-            with urllib.request.urlopen(request) as response, archive_path.open(
-                "wb"
-            ) as stream:
-                shutil.copyfileobj(response, stream)
-
-            extracted_root = temporary_root / "source"
-            with zipfile.ZipFile(archive_path) as archive:
-                _safe_extract(archive, extracted_root)
-            manifests = list(extracted_root.glob("*/FLIGHT-SEARCH-HARNESS-MANIFEST.json"))
-            if len(manifests) != 1:
-                raise HarnessResolutionError(
-                    "downloaded archive has no unique Harness root"
-                )
-            source_root = manifests[0].parent
-            _package_files(source_root)
-            staged_runtime = temporary_root / "runtime"
-            _install_manifest_files(source_root, staged_runtime)
-            if not _is_matching_harness(staged_runtime):
-                raise HarnessResolutionError(
-                    "staged Harness failed manifest-closure validation"
-                )
-            backup = destination.parent / f".{destination.name}.invalid-{uuid.uuid4().hex}"
-            if destination.exists():
-                destination.replace(backup)
-            staged_runtime.replace(destination)
-            if backup.exists():
-                shutil.rmtree(backup)
-        return destination
-    finally:
-        _release_install_lock(lock_path, lock_token)
+    raise HarnessResolutionError(
+        "matching local Harness runtime not found; install the complete local Plugin"
+    )
 
 
 def _display_ref(path: Path) -> str:

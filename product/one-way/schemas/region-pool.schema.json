@@ -39,6 +39,11 @@
         "policy": {
           "enum": ["exact", "city_region", "extended_region"]
         },
+        "endpoint_policy": {
+          "enum": ["anchor_required", "any_admitted_gateway"],
+          "default": "any_admitted_gateway",
+          "description": "Regional default is user-arranged access/egress. Exact airport pools use anchor_required."
+        },
         "seed_nodes": {
           "type": "array",
           "minItems": 1,
@@ -158,7 +163,6 @@
           ]
         },
         "require_observed_evidence": {"type": "boolean"},
-        "max_discovered_nodes": {"type": "integer", "minimum": 1}
       },
       "additionalProperties": false
     },

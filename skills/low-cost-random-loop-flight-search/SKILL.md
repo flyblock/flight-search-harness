@@ -22,10 +22,12 @@ Ask one focused question when any required field is missing or ambiguous. Otherw
 
 ## Run
 
+Execute every live research Work Item through an authorized user-visible Browser page.
+
 Start or resume the Search Mission with the resolved launcher and External Worker. Follow each issued Work Item as the active query, Provider, scope, and payload contract, then submit item-bound Receipts through the same Run. A Worker-directed `blocked` Outcome is an execution instruction, not a result to hand to the user. Resume an actionable `draft` while the active request still authorizes progress.
 
 For a new user search, start a fresh Run and do not inspect or reuse another chat's Run, old Receipt, Session, result, or price. Resume only a Run created earlier in the current task, unless the user explicitly names an older Run to continue.
 
 ## Deliver
 
-Present the verified loop or bounded-no-result conclusion when the Product Kernel returns a `completed` Outcome. Present `blocked` only when its required action belongs to the user or another unavailable external actor. Treat `failed` as terminal for that Run. Never fabricate Evidence, book or pay for travel, or present a final result before `completed`.
+After the Product Kernel returns a `completed` Outcome, run `python <launcher_ref> --runs-root runs deliver --run-id <run-id>` and present only a `kind=deliverable` Result. Never construct the user answer from a private Product Session, raw solver state, truncated JSON, or browser memory. A `delivery_blocked` response requires the stated recovery action. Present `blocked` only when its required action belongs to the user or another unavailable external actor. Treat `failed` as terminal for that Run. Never fabricate Evidence, book or pay for travel, or present a final result before `completed`.

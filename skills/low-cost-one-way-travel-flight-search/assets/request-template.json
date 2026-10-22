@@ -11,13 +11,14 @@
     },
     "overnight_allowed": "REPLACE_WITH_TRUE_OR_FALSE",
     "self_transfer_policy": "REPLACE_WITH_ALLOW_OR_NEVER",
+    "search_effort": "standard",
     "budget": null,
     "origin": {
       "region_id": "REPLACE_WITH_ORIGIN_REGION_ID",
       "label": "REPLACE_WITH_ORIGIN_REGION_LABEL",
       "country_codes": ["REPLACE_WITH_ORIGIN_COUNTRY_CODE"],
       "policy": "extended_region",
-      "endpoint_policy": "anchor_required",
+      "endpoint_policy": "any_admitted_gateway",
       "anchor_nodes": [
         {
           "node_id": "REPLACE_WITH_ORIGIN_ANCHOR_ID",
@@ -47,7 +48,7 @@
       "label": "REPLACE_WITH_DESTINATION_REGION_LABEL",
       "country_codes": ["REPLACE_WITH_DESTINATION_COUNTRY_CODE"],
       "policy": "extended_region",
-      "endpoint_policy": "anchor_required",
+      "endpoint_policy": "any_admitted_gateway",
       "anchor_nodes": [
         {
           "node_id": "REPLACE_WITH_DESTINATION_ANCHOR_ID",

@@ -21,6 +21,11 @@ RECEIPT_VERSION = "2.0"
 WORK_ITEM_VERSION = "3.0"
 WORK_ITEM_KINDS = {"semantic_judgment", "browser_research", "choice"}
 RECEIPT_STATUSES = {"complete", "blocked"}
+RECEIPT_EXECUTION_ORIGINS = {
+    "provider_query",
+    "evidence_replay",
+    "non_provider",
+}
 ITEM_ID_PATTERN = re.compile(r"^[a-z0-9][a-z0-9:._-]{0,191}$")
 
 
@@ -41,6 +46,9 @@ class ProductKernel(Protocol):
         inbound: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Admit Receipts or inspect current state for the next effect."""
+
+    def reopen_expired_result(self, product_directory: Path) -> bool:
+        """Reopen a completed Run when its Product supports price refresh."""
 
 
 class SearchWorker(Protocol):
@@ -168,6 +176,13 @@ def validate_receipt(raw: Any, *, lease_id: str | None = None) -> dict[str, Any]
         "status": status,
         "payload": copy.deepcopy(payload),
     }
+    execution_origin = raw.get("execution_origin")
+    if execution_origin is not None:
+        if execution_origin not in RECEIPT_EXECUTION_ORIGINS:
+            raise HarnessProtocolError(
+                f"unsupported receipt execution_origin: {execution_origin}"
+            )
+        result["execution_origin"] = execution_origin
     if status == "blocked":
         result["reason"] = text(raw.get("reason"), "reason")
     if lease_id is not None:

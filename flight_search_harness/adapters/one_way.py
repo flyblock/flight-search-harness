@@ -15,7 +15,6 @@ from ..contracts import (
     HarnessProtocolError,
     _build_adapter_choice_item,
     _build_adapter_research_item,
-    _observation_bundle_schema,
     _plan_adapter_transition,
 )
 from ..observation_bundle import normalize_attempt
@@ -206,6 +205,7 @@ class OneWayProductAdapter:
                 "baggage": one_way_baggage(shared["baggage_policy"]),
                 "overnight_allowed": shared["overnight_allowed"],
                 "self_transfer_policy": shared["self_transfer_policy"],
+                "search_effort": shared["search_effort"],
                 "fx_to_base": shared["fx_to_base"],
                 "origin": self._one_way_region_side(copy.deepcopy(origin)),
                 "destination": self._one_way_region_side(copy.deepcopy(destination)),
@@ -260,84 +260,30 @@ class OneWayProductAdapter:
             artifacts["config"]["search"]["max_total_travel_minutes"] = (
                 maximum_total_duration_minutes
             )
+        maximum_transfer_count = intent.get("maximum_transfer_count")
+        if maximum_transfer_count is not None:
+            if (
+                isinstance(maximum_transfer_count, bool)
+                or not isinstance(maximum_transfer_count, int)
+                or maximum_transfer_count < 0
+            ):
+                raise HarnessProtocolError(
+                    "one-way intent.maximum_transfer_count must be a "
+                    "non-negative integer"
+                )
+            artifacts["config"]["search"]["max_transfers"] = (
+                maximum_transfer_count
+            )
         scenario_directory = product_directory / "scenario"
         scenario_directory.mkdir(parents=True, exist_ok=True)
         for name in ("profile", "nodes", "edges", "config"):
             _write_json_atomic(scenario_directory / f"{name}.json", artifacts[name])
         state = self.live.initialize_session(scenario_directory / "config.json")
-        state = self.live.add_research_requirements(
-            state,
-            self._regional_connector_requests(
-                origin,
-                destination,
-                state["profile"],
-            ),
-        )
+        # Endpoint Access and Endpoint Egress are user-arranged for new Runs.
+        # Persisted priced connector Work Items remain readable through Session
+        # migration, but are never generated here.
         _write_json_atomic(self._session_path(product_directory), state)
         return state
-
-    @staticmethod
-    def _regional_connector_requests(
-        origin: dict[str, Any],
-        destination: dict[str, Any],
-        profile: dict[str, Any],
-    ) -> list[dict[str, Any]]:
-        """Publish priced access/egress questions for anchor-required regions."""
-
-        requests: list[dict[str, Any]] = []
-        window = profile["date_window"]
-        defaults = ["rail", "bus", "coach", "local_transit", "walk", "rideshare"]
-        for side_name, side in (("origin", origin), ("destination", destination)):
-            if side.get("endpoint_policy") != "anchor_required":
-                continue
-            anchors = list(side.get("anchor_nodes", []))
-            gateways = list(side.get("seed_gateway_nodes", []))
-            modes = list(side.get("allowed_ground_modes") or defaults)
-            for anchor in anchors:
-                for gateway in gateways:
-                    anchor_id = str(anchor.get("node_id") or "").upper()
-                    gateway_id = str(gateway.get("node_id") or "").upper()
-                    if not anchor_id or not gateway_id or anchor_id == gateway_id:
-                        continue
-                    from_node, to_node = (
-                        (anchor_id, gateway_id)
-                        if side_name == "origin"
-                        else (gateway_id, anchor_id)
-                    )
-                    requests.append(
-                        {
-                            "request_id": (
-                                f"regional-{side_name}-{from_node.lower()}-"
-                                f"{to_node.lower()}"
-                            ),
-                            "request_type": "unresolved_connector",
-                            "origins": [from_node],
-                            "destinations": [to_node],
-                            "from_node": from_node,
-                            "to_node": to_node,
-                            "earliest_departure": window["start"],
-                            "latest_arrival": window["end"],
-                            "suggested_modes": modes,
-                            "provider_kinds": [
-                                f"{mode}_schedule_or_offer" for mode in modes
-                            ],
-                            "endpoint_policy": {
-                                "from": "exact_node",
-                                "to": "exact_node",
-                            },
-                            "traveler_count": profile["traveler_count"],
-                            "baggage": copy.deepcopy(profile["baggage"]),
-                            "overnight_allowed": profile["overnight_allowed"],
-                            "self_transfer_policy": profile["self_transfer_policy"],
-                            "date_search": {"mode": "bounded_window"},
-                            "hypothesis_id": (
-                                f"regional-{side_name}:{from_node}:{to_node}"
-                            ),
-                            "hypothesis_kind": "regional_connector",
-                            "route_shape": f"{side_name}_surface_connector",
-                        }
-                    )
-        return requests
 
     @staticmethod
     def _one_way_region_side(side: dict[str, Any]) -> dict[str, Any]:
@@ -345,7 +291,6 @@ class OneWayProductAdapter:
 
         anchors = side.pop("anchor_nodes")
         gateways = side.pop("seed_gateway_nodes")
-        side.pop("endpoint_policy")
         seed_nodes = []
         seen_node_ids: set[str] = set()
         for node in [*anchors, *gateways]:
@@ -566,6 +511,37 @@ class OneWayProductAdapter:
                     "sibling_order": int(node.get("sibling_order", 10**9)),
                 }
             )
+        if state.get("result", {}).get("routes"):
+            remaining_credits = int(
+                state.get("research_credits", {}).get("remaining", 0)
+            )
+            competitive_task_ids = {
+                str(action.get("task_id"))
+                for action in investigation_actions
+                for task in [
+                    next(
+                        (
+                            item
+                            for item in state.get("research_tasks", [])
+                            if item.get("task_id") == action.get("task_id")
+                        ),
+                        None,
+                    )
+                ]
+                if isinstance(task, dict)
+                and self.live.price_challenge_assessment(
+                    state, task
+                ).get("disposition")
+                == "continue"
+                and self.live.research_credit_cost(task) <= remaining_credits
+            }
+            investigation_actions = [
+                action
+                for action in investigation_actions
+                if str(action.get("task_id")) in competitive_task_ids
+            ]
+            recovery_actions = []
+            source_challenger_actions = []
         actions: list[dict[str, Any]] = []
         for item in investigation_actions:
             item["action_key"] = f"investigate:{item['task_id']}"
@@ -578,22 +554,8 @@ class OneWayProductAdapter:
             )
         )
         actions.extend(source_challenger_actions)
-        if active_id is None:
-            for item in state.get("frontier_research_view", {}).get(
-                "frontier_actions", []
-            ):
-                if not isinstance(item, dict) or not item.get("frontier_id"):
-                    continue
-                action = {
-                    **copy.deepcopy(item),
-                    "kind": str(item.get("kind") or "explore_frontier"),
-                    "action_key": str(
-                        item.get("action_key")
-                        or f"explore_frontier:{item['frontier_id']}"
-                    ),
-                }
-                frontier_actions.append(action)
-                actions.append(action)
+        # The old Pareto frontier remains in Session audit state, but current
+        # Runs never turn structural diversity into external Work Items.
         for item in disposition_actions:
             if (
                 item.get("hypothesis_id") == active_id
@@ -612,25 +574,8 @@ class OneWayProductAdapter:
                     f"dispose:{option['hypothesis_id']}:{disposition}"
                 )
                 actions.append(option)
-        if audit["can_finalize"]:
+        if audit["can_finalize"] and not investigation_actions:
             actions.append({"kind": "finalize", "action_key": "finalize"})
-        issue_codes = {
-            issue.get("code")
-            for issue in audit.get("issues", [])
-            if isinstance(issue, dict)
-        }
-        if (
-            state.get("result", {}).get("routes")
-            and active_id is None
-            and issue_codes == {"fresh_challenger_stop_assessment_missing"}
-        ):
-            actions.append(
-                {
-                    "kind": "assess_stop",
-                    "action_key": "assess_stop",
-                    "challenger_hypothesis_ids": [],
-                }
-            )
         selected_ids = {
             str(item.get("hypothesis_id"))
             for item in state.get("hypothesis_history", [])
@@ -699,10 +644,35 @@ class OneWayProductAdapter:
                 str(action.get("task_id") or ""),
             ),
         )
+        remaining = int(state.get("research_credits", {}).get("remaining", 0))
+        selected = []
+        for action in ordered:
+            task = next(
+                item
+                for item in state.get("research_tasks", [])
+                if item.get("task_id") == action.get("task_id")
+            )
+            cost = self.live.research_credit_cost(task)
+            if cost > remaining:
+                continue
+            selected.append(action)
+            remaining -= cost
+            break
+        if investigations and not selected and not state.get("result", {}).get(
+            "routes"
+        ):
+            return {
+                "kind": "draft",
+                "reason": (
+                    "Research Credits are exhausted before a verified one-way "
+                    "Journey Alternative was found."
+                ),
+                "action_required": {"type": "increase_search_effort"},
+            }
         return _plan_adapter_transition(
             control,
             investigations,
-            ordered[:1],
+            selected,
             choose_when_mixed=True,
         )
 
@@ -739,10 +709,6 @@ class OneWayProductAdapter:
                 task_id,
                 "ProductKernel scheduled required Mission work.",
             )
-            original_schema = copy.deepcopy(work.get("attempt_schema", {}))
-            work["attempt_schema"] = {
-                "oneOf": [original_schema, _observation_bundle_schema()]
-            }
             state = self.load_state(product_directory)
             task = next(
                 (
@@ -779,7 +745,44 @@ class OneWayProductAdapter:
                     identify=identify,
                 )
             )
+            items[-1]["payload"]["research_credit_cost"] = (
+                self.live.research_credit_cost(task)
+            )
+        if items:
+            state = self.load_state(product_directory)
+            for item in items:
+                state = self.live.reserve_research_credit(
+                    state,
+                    item_id=str(item["item_id"]),
+                    task_id=str(item["payload"]["task_id"]),
+                    cost=int(item["payload"].get("research_credit_cost", 0)),
+                )
+            self._save_state(product_directory, state)
         return items
+
+    def record_research_receipt(
+        self,
+        product_directory: Path,
+        item: dict[str, Any],
+        receipt: dict[str, Any],
+    ) -> None:
+        if item.get("kind") not in {"browser_research", "semantic_judgment"}:
+            return
+        record = getattr(self.live, "record_research_receipt", None)
+        if not callable(record):
+            # Legacy/test Adapters predate Product-owned Research Credits.
+            return
+        state = record(
+            self.load_state(product_directory),
+            item_id=str(item.get("item_id") or ""),
+            execution_origin=(
+                str(receipt.get("execution_origin"))
+                if receipt.get("execution_origin") is not None
+                else None
+            ),
+            completed=receipt.get("status") == "complete",
+        )
+        self._save_state(product_directory, state)
 
     def normalize_attempt(self, attempt: dict[str, Any]) -> dict[str, Any]:
         return normalize_attempt(self.product_id, attempt)
@@ -797,6 +800,85 @@ class OneWayProductAdapter:
         )
         if task is None or task.get("status") not in {"candidate", "pending"}:
             raise HarnessProtocolError(f"one-way task is not actionable: {task_id}")
+        if task.get("request_type") == "internal_surface_transfer":
+            context = copy.deepcopy(
+                task.get("internal_surface_transfer_context", {})
+            )
+            worker_request = {
+                "from_node": context["from_node"],
+                "to_node": context["to_node"],
+                "available_minutes": context["available_minutes"],
+            }
+            transfer_schema = {
+                "type": "object",
+                "required": [
+                    "from_node",
+                    "to_node",
+                    "approximate_duration_minutes",
+                    "feasibility",
+                    "evidence_url",
+                    "observed_at",
+                ],
+                "properties": {
+                    "from_node": {"const": context["from_node"]},
+                    "to_node": {"const": context["to_node"]},
+                    "approximate_duration_minutes": {
+                        "type": "integer",
+                        "minimum": 1,
+                    },
+                    "feasibility": {
+                        "enum": [
+                            "verified_route",
+                            "fallback_plausible",
+                            "infeasible",
+                        ]
+                    },
+                    "evidence_url": {"type": "string", "format": "uri"},
+                    "observed_at": {"type": "string", "format": "date-time"},
+                },
+                "additionalProperties": False,
+            }
+            attempt_schema = {
+                "type": "object",
+                "required": ["kind", "internal_surface_transfer"],
+                "properties": {
+                    "kind": {"const": "internal_surface_transfer"},
+                    "internal_surface_transfer": transfer_schema,
+                },
+                "additionalProperties": False,
+            }
+            return {
+                "work_version": "1.0",
+                "product_id": self.product_id,
+                "task_id": task_id,
+                "hypothesis_id": task.get("hypothesis_id"),
+                "brief": {
+                    "research_kind": "internal_surface_transfer",
+                    "request_type": "internal_surface_transfer",
+                    "request": worker_request,
+                    "objective": (
+                        "Externally verify route feasibility and approximate duration; "
+                        "do not research or report a price."
+                    ),
+                    "evidence_contract": {
+                        "capture_type": "route_feasibility",
+                        "one_evidence_url": True,
+                        "taxi_or_road_fallback_allowed": True,
+                    },
+                    "observations_template": {
+                        "kind": "internal_surface_transfer",
+                        "internal_surface_transfer": {
+                            "from_node": context["from_node"],
+                            "to_node": context["to_node"],
+                            "approximate_duration_minutes": "<positive-integer>",
+                            "feasibility": "verified_route",
+                            "evidence_url": "https://<route-evidence-url>",
+                            "observed_at": "<ISO-8601-with-offset>",
+                        },
+                    },
+                },
+                "attempt_schema": attempt_schema,
+            }
         brief = self.briefs.task_to_brief(task, state, 1)
         brief = provider_foundation.apply_foundation(
             brief,
@@ -815,7 +897,6 @@ class OneWayProductAdapter:
                 "required": ["kind", "source", "observations"],
                 "properties": {
                     "kind": {"const": "observations"},
-                    "bundle_id": {"type": "string", "minLength": 1},
                     "source": {"type": "object"},
                     "discovered_nodes": {"type": "array"},
                     "observations": {"type": "array", "minItems": 1},
@@ -830,8 +911,13 @@ class OneWayProductAdapter:
         action: dict[str, Any],
         attempt: dict[str, Any],
     ) -> dict[str, Any]:
-        if attempt.get("kind") != "observations":
-            raise HarnessProtocolError("one-way ingest requires an observations attempt")
+        if attempt.get("kind") not in {
+            "observations",
+            "internal_surface_transfer",
+        }:
+            raise HarnessProtocolError(
+                "one-way ingest requires observations or Internal Surface Transfer Capture"
+            )
         state = self.load_state(product_directory)
         task_id = str(action["task_id"])
         task = next(
@@ -840,6 +926,23 @@ class OneWayProductAdapter:
         )
         if task is None:
             raise HarnessProtocolError(f"unknown one-way task: {task_id}")
+        if task.get("request_type") == "internal_surface_transfer":
+            if attempt.get("kind") != "internal_surface_transfer":
+                raise HarnessProtocolError(
+                    "Internal Surface Transfer Work Item requires its compact Capture"
+                )
+            try:
+                state = self.live.ingest_internal_surface_transfer(
+                    state,
+                    task_id,
+                    copy.deepcopy(attempt.get("internal_surface_transfer")),
+                )
+            except self.live.LiveProviderError as exc:
+                raise HarnessProtocolError(
+                    f"one-way Internal Surface Transfer admission failed: {exc}"
+                ) from exc
+            self._save_state(product_directory, state)
+            return state
         active = state.get("active_hypothesis")
         if not (
             isinstance(active, dict)
@@ -897,6 +1000,38 @@ class OneWayProductAdapter:
         action: dict[str, Any],
         attempt: dict[str, Any],
     ) -> bool:
+        task = next(
+            item
+            for item in state["research_tasks"]
+            if item.get("task_id") == str(action["task_id"])
+        )
+        if task.get("request_type") == "internal_surface_transfer":
+            transfer = attempt.get("internal_surface_transfer")
+            if not isinstance(transfer, dict):
+                return False
+            if task.get("status") not in self.live.TERMINAL_STATUSES:
+                return False
+            try:
+                attempt_identity = self.live.internal_surface_transfer_attempt_identity(
+                    transfer
+                )
+            except self.live.LiveProviderError:
+                return False
+            stored_identity = task.get("terminal_capture_sha256")
+            if isinstance(stored_identity, str) and stored_identity:
+                return stored_identity == attempt_identity
+            existing_transfer = next(
+                (
+                    item
+                    for item in state.get("internal_surface_transfers", [])
+                    if item.get("from_node") == transfer.get("from_node")
+                    and item.get("to_node") == transfer.get("to_node")
+                ),
+                None,
+            )
+            # Legacy terminal Sessions predate the replay hash.  Their endpoint
+            # pair and terminal task status are sufficient for read-only replay.
+            return existing_transfer is not None
         bundle_id = f"bundle-{action.get('_receipt_id') or action['action_id']}"
         existing = next(
             (
