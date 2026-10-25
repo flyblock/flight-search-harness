@@ -15,7 +15,7 @@ import zipfile
 from pathlib import Path, PurePosixPath, PureWindowsPath
 
 
-HARNESS_VERSION = "3.9.0"
+HARNESS_VERSION = "3.9.1"
 PRODUCT_ID = "random_loop"
 
 
