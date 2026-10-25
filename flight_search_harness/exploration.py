@@ -497,6 +497,10 @@ def research_feedback(state: dict[str, Any], projection: dict[str, Any] | None =
             review_lines.append(f"Review {side} categories: " + ", ".join(missing) + ".")
     actions.extend(line for _, line in sorted(gateway_actions))
     actions.extend(review_lines)
+    if (best and request["journey_shape"] in {"one_way", "round_trip"} and request["intent"].get("self_transfer_policy", "allow") != "never"
+            and not projection.get("components") and not state.get("combinations")):
+        # Budgets for unexpected routes need priced pieces; none exist yet.
+        actions.append("Search from both ends: record cheap pieces (origin to anywhere, anywhere to destination, ground links) to get connection budgets.")
     actions.extend(_structure_hint(state, projection, request))
     sources = {(str(o["source"].get("provider", "")).strip().casefold(), str(p.get("seller", "")).strip().casefold())
                for o in observations.values() for p in o["offers"] if p["admission"]["status"] == "admitted"}
