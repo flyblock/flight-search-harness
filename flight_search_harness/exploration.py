@@ -438,7 +438,8 @@ def research_feedback(state: dict[str, Any], projection: dict[str, Any] | None =
                 or not isinstance(discovery, dict) or not isinstance(discovery.get("side"), str) or discovery["side"] not in reviewed):
             continue
         side = discovery["side"]
-        if (query.get("status") == "completed" and query["query"].get("purpose") == "airport_discovery"
+        # Any completed query can carry source-backed discovery; its purpose label is not the evidence.
+        if (query.get("status") == "completed"
                 and _same_endpoints(state, query, request) and isinstance(discovery.get("airports"), list)
                 and isinstance(discovery.get("reason"), str) and discovery["reason"].strip()):
             evidenced_sides.add(side)
@@ -492,15 +493,15 @@ def research_feedback(state: dict[str, Any], projection: dict[str, Any] | None =
         missing = [c for c in REVIEW_CATEGORIES if c not in reviewed[side] and (c != "hub_positioning" or request["intent"].get("self_transfer_policy") != "never")]
         if side in missing_sides:
             actions.append(f"Discover reachable {side} airports from external sources ({', '.join(missing)}); borders are not limits." if missing
-                           else f"Link the saved {side} airport discovery to a completed purpose=airport_discovery query.")
+                           else f"Record the {side} airport discovery under a completed query.")
         elif missing:
             review_lines.append(f"Review {side} categories: " + ", ".join(missing) + ".")
-    actions.extend(line for _, line in sorted(gateway_actions))
-    actions.extend(review_lines)
     if (best and request["journey_shape"] in {"one_way", "round_trip"} and request["intent"].get("self_transfer_policy", "allow") != "never"
             and not projection.get("components") and not state.get("combinations")):
         # Budgets for unexpected routes need priced pieces; none exist yet.
         actions.append("Search from both ends: record cheap pieces (origin to anywhere, anywhere to destination, ground links) to get connection budgets.")
+    actions.extend(line for _, line in sorted(gateway_actions))
+    actions.extend(review_lines)
     actions.extend(_structure_hint(state, projection, request))
     sources = {(str(o["source"].get("provider", "")).strip().casefold(), str(p.get("seller", "")).strip().casefold())
                for o in observations.values() for p in o["offers"] if p["admission"]["status"] == "admitted"}
