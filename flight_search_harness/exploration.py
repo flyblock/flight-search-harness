@@ -6,7 +6,7 @@ import copy
 from decimal import Decimal
 from typing import Any
 
-from .comparison import comparison_key, discovered_gateways, evaluate_session, _airports, _convert, _node, _number
+from .comparison import comparison_key, discovered_gateways, evaluate_session, _airports, _convert, _node, _number, _window
 
 
 REVIEW_CATEGORIES = ("core_city", "nearby_city", "surface_connected", "cross_border", "secondary_or_low_cost", "hub_positioning")
@@ -65,8 +65,8 @@ def _price_leads(projection: dict, observations: dict) -> list[tuple]:
         prices = [raw.get("observed_price"), *[o.get("price") for o in observations[s["observation_id"]]["offers"]]]
         leads.extend((s["observation_id"], p, scope, observations[s["observation_id"]]["received_at"]) for p in prices if isinstance(p, dict))
     for e in projection["alternatives"]:
-        if e.get("ranking_cost"):
-            leads.append((e["candidate_id"], e["ranking_cost"],
+        if price := e.get("ranking_cost") or e.get("gateway_complete_cost"):
+            leads.append((e["candidate_id"], price,
                           _scope(e, observations), max(observations[r["observation_id"]]["received_at"] for r in e["offer_refs"])))
     return leads
 
@@ -78,11 +78,13 @@ def _pending_leads(state: dict, projection: dict, observations: dict, request: d
                 if isinstance(identifier, str) and identifier in observations}
     candidates = [*projection["entries"], *projection["alternatives"], *projection.get("components", []), *projection["superseded"]]
     used = {e["candidate_id"] for e in candidates} | {r["observation_id"] for e in candidates for r in e["offer_refs"]}
+    refs = lambda e: {(r["observation_id"], r["offer_id"]) for r in e["offer_refs"]}
+    completed = {e["candidate_id"] for e in projection["alternatives"] if any(refs(e) <= refs(whole) for whole in projection["entries"])}
     complete = [(_scope(e, observations), max(observations[r["observation_id"]]["received_at"] for r in e["offer_refs"])) for e in candidates if e.get("journey_complete", True)]
     pending = []
     for item in _price_leads(projection, observations):
         identifier, price, scope, recorded = item
-        if identifier in followed or identifier in used or not _whole_scope(scope, request, projection) or any(instant > recorded and _covers(actual, scope) for actual, instant in complete):
+        if identifier in followed or identifier in completed or (identifier in observations and identifier in used) or not _whole_scope(scope, request, projection) or any(instant > recorded and _covers(actual, scope) for actual, instant in complete):
             continue
         own_query = observations.get(identifier, {}).get("query_id")
         if any(q["query_id"] != own_query and q["status"] == "completed" and q.get("finished_at", "") > recorded
@@ -92,6 +94,51 @@ def _pending_leads(state: dict, projection: dict, observations: dict, request: d
     return pending
 
 
+def _lead_access(identifier: str, scope: dict, projection: dict, request: dict) -> list[tuple]:
+    """Missing endpoint prices for a lead; estimates remain separate from facts."""
+    intent, shape = request["intent"], request["journey_shape"]
+    if shape == "random_loop":
+        return []
+    candidate = next((e for e in projection["alternatives"] if e["candidate_id"] == identifier), {})
+    endpoints = candidate.get("verification", {}).get("endpoints", [])
+    best_endpoints = projection["entries"][0]["verification"]["endpoints"] if projection["entries"] else []
+    discoveries = {(d["side"], d["node"]["node_id"]): d for d in projection["gateway_discoveries"]}
+    missing = []
+    for side in ("origin", "destination"):
+        region = intent.get(side, {})
+        anchors = {_node(n) for n in region.get("anchor_nodes", [])}
+        directions = ("access", "egress") if shape == "round_trip" else ("access",) if side == "origin" else ("egress",)
+        for direction in directions:
+            endpoint = next((e for e in endpoints if e["role"] == side + "_" + direction), {})
+            gateways = [endpoint["gateway_node_id"]] if endpoint else scope.get(side + "_airports", [])
+            for gateway in gateways:
+                outside = gateway not in _airports(intent, side)
+                complete_cost = intent["ranking_basis"] == "complete_journey_cost"
+                required = (region.get("endpoint_policy") == "anchor_required" or complete_cost and any(
+                    e["role"] == side + "_" + direction and e["movement_ids"] for e in best_endpoints)) and (complete_cost or outside)
+                if not required or gateway in anchors:
+                    continue
+                if candidate.get("ranking_cost") and (not complete_cost or endpoint.get("status") == "observed_connection"):
+                    continue  # This candidate's ranking price already includes it.
+                access = discoveries.get((side, gateway), {}).get("access", {})
+                basis = access.get("basis", "unknown")
+                cost = _convert(access.get("cost"), intent["base_currency"], intent) if basis in {"observed", "estimated"} else None
+                # Reuse an explicitly priced path, without searching for paths or
+                # allocating a joint fare to invented endpoint prices.
+                recorded = [e for e in projection["components"] if e.get("component_cost") and e["movements"]
+                            and e["disclosed_mandatory_costs_known"] and not any(r["status"] == "violated" for r in e["requirements"])
+                            and (_node(e["movements"][0]["from_node"]) in anchors and _node(e["movements"][-1]["to_node"]) == gateway if direction == "access"
+                                 else _node(e["movements"][0]["from_node"]) == gateway and _node(e["movements"][-1]["to_node"]) in anchors)]
+                if recorded:
+                    cost = min(_number(e["component_cost"]["unrounded_amount"]) for e in recorded)
+                    basis = "observed"
+                # A flexible airport list is not a purchase covering all airports.
+                if len(gateways) != 1 or candidate.get("ranking_cost") and endpoint.get("movement_ids"):
+                    cost, basis = None, "unknown"
+                missing.append((side, gateway, direction, cost, basis))
+    return missing
+
+
 def _cheaper_leads(state: dict, projection: dict, observations: dict, request: dict, best: Decimal, skip_ids: set[str] | None = None) -> list[str]:
     intent = request["intent"]
     actions, unconverted = [], []
@@ -99,11 +146,35 @@ def _cheaper_leads(state: dict, projection: dict, observations: dict, request: d
         if skip_ids and identifier in skip_ids:
             continue
         value = _convert(price, intent["base_currency"], intent)
-        if value is not None and value < best:
-            actions.append((value, f"Follow lead {identifier}: observed {value:.2f} {intent['base_currency']} < best {best:.2f}; verify total/scope."))
+        access = _lead_access(identifier, scope, projection, request)
+        gateways = frozenset((side, gateway) for side, gateway, _, _, _ in access)
+        if value is not None and value < best and access:
+            extra = sum((cost for _, _, _, cost, _ in access if cost is not None), Decimal(0))
+            total = value + extra
+            labels = ", ".join(dict.fromkeys(f"{next(iter(intent.get(side, {}).get('anchor_nodes', [])), {}).get('node_id', side)}{'<->' if request['journey_shape'] == 'round_trip' else '->' if side == 'origin' else '<-'}{gateway}" for side, gateway, _, _, _ in access))
+            costs = {basis: sum((cost for *_, cost, b in access if cost is not None and b == basis), Decimal(0))
+                     for basis in ("observed", "estimated") if any(cost is not None and b == basis for *_, cost, b in access)}
+            access_text = " + ".join(f"{'AI-estimated' if basis == 'estimated' else basis} access {cost:.2f}" for basis, cost in costs.items()) or "known access 0.00"
+            if any(cost is None for _, _, _, cost, _ in access):
+                if total >= best:
+                    continue
+                line = f"Positioning {labels} must cost < {best - total:.2f} {intent['base_currency']} (best minus fare {value:.2f} and {access_text}; {'return total; ' if request['journey_shape'] == 'round_trip' else ''}excluding unknown access; price screen only) [{identifier}]."
+            elif total >= best:
+                continue  # Known access already removes the advantage; nothing to act on.
+            else:
+                line = f"Via {labels}: fare {value:.2f} + {access_text} = {total:.2f} {intent['base_currency']} < best {best:.2f}; price screen only [{identifier}]."
+            actions.append((total, line, gateways))
+        elif value is not None and value < best:
+            actions.append((value, f"Follow lead {identifier}: observed {value:.2f} {intent['base_currency']} < best {best:.2f}; verify total/scope.", gateways))
         elif value is None and _number(price.get("amount")) is not None and 0 <= _number(price["amount"]) < best and isinstance(price.get("currency"), str):
             unconverted.append(f"Lead {identifier}: FX to {intent['base_currency']} unknown; cheapness unjudged.")
-    return list(dict.fromkeys(line for _, line in sorted(actions))) + list(dict.fromkeys(unconverted))[:1]
+    lines, seen = [], set()
+    for _, line, gateways in sorted(actions):
+        if gateways & seen:
+            continue
+        lines.append(line)
+        seen.update(gateways)
+    return list(dict.fromkeys(lines))[:3] + list(dict.fromkeys(unconverted))[:1]
 
 
 def _budget_hints(state: dict, projection: dict, observations: dict, request: dict) -> tuple:
@@ -244,6 +315,55 @@ def _structure_hint(state: dict, projection: dict, request: dict) -> list[str]:
     return ["Try permitted untried structures: " + ", ".join(missing) + "."] if missing else []
 
 
+def _loop_efficiency_hint(projection: dict, request: dict) -> list[str]:
+    """Surface efficient priced legs, without claiming a connectable loop."""
+    if request["journey_shape"] != "random_loop":
+        return []
+    intent = request["intent"]
+    best = projection["entries"][0] if projection["entries"] else None
+    efficiency = _number(best["distance_per_currency"]) if best else None
+    def signature(m):
+        return (_node(m["from_node"]), _node(m["to_node"]), m.get("departure"), m.get("arrival"),
+                tuple((m.get("flight_identity") or {}).get("flight_numbers", [])))
+    used = {signature(m) for m in best["movements"] if m["mode"] == "flight"} if best else set()
+    legs = {}
+    for entry in projection["components"]:
+        if (len(entry["movements"]) != 1 or entry["movements"][0]["mode"] != "flight" or not entry.get("component_cost")
+                or not entry["disclosed_mandatory_costs_known"] or any(r["status"] == "violated" for r in entry["requirements"])):
+            continue
+        movement = entry["movements"][0]
+        key = signature(movement)
+        price = _number(entry["component_cost"]["unrounded_amount"])
+        distance, duration = _number(entry.get("distance_km")), _number(entry.get("total_duration_minutes"))
+        ceiling = _number(intent.get("quality_gate", {}).get("maximum_leg_price_in_base_currency"))
+        budget = _convert(intent.get("budget"), intent["base_currency"], intent)
+        if (key in used or price is None or price <= 0 or distance is None or duration is None or duration <= 0
+                or "flight" not in intent.get("allowed_modes", ["flight"])
+                or duration > intent.get("maximum_total_duration_minutes", duration)
+                or ceiling is not None and price > ceiling or budget is not None and price > budget):
+            continue
+        value = distance / price
+        if efficiency is not None and value <= efficiency:
+            continue
+        numbers = "/".join((movement.get("flight_identity") or {}).get("flight_numbers", [])) or movement.get("service_id", "")
+        label = f"{key[0]}->{key[1]} {movement['departure'][:10]} {numbers} {value:.2f}"
+        if key not in legs or value > legs[key][0]:
+            legs[key] = (value, label)
+    ordered = sorted(legs, key=lambda key: (-legs[key][0], key))
+    if efficiency is not None:
+        return [f"Legs above best {efficiency:.2f} km/{intent['base_currency']}: " + "; ".join(legs[key][1] for key in ordered[:3]) + "."] if ordered else []
+    anchors, selected = [], set()
+    for role, index, airports in (("departure", 0, intent["departure_airports"]), ("return", 1, intent["return_airports"])):
+        window = intent.get("first_departure_window" if role == "departure" else "return_arrival_window", {})
+        key = next((key for key in ordered if key[index] in airports
+                    and _window(key[2 if role == "departure" else 3], window)
+                    and (role != "departure" or key[2][11:16] >= intent.get("first_leg_earliest_local_time", {}).get(key[0], "00:00"))), None)
+        if key is not None and key not in selected:
+            anchors.append(role + ": " + legs[key][1])
+            selected.add(key)
+    return [f"Build a loop around recorded legs (km/{intent['base_currency']}): " + "; ".join(anchors) + ". Check connections."] if anchors else []
+
+
 def _candidate_issues(projection: dict, intent: dict, focus_ids: list[str] | None) -> list[dict]:
     blocked = [*projection["alternatives"], *projection.get("components", [])]
     if projection["entries"]:
@@ -357,9 +477,13 @@ def settle_challenges(state: dict[str, Any], instant: str) -> None:
             result.update(status="pending", reason="The query has no recorded result yet.")
         else:
             linked_candidates = [c for c in projection["alternatives"] if any(r["observation_id"] in usable for r in c["offer_refs"])]
-            linked_leads = [(price, scope) for identifier, price, scope, _ in _price_leads(projection, observations) if identifier in usable]
+            linked_leads = [(identifier, price, scope) for identifier, price, scope, _ in _price_leads(projection, observations) if identifier in usable]
             context_request = next(r["request"] for r in state["requests"] if r["revision"] == number)
-            lead_values = [_convert(price, context_request["intent"]["base_currency"], context_request["intent"]) for price, _ in linked_leads]
+            lead_values = []
+            for identifier, price, scope in linked_leads:
+                value = _convert(price, context_request["intent"]["base_currency"], context_request["intent"])
+                access = _lead_access(identifier, scope, projection, context_request)
+                lead_values.append(value + sum((a[3] for a in access), Decimal(0)) if value is not None and all(a[3] is not None for a in access) else None)
             unknown_cost = [c for c in linked_candidates if c.get("ranking_cost") is None]
             blocked = unknown_cost or linked_candidates
             issues = list(dict.fromkeys(f"{r['requirement_id']}: {r['reason']}" for c in blocked for r in c["requirements"]
@@ -370,13 +494,13 @@ def settle_challenges(state: dict[str, Any], instant: str) -> None:
                     result["reason"] += " Add an attributed FX rate via revise."
                 result["candidate_ids"] = [c["candidate_id"] for c in linked_candidates]
             elif (baseline and baseline["objective"] == "price" and linked_leads and not any(r["observation_id"] in usable for c in projection.get("components", []) for r in c["offer_refs"])
-                  and all(_whole_scope(scope, context_request, projection) for _, scope in linked_leads)
+                  and all(_whole_scope(scope, context_request, projection) for _, _, scope in linked_leads)
                   and all(v is not None and v >= _number(baseline["ranking_cost"]["unrounded_amount"]) for v in lead_values)):
                 result.update(status="not_improved", comparison_basis="lead_prices",
                               reason="All linked journey-scope lead prices are at or above the baseline; based on leads, not bookable quotes.")
             else:
                 if linked_leads:
-                    result["reason"] = ("Linked prices cover components or unconfirmed journey scopes; no full-journey comparison." if not all(_whole_scope(scope, context_request, projection) for _, scope in linked_leads)
+                    result["reason"] = ("Linked prices cover components or unconfirmed journey scopes; no full-journey comparison." if not all(_whole_scope(scope, context_request, projection) for _, _, scope in linked_leads)
                                         else "A cheaper or unconverted journey-scope lead still needs a complete quote.")
                 else:
                     result["reason"] = ("No eligible baseline is available yet." if baseline is None else "No distinct comparable challenger is linked; this query may only establish the baseline.")
@@ -488,6 +612,7 @@ def research_feedback(state: dict[str, Any], projection: dict[str, Any] | None =
         actions.extend(budget_lines)
         if not current_challenges:
             actions.append("Challenge the current best: record a purpose=challenge query (other dates, airports, sellers or ticket structures).")
+    actions.extend(_loop_efficiency_hint(projection, request))
     review_lines = []
     for side in required:
         missing = [c for c in REVIEW_CATEGORIES if c not in reviewed[side] and (c != "hub_positioning" or request["intent"].get("self_transfer_policy") != "never")]

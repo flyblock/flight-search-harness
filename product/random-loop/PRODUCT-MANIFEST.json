@@ -1,7 +1,7 @@
 {
   "schema_version": "1.0.0",
   "product_id": "random_loop",
-  "version": "3.9.1",
+  "version": "3.10.0",
   "journey_shape": "random_loop",
   "request_schema_base": "plugin_root",
   "request_schema_ref": "flight_search_harness/schemas/search-request.schema.json",

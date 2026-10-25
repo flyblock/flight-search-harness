@@ -35,7 +35,8 @@ Start from the Skill's request template. Required: `request_version: "7.0"`, `jo
 | `fx_rates` | `[{from_currency, to_currency, rate, observed_at, source_name and/or source_url}]`. Needed to compare foreign-currency prices. Never invent or recall a rate. |
 | `baggage_policy` | `{cabin_baggage, checked_bag_count, paid_baggage_allowed}` only if the user requires baggage. |
 | `overnight_allowed` (true/false), `self_transfer_policy` (`allow`/`never`), `maximum_transfer_count` (integer), `allowed_modes` (array of `flight`, `rail`, `bus`, `coach`, `ferry`, `local_transit`, `walk`, `rideshare`, `car`) | Only what the user said. "Any transport mode" means omit `allowed_modes` or list all of them. |
-| `additional_requirements` | `[{requirement_id, text}]` for anything else; judge later with `assess`. |
+| `maximum_total_duration_minutes`, `min_legs`/`max_legs`, `quality_gate` (random loop) | Hard limits the code checks for you. |
+| `additional_requirements` | `[{requirement_id, text}]` only for what no field covers; judge later with `assess`. |
 | `search_limits` | `{max_queries, max_elapsed_minutes}` only if the user set limits. |
 
 Do not invent limits, baggage needs or airport restrictions. Journey-specific date and endpoint fields are in the Skill.
