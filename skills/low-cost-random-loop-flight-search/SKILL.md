@@ -5,12 +5,17 @@ description: Search open-destination multi-leg airport loops using accepted endp
 
 # Random-loop flight search
 
-Explore intermediate destinations and multi-leg combinations that return to the user's accepted return airports. Default to distance per unit of base currency. Preserve observed or supported distance inputs, joint ticket totals, transfer limits, and endpoint continuity; a cheap individual leg is not a priced complete loop.
+Goal: find multi-leg loops from the user's accepted departure airports back to their accepted return airports with the best distance per unit of base currency (or their stated objective), and show useful runners-up, with dates, airports, flight numbers, prices and key restrictions.
 
-Run `python -B <skill-directory>/scripts/resolve_harness.py`. Read its `workflow_ref` and [this journey's workflow](references/product-workflow.md). Keep the returned launcher, Request Schema, record-template and external runtime paths; use the same `--runs-root` for the whole Run. The returned quote, signal, challenge-query and airport-discovery templates show the public format without reading implementation files.
+1. Run `python -B <skill-directory>/scripts/resolve_harness.py`. Keep the returned paths. Read `workflow_ref` once; it is the full reference. You do not need the Request Schema or implementation files.
+2. Write a fresh Request from [the template](assets/request-template.json) and the user's words, then `start`. Do not open old Runs.
+   - `journey_shape: random_loop`; `departure_airports`, `return_airports`, `first_departure_window`. Add `min_legs`/`max_legs`, connection buffers, maximum waits, earliest local departure or `airport_transit` only if the user set them.
+   - Departure and return airport sets are hard endpoints; intermediate destinations are open and borders do not limit them.
+3. Search and `record` each leg's findings as you go (workflow §2); single legs are useful leads before a loop is complete. Read `clock` for each observation's `captured_at`.
+4. Propose promising next destinations and return connections from external route and fare sources. When you have a complete loop, `combine` its saved Offers with a reason. Challenge the best loop with new intermediates, structures and dates (workflow §3).
+5. `deliver`, then answer as in workflow §6.
 
-Create a fresh Request and Run from the current user request, using [the request template](assets/request-template.json) where appropriate. Preserve city Anchors and the user's original words; airport-only template values require accepted airport endpoints. Read no unrelated old Runs or conclusions. The shared workflow defines the common fields and rules, including default ticket-cost comparison and optional full journey costs.
-
-Use the best known eligible candidate as a benchmark to challenge. Choose research from saved findings, external discovery and the user's objective; a first usable ticket is not by itself a reason to stop. Save each actual query together with its findings using inline `query` in `record`, or associate a previously registered `query_id`. Preserve partially checked and higher prices as well as useful complete Offers. Missing details do not justify dropping an observed price. Read a tool clock (or the portable `clock` command) while observing the source and reuse that timestamp when saving. Reference and time metadata problems must not discard useful facts; screenshots and page attachments are optional.
-
-Use `purpose: "challenge"` with a reason on competitive queries, and consult `research_feedback` after saving. Where the user permits flexible endpoints, discover reachable airports from external sources rather than treating the first airport list or an administrative border as the search boundary. Follow the shared workflow for `airport_discovery`. Adjust the method when a source cannot execute it. Present the current best and useful complete alternatives already found, including beaten baselines; do not research solely to fill ranks or present unverified signals as bookable runners-up. Include actual dates, airports, flight identities, prices and restrictions from the saved result, including `verification` and `required_disclosures`. Ticket eligibility, booking-page stage, connection protection and endpoint feasibility are separate facts. Record a reason when stopping; neither a stopped Run nor a ranked ticket establishes a global optimum.
+Loop specifics:
+- Efficiency = distance / price in base currency. Record distance (`distance_km`) with its source; missing distance or FX means unknown efficiency.
+- A joint fare covering several legs counts once; never rank a loop by one cheap leg.
+- Disclose separate-ticket and transit risks; unknown transit permission stays unknown.

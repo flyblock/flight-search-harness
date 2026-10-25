@@ -12,7 +12,8 @@
     "outbound_date": "REPLACE_WITH_OUTBOUND_LOCAL_DATE",
     "return_date": "REPLACE_WITH_RETURN_LOCAL_DATE",
     "adult_count": "REPLACE_WITH_ADULT_COUNT_NUMBER",
-    "fare_conditions": "REPLACE_WITH_ACTUAL_FILTERS_AND_MARKET"
+    "fare_conditions": "REPLACE_WITH_ACTUAL_FILTERS_AND_MARKET",
+    "ticketing_structure": "REPLACE_WITH_separate_purchases_open_jaw_OR_hub_positioning_IF_ACTUALLY_QUERIED_OR_REMOVE_FIELD"
   },
   "purpose": "challenge",
   "reason": "REPLACE_WITH_WHY_THIS_QUERY_COULD_IMPROVE_THE_CURRENT_BEST"

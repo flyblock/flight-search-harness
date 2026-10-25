@@ -5,12 +5,19 @@ description: Search outbound-and-return journeys to a selected destination using
 
 # Round-trip flight search
 
-Search outbound and return dates together. Compare complete dated return journeys, including accepted open-jaw alternatives. Preserve each direction's airports and distinguish return departure from actual return arrival.
+Goal: find the cheapest bookable return journey that fits the user's request (or their stated objective), and show the useful runners-up you found on the way, with dates, airports, flight numbers, price and key restrictions.
 
-Run `python -B <skill-directory>/scripts/resolve_harness.py`. Read its `workflow_ref` and [this journey's workflow](references/product-workflow.md). Keep the returned launcher, Request Schema, record-template and external runtime paths; use the same `--runs-root` for the whole Run. The returned quote, signal, challenge-query and airport-discovery templates show the public format without reading implementation files.
+1. Run `python -B <skill-directory>/scripts/resolve_harness.py`. Keep the returned paths. Read `workflow_ref` once; it is the full reference. You do not need the Request Schema or implementation files.
+2. Write a fresh Request from [the template](assets/request-template.json) and the user's words, then `start`. Do not open old Runs.
+   - `journey_shape: round_trip`; dates: `outbound_departure_window`, `return_departure_window` (or exact dates / `travel_windows` for disjoint options); stay: `minimum_stay_nights`, `maximum_stay_nights`.
+   - A city or region endpoint ("Frankfurt city", "Greater Bay Area") becomes an `origin`/`destination` region declaration (workflow §1), not an airport list.
+   - Origin rules govern outbound access and return egress; destination rules govern outbound egress and return access.
+3. Search and `record` each finding as you go (workflow §2). Read `clock` for each observation's `captured_at`.
+4. Explore (workflow §3): challenge the current best; discover airports beyond borders on both sides; try open-jaw (fly into one airport, home from another) and separate outbound/return tickets via `combine` when allowed; follow cheaper leads; cross-check sellers. Search both date windows, not just the first attractive pair.
+5. `deliver`, then answer as in workflow §6.
 
-Create a fresh Request and Run from the current user request, using [the request template](assets/request-template.json) where appropriate. Preserve city Anchors and the user's original words; airport-only template values require accepted airport endpoints. Read no unrelated old Runs or conclusions. The shared workflow defines the common fields and rules, including default ticket-cost comparison and optional full journey costs.
-
-Use the best known eligible candidate as a benchmark to challenge. Choose research from saved findings, external discovery and the user's objective; a first usable ticket is not by itself a reason to stop. Save each actual query together with its findings using inline `query` in `record`, or associate a previously registered `query_id`. Preserve partially checked and higher prices as well as useful complete Offers. Missing details do not justify dropping an observed price. Read a tool clock (or the portable `clock` command) while observing the source and reuse that timestamp when saving. Reference and time metadata problems must not discard useful facts; screenshots and page attachments are optional.
-
-Use `purpose: "challenge"` with a reason on competitive queries, and consult `research_feedback` after saving. Where the user permits flexible endpoints, discover reachable airports from external sources rather than treating the first airport list or an administrative border as the search boundary. Follow the shared workflow for `airport_discovery`. Adjust the method when a source cannot execute it. Present the current best and useful complete alternatives already found, including beaten baselines; do not research solely to fill ranks or present unverified signals as bookable runners-up. Include actual dates, airports, flight identities, prices and restrictions from the saved result, including `verification` and `required_disclosures`. Ticket eligibility, booking-page stage, connection protection and endpoint feasibility are separate facts. Record a reason when stopping; neither a stopped Run nor a ranked ticket establishes a global optimum.
+Round-trip specifics:
+- One seller's joint outbound-and-return price is one Offer covering all its flights; never split it into invented one-way prices.
+- Stay nights count from destination arrival date to return departure date (local). A return departure date says nothing about arrival time back home.
+- For recurring presence rules ("must be in the city on Mondays"), translate into concrete `presence_intervals` for this search horizon.
+- A cheap option that later violates a revised requirement stays saved and shows as an alternative with its violation.

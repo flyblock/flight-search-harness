@@ -23,6 +23,9 @@
       "gateway_discovery": {
         "side": "origin",
         "reason": "REPLACE_WITH_HOW_THE_SOURCE_INFORMS_THE_USER_ENDPOINT_SCOPE",
+        "reviewed_categories": [
+          "REPLACE_WITH_ONLY_ACTUALLY_REVIEWED_CATEGORY_NAMES"
+        ],
         "airports": [
           {
             "node": {
@@ -35,7 +38,13 @@
             "decision": "investigate",
             "reason": "REPLACE_WITH_AI_JUDGMENT_OF_PRICE_POTENTIAL_AND_ACCESS_PLAUSIBILITY",
             "access": {
-              "status": "unknown"
+              "status": "unknown",
+              "minutes": "REPLACE_WITH_OBSERVED_OR_ESTIMATED_MINUTES_NUMBER_OR_REMOVE_FIELD",
+              "cost": {
+                "amount": "REPLACE_WITH_OBSERVED_OR_ESTIMATED_ACCESS_TOTAL_NUMBER_OR_REMOVE_COST",
+                "currency": "REPLACE_WITH_ORIGINAL_CURRENCY_CODE"
+              },
+              "basis": "estimated"
             }
           }
         ]

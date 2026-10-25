@@ -26,7 +26,7 @@ The optional `--runs-root` selects the data location independently of the caller
 
 ## One interface
 
-All clients use the same JSON Request, query, observation and result structures. Commands read UTF-8 JSON files and return JSON on stdout; diagnostics go to stderr. There is no separate vendor or provider adapter contract.
+All clients use the same JSON Request, query, observation and result structures. Commands read UTF-8 JSON files and return compact JSON on stdout (`--verbose` or `deliver --view full` for complete records); diagnostics go to stderr. There is no separate vendor or provider adapter contract.
 
 ```text
 start → external discovery → challenge current best → record → compare and continue → deliver

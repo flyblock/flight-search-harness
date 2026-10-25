@@ -1,174 +1,133 @@
 # Search workflow
 
-## Runtime and responsibility
+You (the AI) search sources with your own browser, HTTP or API tools, judge what you see, and choose the next query. The harness is a ledger: it saves every finding, notices repeated queries, compares candidates under the user's Request, and ranks them. It never operates a browser and never discards an observed price.
 
-The AI researches providers, interprets user intent and source statements, and chooses the next query. Code saves observations, records actual query coverage, checks explicit requirements, and compares known candidates. A saved observation, an admitted Offer, an eligible candidate, and a stopped search are different facts.
-
-Use the shared CLI directly from the Plugin directory with `python -B -m flight_search_harness`, or use the portable launcher from any directory. The optional selected Skill's resolver returns absolute paths. The launcher form is:
+## Commands
 
 ```text
 python -B <launcher_ref> --runs-root <runs_root_ref> <command> ...
 ```
 
-Use Python 3.10 or later and install `requirements.txt` for the standard IANA timezone database. This dependency is timezone data, not a client SDK. Without the database, records still save, but checks requiring an unavailable timezone remain unknown. The suite manifest supplies an external `runtime_data_root`; put generated input files and captures there, and Runs beneath its `runs` directory. There are no provider credentials or source permissions encoded in product manifests. Each product manifest declares a journey shape and a `request_schema_ref` relative to the Plugin root, explicitly identified by `request_schema_base: plugin_root`.
-
-A Run stores requirements and revisions, queries, raw and normalized observations, explicit combinations, model assessments, and research status in `<runs_root>/<run_id>/product/session.json`. Comparison and delivery are derived from those same records. No second final-result store is authoritative.
-
-## Start from the actual request
-
-Create a JSON Request, optionally using a journey Skill's template, with `request_version: "7.0"`, `journey_shape`, the original `user_request`, and `intent`. All optional budget, FX, output, presence and search settings belong under `intent`. Use the shared Request Schema for field structure.
-
-- Default `ranking_basis` is `mandatory_air_ticket_total`. Select `complete_journey_cost` only when full journey expense is requested. Endpoint feasibility still matters under either scope.
-- `objective` is `price`, `stay_duration` (round trip), `travel_duration`, or `distance_per_currency`. The loop default is distance per base currency unit; the fixed-destination default is price.
-- `budget: {amount, currency}` is a hard limit. `price_target: {amount, currency}` is a preference. Both use the explicitly selected base currency.
-- The current structured traveler field is `adult_count`. A child or infant request must not be converted to adults; preserve the original requirement and identify that capability gap.
-- Do not invent query limits, duration limits, baggage requirements, airport concessions, or output caps. If supplied, `search_limits` supports `max_queries` and `max_elapsed_minutes`. `max_queries` counts logical query attempts recorded by the harness, not arbitrary browser, search, clock or other client tool calls. The caller must separately honor any user limit on external tool calls; one recorded query may involve several tool interactions.
-- Airport-only templates require accepted airport endpoints. Preserve a city, address or station through the Schema's full `origin`/`destination` declarations. Seed airports are a starting point for discovery, not a user-imposed border. For a flexible city or region endpoint, discover realistically reachable airports from external airport, route or ground-transport sources; national, state and municipal boundaries do not by themselves exclude them. Preserve explicit user airport or geographic restrictions. Save discoveries with their evidence and access judgment instead of changing the user's Anchor or silently broadening a hard restriction.
-- FX needs `from_currency`, `to_currency`, `rate` and an offset-aware `observed_at`. Attribute the observed rate with `source_name`, `source_url`, or both. A source name can replace an unavailable link; URL shape and length are not Request admission gates. Currency conversion uses a valid rate/time and at least one nonempty source attribution. A rate with no attribution remains unusable for comparison; do not invent or remember a rate to fill a gap.
-- Concrete `presence_intervals` require `start`, `end`, and `location_node_id`. Offset timestamps identify instants. Unmodeled semantic requirements use `additional_requirements: [{requirement_id, text}]` with later evidence-backed assessments.
-
-```text
-start --request <request.json> [--run-id <new-id>]
-```
-
-Use a fresh Run for independent searches. For an authorized continuation, use the identified Run. A change of requirements within that continuation uses `revise --run-id <id> --request <updated-request.json>`; it preserves findings and adds a requirement revision. Do not load unrelated history.
-
-## Query, save, compare, continue
-
-Choose the next query from saved findings, unresolved facts and actual query history. Record the provider, airports, date pair or date window, travelers, filters and market that were actually used. One wide planned search does not stand in for narrower searches subsequently executed. If the wide view is unsupported, retain that outcome and record the actual narrower queries separately.
-
-Use [the complete quote submission](../examples/record-quote.json) or [the incomplete price lead submission](../examples/record-signal.json). For competitive research, see [the challenge query](../examples/query-challenge.json) and [the airport discovery record](../examples/record-airport-discovery.json). The selected Skill's resolver returns absolute template references for all four examples. Replace every `REPLACE_WITH_...` value with the observed value and correct JSON type; remove optional fields that were not disclosed. These are templates, not observations. Adapt their movements and purchases to the actual one-way, round-trip or loop itinerary. Do not inspect internal module names to discover the submission format.
-
-A normal submission can contain the actual query, its observations and its outcome together:
-
-```json
-{
-  "query": {
-    "source": {"provider": "REPLACE_WITH_PROVIDER"},
-    "scope": {
-      "origin_airports": ["REPLACE_WITH_IATA"],
-      "destination_airports": ["REPLACE_WITH_IATA"],
-      "outbound_date": "REPLACE_WITH_YYYY-MM-DD",
-      "return_date": "REPLACE_WITH_YYYY-MM-DD",
-      "adult_count": 1,
-      "fare_conditions": "REPLACE_WITH_ACTUAL_FILTERS_AND_MARKET"
-    }
-  },
-  "observations": ["REPLACE_WITH_OBSERVATION_OBJECTS_FROM_AN_EXAMPLE"],
-  "query_result": {
-    "status": "completed",
-    "reason": "REPLACE_WITH_THE_ACTUAL_NARROW_QUERY_EXECUTED"
-  }
-}
-```
-
-```text
-record --run-id <id> --input <record.json>
-deliver --run-id <id>
-```
-
-`record` saves the observations and associates them with that query in one operation. Matching source and scope reuse the recorded query; resubmitting the same capture does not establish that research happened again. Put `retry_reason` in the submission for an actual repeat lookup or refresh. A query association error is returned without discarding its observations. The response includes the associated `query`, `query_errors` and `query_warnings`. An inline query without an explicit outcome has status `observed` and unknown `started_at`; registration time does not invent when the search began or whether its scope was completed. An unexpected discovery may still be saved without either `query` or `query_id`; `unlinked_observation_ids` in status and delivery shows which findings lack query association.
-
-For a planned lookup, use `query --run-id <id> --query <query.json>` first to check existing work and any explicit user search limits. A `query_ready` result supplies `query_id`; a `query_exists` result identifies an earlier attempt to inspect before repeating. Use `--retry-reason <reason>` for an intentional retry. Then submit the observations with this `query_id` instead of an inline `query`. Registering a query does not operate a browser. Logging facts after a lookup does not authorize exceeding the user's search limits. If already collected facts are submitted after a limit or stop, they remain saved with `query_warnings` and the query's persistent `registration_warnings`; use the pre-query command to enforce the limit before new work.
-
-Keep query scope stable and precise. Avoid transient URL tracking tokens in query identity. A source or booking URL may be retained when available, but it is not a prerequisite for saving or comparing the observed price. Save each useful observation promptly, including higher prices and partially checked prices from selected-itinerary pages. Do not wait for the cheapest option, a complete itinerary, or the end of the research session. Missing flight detail means a saved signal or incomplete Offer, not a reason to discard an observed price.
-
-`query_result.status` is `completed`, `no_result`, `unsupported`, or `failed`. Every result needs a reason describing actual coverage or failure. `no_result` also needs associated source evidence; technical failure does not mean no flights. A completed exact query does not establish that every date or seller has been searched. Query failure does not stop the Run: use the saved state to choose another useful date, route, combination or source.
-
-## Challenge the current best
-
-Once a usable candidate exists, treat it as a benchmark to improve, not an automatic stopping point. Choose plausible competitors using neighboring dates, alternative reachable airports, sellers, open-jaw journeys or separately priced combinations allowed by the user. The agent chooses directions; code compares recorded candidates under the same requirement revision and objective.
-
-Add `purpose: "challenge"` and a concrete `reason` to the normal query object. Optional `baseline_candidate_id` selects an existing eligible baseline; otherwise the runtime selects the current best. Use the same object with pre-query `query`, or inline in `record`. The runtime records the baseline reference and comparison context on the query. A purpose label alone does not establish that research happened: actual findings must be associated with the query. Results distinguish an improvement, no improvement, unresolved facts and an unavailable query method. Reused work or failed execution must not be described as a newly completed price challenge.
-
-A successful challenger becomes the current first-ranked candidate through ordinary comparison. Previous baselines remain in the same ledger and subsequent ranks while still eligible; newer snapshots of the same Seller Variant are not separate journey alternatives. No challenge-specific quote store, research credit or universal improvement percentage is needed.
-
-For an unlocked city or region endpoint, make external airport discovery part of choosing credible challengers. Use `purpose: "airport_discovery"` and record the actual source, geographic/search scope and reason. Preserve observed airport and transport facts in a signal's `gateway_discovery`; its `side`, airport `node`, `decision`, `reason` and `access` judgment follow the discovery example. `decision` is `investigate`, `defer` or `exclude`; access status is `unknown`, `plausible`, `verified` or `infeasible`. Those decisions are model judgments, not proof that ground travel or border entry has been verified. A recalled airport list or an `ai_proposed` record is not external discovery evidence.
-
-Screen price potential and realistic access before detailed investigation. Look beyond the initial airport list when the user's scope permits it, without a fixed airport count or country quota. Record why a direction merits investigation, is deferred or is excluded. Keep known access time and cost separate from airfare. Unknown access cost is not zero, and a lower ticket price alone does not prove a lower complete journey cost. A user focused only on airfare need not receive a compulsory door-to-door pricing task. Explicit airport restrictions and the random loop's accepted departure/return airport sets stay intact.
-
-Read `research_feedback` after recording and comparison. It exposes `current_best`, challenge results, airport-discovery progress, open opportunities, next actions and search gaps. Use those gaps to select useful work rather than stopping merely because one flight can be booked. A source failure ends that method's attempt, not the exploration objective. When stopping is appropriate under user limits or the value of remaining work, state the actual reason and remaining scope; saved results remain deliverable.
-
-## Observation and Offer fields
-
-The examples preserve raw JSON and show the complete nesting. Essential fields are:
-
-| Object | Fields and meaning |
+| Command | Use |
 |---|---|
-| Observation | `kind`, `source: {provider, seller?, page_url?}`, `captured_at`, `movements`, `offers`; `source_text` preserves the observed facts. Screenshots, page-text attachments and `capture_refs` are optional. |
-| Movement | `movement_id`, `mode`, `from_node`, `to_node`, `departure`, `arrival`; flight `flight_identity: {marketing_carrier, operating_carrier?, flight_numbers: [...]}`. `operator` preserves the displayed operating airline. |
-| Offer | `offer_id`, `movement_ids`, `price: {amount, currency}`, `price_scope: "party_total"`, `traveler_count`, seller, observed `booking_url` and restrictions. A joint round-trip total belongs to one Offer covering all its flights. |
-| Ticket details | Preserve source-disclosed `ticketing_structure`, `included_baggage` and `checked_bag_count`. Unknown baggage is not zero baggage. An optional `mandatory_baggage_cost` must be an observed amount, not an estimate invented to fill a field. |
-| Connection | On the following movement, `transfer_from_previous: {status, connection_protection}` describes that connection. `status` is `verified`, `infeasible` or `unknown`; protection is `carrier_protected`, `self_transfer` or `unknown`. Preserve the supporting text/capture. |
-| Verification stage | Offer `verification_stage` is `listing`, `selected_itinerary`, `fare_review`, `checkout` or `unknown`. Record the stage actually reached, not one inferred from complete fields or the seller's name. |
+| `clock` | UTC time for `captured_at`. No Run needed. |
+| `start --request <file> [--run-id <id>]` | New Run from a Request. |
+| `record --run-id <id> --input <file>` | Save a query with its observations and outcome (main command). |
+| `query --run-id <id> --query <file> [--retry-reason <text>]` | Optional pre-check before a lookup: finds an earlier identical query and enforces user search limits. |
+| `combine --run-id <id> --input <file>` | Propose separately bought saved Offers as one journey. |
+| `assess --run-id <id> --input <file>` | Judge a named `additional_requirement` for a candidate. |
+| `revise --run-id <id> --request <file>` | Change requirements (or add an FX rate). Findings and still-valid assessments carry over. |
+| `deliver --run-id <id> [--view ranked\|matrix\|full] [--limit <n>]` | Ranked result. |
+| `status`, `stop --reason <text>`, `resume` | Continuity. |
 
-Read a tool clock while collecting the source; do not estimate the time. The portable `clock` command needs no Run and returns `utc_now` in UTC:
+Inputs are UTF-8 JSON files; outputs are compact JSON on stdout (add `--verbose`, or `deliver --view full`, for complete records). Errors go to stderr. Use the same `--runs-root` for the whole Run. Keep generated files under the external `runtime_data_root` returned by the Skill resolver, never in the Plugin directory.
 
-```text
-python -B <launcher_ref> clock
-```
+## 1. Request
 
-A client clock or Python UTC clock is also usable. Retain the sampled timestamp with the observation and reuse it during normalization and saving. `received_at` is the runtime's separate save time. Reliable metadata times are normalized to UTC; flight schedules retain their airport-local clock and offset for local-date calculations. Missing, naive, conflicting or future capture times remain unknown or unreliable with `metadata_issues`; they do not discard useful flight facts. Never substitute save time for capture time or move a timestamp backward to pass validation. The runtime must not present an unreliable time as fresh verification. Provider quote time and validity remain independent source facts.
+Start from the Skill's request template. Required: `request_version: "7.0"`, `journey_shape`, the user's original words in `user_request`, and `intent`.
 
-References help reopen a source, but are not admission gates. Keep a full URL when it is available; do not shorten it to satisfy a length rule. Missing, malformed, truncated or expired links do not invalidate the observed flight and price. Normalized unusable links may be null, with the supplied value retained in raw data and a metadata notice. Source/ seller identity and reproducible flight dates, airports and numbers remain useful even when a session link no longer opens. No screenshot or page-archive step is mandatory. Amounts, currency, traveler count and movement chronology still require valid facts.
+| `intent` field | Meaning |
+|---|---|
+| `base_currency`, `adult_count` | Comparison currency; adults. Children/infants are a capability gap: say so, do not convert them to adults. |
+| `ranking_basis` | `mandatory_air_ticket_total` (default) or `complete_journey_cost` (only when the user asks for door-to-door cost). |
+| `objective` | `price` (default), `stay_duration`, `travel_duration`, `distance_per_currency` (loop default). |
+| `budget` / `price_target` | `{amount, currency}` hard limit / preference. |
+| `fx_rates` | `[{from_currency, to_currency, rate, observed_at, source_name and/or source_url}]`. Needed to compare foreign-currency prices. Never invent or recall a rate. |
+| `baggage_policy` | `{cabin_baggage, checked_bag_count, paid_baggage_allowed}` only if the user requires baggage. |
+| `overnight_allowed`, `self_transfer_policy`, `maximum_transfer_count`, `allowed_modes` | Only what the user said. |
+| `additional_requirements` | `[{requirement_id, text}]` for anything else; judge later with `assess`. |
+| `search_limits` | `{max_queries, max_elapsed_minutes}` only if the user set limits. |
 
-A single ticket is a ticketing arrangement, not proof of carrier-protected connections, airside eligibility or entry permission. Those connection facts require their own source evidence. Do not mark protection verified just because every flight has one airline or one price.
+Do not invent limits, baggage needs or airport restrictions. Journey-specific date and endpoint fields are in the Skill.
 
-Use `kind: "signal"` when a visible price lacks enough itinerary detail to be a payable Offer. The signal example retains `observed_price`, date `scope`, the page stage, missing facts and source text, with empty movements/offers. Save it even when a later quote is cheaper. For complete Offers, preserve original currency and party total; do not silently multiply per-person headlines or split a joint fare into invented leg prices. Membership and ordinary prices retain their conditions as distinct options.
-
-Incomplete and invalid records remain saved with issues; a valid sibling Offer can be evaluated independently. Source identity does not depend on a registry. Admission establishes usable facts, not eligibility, exhaustive coverage or booking verification. Only source-disclosed validity belongs in `source_valid_until` or Offer `expires_at`; no fixed quote lifetime is implied.
-
-## Combinations and judgments
-
-To compare a proposed set of purchases, save:
+**Endpoints.** If the user accepted specific airports, use `origin_airports` / `destination_airports`. If they named a city or region ("Frankfurt city", "Greater Bay Area"), declare the side as a region instead, so the harness treats your seed airports as a starting point, not a border:
 
 ```json
-{
-  "offer_refs": [
-    {"observation_id": "REPLACE_WITH_ID", "offer_id": "REPLACE_WITH_ID"},
-    {"observation_id": "REPLACE_WITH_OTHER_ID", "offer_id": "REPLACE_WITH_OTHER_ID"}
-  ],
-  "reason": "REPLACE_WITH_WHY_THESE_PURCHASES_FORM_A_USEFUL_JOURNEY"
+"origin": {
+  "region_id": "frankfurt", "label": "Frankfurt city and reachable airports",
+  "country_codes": ["DE"], "policy": "extended_region", "endpoint_policy": "anchor_required",
+  "anchor_nodes": [{"node_id": "frankfurt", "node_type": "city_destination", "location": "Frankfurt am Main",
+                    "country_or_region": "Germany", "country_code": "DE", "timezone": "Europe/Berlin"}],
+  "seed_gateway_nodes": [{"node_id": "FRA", "node_type": "airport", "location": "Frankfurt Airport",
+                          "country_or_region": "Germany", "country_code": "DE", "timezone": "Europe/Berlin"}]
 }
 ```
 
-Then call `combine --run-id <id> --input <combination.json>`. No purchase may appear twice. Code evaluates schedules, prices and supported explicit conditions; a proposed combination is not automatically feasible or protected. AI decides which combinations are worth investigating.
+`endpoint_policy`: `anchor_required` when the journey must start/end in that city (access is then disclosed as unverified until you record it); `any_admitted_gateway` when "any airport there" is fine. `policy`: `exact` (only the seeds), `city_region`, or `extended_region` (open discovery). `country_codes` describes the anchor; it is not a search boundary. Optional user ceilings: `max_access_time_minutes`, `max_egress_time_minutes`, `max_ground_cost`, `allowed_ground_modes`.
 
-For a named `additional_requirement`, use `assess --run-id <id> --input <assessment.json>` with `candidate_id`, current `request_revision`, `requirement_id`, `status` (`satisfied`, `violated`, or `unknown`), `reason`, and `evidence_refs` naming saved observation IDs. Conclusive assessments require source evidence. Assessments cannot override arithmetic or other code checks. After revision, judgments need to refer to the current requirement version.
+## 2. Search loop
 
-## Delivery and recovery
+Repeat: look at a source → read the clock → `record` → read `research_feedback` → pick the next query.
 
-```text
-deliver --run-id <id> [--view ranked|matrix|full] [--limit <n>]
-status --run-id <id>
-stop --run-id <id> --reason <actual-reason>
-resume --run-id <id>
+A normal `record` input (templates: `record_quote_template_ref`, `record_signal_template_ref`):
+
+```json
+{
+  "query": {"source": {"provider": "..."},
+            "scope": {"origin_airports": ["FRA"], "destination_airports": ["HKG"],
+                      "outbound_date": "2026-11-16", "return_date": "2026-11-30",
+                      "adult_count": 1, "fare_conditions": "economy, DE market"}},
+  "observations": [ ... ],
+  "query_result": {"status": "completed", "reason": "exact date pair searched"}
+}
 ```
 
-Delivery is available while research is active or stopped. Ranked `entries` meet the supported ticket and declared-constraint checks; `eligibility_scope` does not certify every part of a complete journey. `alternatives` retain violated or unknown checks; `signals` preserve incomplete leads. A limit affects presentation, not saved records. The full view includes the source session; matrix view groups observed candidates by date and does not invent unsearched cells or imply exhaustive coverage.
+- Record what you actually searched: provider, airports, dates or date window, travelers, filters, market. One wide search does not stand in for narrower ones you ran later.
+- `query_result.status`: `completed`, `no_result` (needs the source text showing it), `unsupported`, `failed`. A failure means that method failed, not that no flights exist; try another source or approach.
+- Save every useful price immediately, including higher prices and partly checked itineraries. Do not wait for the cheapest or a complete itinerary.
+- Same source + scope again is reported as a duplicate. For a deliberate refresh add `retry_reason`.
+- An observation found without a planned query may be recorded without `query`.
 
-Present the current best together with the useful complete alternatives already found, normally as a compact comparison table. Previous beaten baselines are natural alternatives, not extra research tasks. Show however many useful candidates exist; do not search merely to fill second or third place. Keep incomplete price leads separate from bookable or reviewed candidates, and never count successive snapshots as different journeys.
+**Quote vs signal.** `kind: "quote"` has `movements` (each flight with airports, offset-aware departure/arrival, `flight_identity`) and `offers` (price as `party_total` in the original currency, seller, `verification_stage`). `kind: "signal"` keeps a visible price that lacks itinerary detail (`observed_price`, `scope`, `missing_facts`, empty movements/offers). A signal is a lead, never a bookable runner-up.
 
-Use the returned movement dates, airports, carriers/flight numbers, price scope, currency, seller/source, observation time and restrictions in the answer. Preserve `verification` and `required_disclosures`: report the actual page stage, unresolved connections and unverified endpoint access or egress. A ticket can rank while its city connection remains unverified; that does not require pricing a complete door-to-door journey. An expired provider validity period requires rechecking and keeps overall verification partial even when other facts are complete. Do not turn `single_ticket` into a claim of protected transit, omit an unresolved warning, or claim a booking-ready result from a calendar signal. Deliver from saved findings rather than browser memory.
+**Time.** Run `clock` (or any tool clock) while the page is on screen and put that UTC time in `captured_at` for that observation. Do not reuse one timestamp for a whole batch and never estimate. A bad time is flagged, not rejected.
 
-Stopping records why exploration ended; it does not declare a global optimum. `resume` marks the identified Run active and returns its research state; it neither launches the browser nor reruns queries. Inspect `deliver` and query history, then choose the next useful action.
+**Links and screenshots** are optional. Keep a full URL if you have one; a missing, long or expired link never invalidates a price.
 
-For an explicitly requested legacy continuation:
+## 3. Explore beyond the obvious (this is the point)
 
-```text
-import-legacy --source-run <identified-run-directory> --request <current-request.json> [--run-id <new-id>]
-```
+A first bookable fare is a baseline to beat, not a reason to stop. After every `record`, read `research_feedback.next_actions`; they name concrete gaps.
 
-Import preserves source observations and original files. It does not adopt prior rankings, completion labels or audit conclusions as evidence. An unsupported legacy representation must remain a stated import gap rather than invented data.
+- **Challenge the current best.** Add `"purpose": "challenge", "reason": "..."` to the query (template: `query_challenge_template_ref`). Try neighbouring dates, other airports, other sellers, other ticket structures. A winner becomes rank 1; the beaten fare stays as a runner-up automatically. Do not search only to fill ranks.
+- **Look past borders.** For a city or region side, discover airports from external sources, not memory: core city, nearby cities, surface-connected airports, cross-border airports (Frankfurt → Luxembourg, Brussels, Zurich, Strasbourg; New York → Philadelphia; Hong Kong ↔ Shenzhen, Guangzhou, Macau), secondary/low-cost airports, and hubs reachable by a cheap positioning flight or train. A border alone is never a reason to exclude. Record them with `"purpose": "airport_discovery"` (template: `record_airport_discovery_template_ref`). In `gateway_discovery` list the `reviewed_categories` you actually checked (`core_city`, `nearby_city`, `surface_connected`, `cross_border`, `secondary_or_low_cost`, `hub_positioning`); per airport give a `decision` (`investigate`/`defer`/`exclude`) with a reason and `access: {status: unknown/plausible/verified/infeasible, minutes?, cost?: {amount, currency}, basis?: observed/estimated}`. The feedback then names unreviewed categories and, per airport, the fare that would beat the current best after access cost ("Via LUX: fares < …"). Unknown access cost is unknown, not zero.
+- **Try other ticket structures** the user allows: separate tickets via a hub (`combine`), open-jaw (different airports per direction), positioning flights. Mark such a challenge query with `scope.ticketing_structure`: `separate_purchases`, `open_jaw` or `hub_positioning`. A joint ticket is one indivisible Offer.
+- **Follow cheaper leads.** A signal cheaper than the current best deserves a follow-up query that turns it into a quote or rules it out.
+- **Cross-check sources.** If every quote came from one seller, check another.
+
+Stop when user limits are reached or remaining directions are unlikely to pay off; `stop --reason` with what was left unsearched. Stopping never claims a global optimum.
+
+## 4. Observation fields
+
+| Object | Fields |
+|---|---|
+| Observation | `kind`, `source: {provider, seller?, page_url?}`, `captured_at`, `source_text` (the facts you saw), `movements`, `offers`. |
+| Movement | `movement_id`, `mode`, `from_node`, `to_node`, `departure`, `arrival` (offset timestamps, airport-local), `flight_identity: {marketing_carrier, operating_carrier?, flight_numbers}`, `operator`. |
+| Connection | On the next movement: `transfer_from_previous: {status: verified/infeasible/unknown, connection_protection: carrier_protected/self_transfer/unknown}`. One ticket is not proof of protection. |
+| Offer | `offer_id`, `movement_ids`, `price: {amount, currency}`, `price_scope: "party_total"`, `traveler_count`, `seller`, `verification_stage` (`listing`, `selected_itinerary`, `fare_review`, `checkout`, `unknown`: the stage you actually reached), `ticketing_structure`, `included_baggage`, `checked_bag_count`, `restrictions`, optional observed `mandatory_baggage_cost`, `booking_url`, `expires_at`. |
+
+Never multiply a per-person headline yourself or split a joint fare into invented leg prices. Unknown baggage is not zero baggage. Incomplete records are saved with issues; a valid sibling Offer is still evaluated.
+
+## 5. Combine, assess, revise
+
+- `combine`: `{"offer_refs": [{"observation_id", "offer_id"}, ...], "reason": "..."}`. The code checks schedule, price and stated conditions; a combination is not automatically feasible or protected.
+- `assess`: `{candidate_id, request_revision (current), requirement_id, status: satisfied/violated/unknown, reason, evidence_refs: [observation ids]}`. Conclusive judgments need saved evidence. A judgment stays valid across later revisions while that requirement's text is unchanged.
+- `revise`: submit the full updated Request. Findings are kept; earlier challenges keep their historical result.
+
+## 6. Deliver and answer
+
+`deliver` returns `entries` (ranked, meeting all checked requirements), `alternatives` (with failed or unknown checks listed), `signals` (leads) and the latest feedback. `--view matrix` groups by date without inventing unsearched cells.
+
+Answer from `deliver`, not from browser memory:
+
+- A compact table of the best and the useful runners-up already found: rank, total in base currency (and original price), dates, airports, flight numbers/carriers, seller, verification stage, baggage/restrictions.
+- Each candidate's `required_disclosures` (verification stage, unresolved connections, unverified city access). An eligible ticket is not a certified door-to-door journey.
+- Leads separately, labelled as unverified.
+- What was searched and what was left, without claiming the global cheapest.
 
 ## Distribution
 
-The current Plugin contains the shared runtime, one Request Schema, three journey declarations, three Skills and maintained guidance. Product manifests do not load adapters. Package construction checks listed file existence, safe paths, Python syntax and copied bytes; it is not evidence that a travel result is correct.
-
 ```text
-python -B scripts/package_flight_search_harness.py validate
-python -B scripts/package_flight_search_harness.py archive
-python -B scripts/package_flight_search_harness.py install
+python -B scripts/package_flight_search_harness.py validate|archive|install
 ```
 
-Archive and install default to the external runtime data root's `releases` directory, using the release name and version. An existing destination is never overwritten; choose a new explicit `--destination` when needed. CLI results are JSON on stdout and diagnostics go to stderr.
+Archive and install write to the external runtime data root's `releases` directory and never overwrite. Validation checks files and syntax, not travel correctness.

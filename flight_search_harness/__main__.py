@@ -67,18 +67,22 @@ def _feedback(feedback, entries, *, delivered=False):
         best = {"candidate_id": best["candidate_id"]}
         if not delivered:
             best.update(ranking_cost=_money(entry.get("ranking_cost")), itinerary=_itinerary(entry))
-    challenges = []
+    challenges, counts = [], {}
     for c in feedback["challenges"]:
-        r, baseline = c["result"], c.get("baseline") or {}
-        line = f"{c['query_id']} r{c['request_revision']} {r['status']}: {r['reason']}"
-        if baseline:
-            line += f" baseline={baseline['candidate_id']}"
-        if r.get("challenger"):
-            line += f" challenger={r['challenger']['candidate_id']}"
+        r = c["result"]
+        counts[r["status"]] = counts.get(r["status"], 0) + 1
+        line = f"{c['query_id']} r{c['request_revision']} {r['status']}"
+        if r["status"] in {"pending", "unresolved", "technical_unavailable"}:
+            reason = "no comparable candidate yet" if r["status"] == "unresolved" and not r.get("candidate_ids") else r["reason"]
+            line += ": " + reason[:160] + ("…" if len(reason) > 160 else "")
+        if c.get("baseline_selection"):
+            line += f" ({c['baseline_selection']})"
         challenges.append(line)
-    return {"current_best": best, "challenges": challenges,
-            "search_gaps": [g for g in feedback["search_gaps"] if g["kind"] != "challenge_unresolved"],
-            "next_actions": feedback["next_actions"], "completion_scope": feedback["completion_scope"]}
+    gaps = [{k: v for k, v in g.items() if k in {"kind", "side", "node_id", "query_id", "status"}}
+            for g in feedback["search_gaps"] if g["kind"] != "challenge_unresolved"]
+    return {"current_best": best, "challenge_counts": counts, "challenges": challenges[-3:],
+            "search_gap_count": len(gaps), "search_gaps": gaps[:6],
+            "next_actions": list(dict.fromkeys(feedback["next_actions"]))[:6], "completion_scope": feedback["completion_scope"]}
 
 
 def compact_response(value, state):

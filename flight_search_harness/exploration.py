@@ -6,7 +6,84 @@ import copy
 from decimal import Decimal
 from typing import Any
 
-from .comparison import comparison_key, discovered_gateways, evaluate_session
+from .comparison import comparison_key, discovered_gateways, evaluate_session, _convert, _node, _number
+
+
+REVIEW_CATEGORIES = ("core_city", "nearby_city", "surface_connected", "cross_border", "secondary_or_low_cost", "hub_positioning")
+
+
+def _scope(entry: dict, observations: dict) -> dict:
+    counts = {o.get("traveler_count") for ref in entry["offer_refs"] for o in observations[ref["observation_id"]]["offers"] if o["offer_id"] == ref["offer_id"]}
+    origins, destinations = {_node(entry.get("origin_airport"))}, {_node(entry.get("destination_airport"))}
+    if entry.get("return_departure"):
+        origins.add(_node(entry.get("return_airport")))
+        destinations.update(_node(m.get("from_node")) for m in entry["movements"] if m.get("departure") == entry["return_departure"])
+    return {"origin_airports": sorted(origins), "destination_airports": sorted(destinations),
+            "outbound_date": entry.get("outbound_date"), "return_date": entry.get("return_date"),
+            "adult_count": next(iter(counts)) if len(counts) == 1 else None}
+
+
+def _cheaper_leads(projection: dict, observations: dict, intent: dict, shape: str, best: Decimal) -> list[str]:
+    """A price lead is a reason to inspect facts, never an eligible fare."""
+    candidates = [*projection["entries"], *projection["alternatives"], *projection["superseded"]]
+    complete = [(e["candidate_id"], _scope(e, observations), max(observations[r["observation_id"]]["received_at"] for r in e["offer_refs"]))
+                for e in candidates if e.get("origin_airport") and e.get("destination_airport")
+                and (shape != "round_trip" or e.get("return_date"))]
+    leads = []
+    for s in projection["signals"]:
+        raw = s["raw"] if isinstance(s["raw"], dict) else {}
+        scope = raw.get("scope") if isinstance(raw.get("scope"), dict) else {}
+        prices = [raw.get("observed_price"), *[o.get("price") for o in observations[s["observation_id"]]["offers"]]]
+        leads.extend((s["observation_id"], p, scope, observations[s["observation_id"]]["received_at"]) for p in prices if isinstance(p, dict))
+    for e in projection["alternatives"]:
+        values = [_convert(p.get("price"), intent["base_currency"], intent) for p in e["prices"]]
+        if values and all(v is not None for v in values):
+            leads.append((e["candidate_id"], e.get("ranking_cost") or {"amount": str(sum(values)), "currency": intent["base_currency"]},
+                          _scope(e, observations), max(observations[r["observation_id"]]["received_at"] for r in e["offer_refs"])))
+        else:
+            leads.extend((e["candidate_id"], p["price"], _scope(e, observations), max(observations[r["observation_id"]]["received_at"] for r in e["offer_refs"]))
+                         for p, v in zip(e["prices"], values) if v is None)
+    actions, unconverted = [], []
+    for identifier, price, scope, recorded in leads:
+        scope = {k: sorted(v) if isinstance(v, list) and all(isinstance(x, str) for x in v) else v for k, v in scope.items()}
+        keys = [k for k in ("origin_airports", "destination_airports", "outbound_date", "return_date", "adult_count") if scope.get(k) is not None]
+        required = ("origin_airports", "destination_airports", "outbound_date", "return_date") if shape == "round_trip" else ("origin_airports", "destination_airports", "outbound_date")
+        covered = all(k in keys for k in required) and any(
+            other != identifier and instant > recorded and all(scope[k] == actual.get(k) for k in keys) for other, actual, instant in complete)
+        if covered:
+            continue
+        value = _convert(price, intent["base_currency"], intent)
+        if value is not None and value < best:
+            actions.append((value, f"Follow lead {identifier}: observed {value:.2f} {intent['base_currency']} < best {best:.2f}; verify total/scope."))
+        elif value is None and _number(price.get("amount")) is not None and 0 <= _number(price["amount"]) < best and isinstance(price.get("currency"), str):
+            unconverted.append(f"Lead {identifier}: FX to {intent['base_currency']} unknown; cheapness unjudged.")
+    return list(dict.fromkeys(line for _, line in sorted(actions))) + list(dict.fromkeys(unconverted))[:1]
+
+
+def _structure_hint(state: dict, projection: dict, request: dict) -> list[str]:
+    if not projection["entries"] or len(projection["entries"][0]["offer_refs"]) != 1:
+        return []
+    intent, shape = request["intent"], request["journey_shape"]
+    tried = {q["query"]["scope"].get("ticketing_structure") for q in state["queries"] if q.get("challenge")
+             and (q["observation_ids"] or q["status"] in {"completed", "no_result", "failed", "unsupported"})
+             and isinstance(q["query"]["scope"].get("ticketing_structure"), str)}
+    for e in [*projection["entries"], *projection["alternatives"], *projection["superseded"]]:
+        if len(e["offer_refs"]) > 1:
+            tried.add("separate_purchases")
+            if len([m for m in e["movements"] if m.get("mode") == "flight"]) > (2 if shape == "round_trip" else 1):
+                tried.add("hub_positioning")
+        if shape == "round_trip" and e.get("return_departure") and (e.get("origin_airport") != e.get("return_airport") or any(
+                m.get("departure") == e.get("return_departure") and _node(m.get("from_node")) != _node(e.get("destination_airport")) for m in e["movements"])):
+            tried.add("open_jaw")
+    permitted = []
+    if intent.get("self_transfer_policy", "allow") != "never":
+        permitted.append("separate_purchases")
+        if intent.get("maximum_transfer_count") != 0 and not intent.get("airport_transit", {}).get("airside_only"):
+            permitted.append("hub_positioning")
+    if shape == "round_trip" and any(side in _flexible_sides(request) or len(intent.get(side + "_airports", intent.get(side, {}).get("seed_gateway_nodes", []))) > 1 for side in ("origin", "destination")):
+        permitted.append("open_jaw")
+    missing = [s for s in permitted if s not in tried]
+    return ["Try permitted untried structures: " + ", ".join(missing) + "."] if missing else []
 
 
 def _score(entry: dict[str, Any]) -> list[str]:
@@ -126,7 +203,7 @@ def _flexible_sides(request: dict[str, Any]) -> list[str]:
     return [side for side in ("origin", "destination")
             if not intent.get(side + "_airports")
             and intent.get(side, {}).get("policy") != "exact"
-            and any(n.get("node_type") in {"city_destination", "address", "station"}
+            and any(n.get("node_type") != "airport"
                     for n in intent.get(side, {}).get("anchor_nodes", []))]
 
 
@@ -156,46 +233,45 @@ def research_feedback(state: dict[str, Any], projection: dict[str, Any] | None =
     nodes = discovered_gateways(state)
     observations = {o["observation_id"]: o for o in state["observations"]}
     required = _flexible_sides(request)
-    discovery_queries = [q for q in state["queries"] if q["query"].get("purpose") == "airport_discovery" and _same_endpoints(state, q, request)]
+    queries = {q["query_id"]: q for q in state["queries"]}
     evidenced_sides: set[str] = set()
-    for query in discovery_queries:
-        if query["status"] != "completed":
+    reviewed = {side: set() for side in required}
+    for observation in observations.values():
+        raw = observation.get("raw")
+        raw = raw if isinstance(raw, dict) else {}
+        discovery = raw.get("gateway_discovery")
+        query = queries.get(observation.get("query_id"), {})
+        if (observation["admission"]["status"] not in {"signal", "admitted"} or raw.get("evidence_status") == "ai_proposed"
+                or query.get("status") in {"failed", "unsupported"} or not _same_endpoints(state, observation, request)
+                or not isinstance(discovery, dict) or not isinstance(discovery.get("side"), str) or discovery["side"] not in reviewed):
             continue
-        for identifier in query["observation_ids"]:
-            observation = observations.get(identifier, {})
-            raw = observation.get("raw", {})
-            raw = raw if isinstance(raw, dict) else {}
-            discovery = raw.get("gateway_discovery")
-            if (observation.get("admission", {}).get("status") == "signal"
-                    and observation.get("source", {}).get("provider")
-                    and raw.get("evidence_status") != "ai_proposed"
-                    and isinstance(discovery, dict) and isinstance(discovery.get("airports"), list)
-                    and isinstance(discovery.get("reason"), str) and discovery["reason"].strip()
-                    and isinstance(discovery.get("side"), str) and discovery["side"] in {"origin", "destination"}):
-                evidenced_sides.add(discovery.get("side"))
+        side = discovery["side"]
+        if (query.get("status") == "completed" and query["query"].get("purpose") == "airport_discovery"
+                and _same_endpoints(state, query, request) and isinstance(discovery.get("airports"), list)
+                and isinstance(discovery.get("reason"), str) and discovery["reason"].strip()):
+            evidenced_sides.add(side)
+        categories = discovery.get("reviewed_categories", [])
+        if isinstance(categories, list):
+            reviewed[side].update(c for c in categories if isinstance(c, str) and c in REVIEW_CATEGORIES)
     missing_sides = [side for side in required if side not in evidenced_sides]
-    opportunities = []
+    opportunities, gateway_actions = [], []
     for node in nodes:
-        if not node.get("eligible_for_expansion") or node.get("decision") != "investigate":
+        if not node.get("eligible_for_expansion") or not (node.get("decision") == "investigate" or node.get("access", {}).get("status") in {"plausible", "verified"}):
             continue
         side, identifier = node["side"], node["node"]["node_id"]
-        related = []
-        for query in state["queries"]:
-            if not _same_endpoints(state, query, request) or query["query"].get("purpose") == "airport_discovery":
-                continue
-            scope = query["query"]["scope"]
-            values = scope.get(side + "_airports", scope.get("origins" if side == "origin" else "destinations", []))
-            if isinstance(values, list) and identifier in values:
-                related.append(query)
-        observed = any(q["status"] in {"completed", "no_result"} and any(
-            observations.get(i, {}).get("admission", {}).get("status") in {"admitted", "signal"}
-            for i in q["observation_ids"]) for q in related)
-        access_unknown = node.get("access", {}).get("status") == "unknown"
-        if not observed or access_unknown:
-            opportunities.append({"side": side, "node_id": identifier,
-                                  "observation_id": node["observation_id"], "reason": node["reason"],
-                                  "access": copy.deepcopy(node.get("access")),
-                                  "status": "access_unverified" if observed and access_unknown else "method_unavailable" if related and all(q["status"] in {"failed", "unsupported"} for q in related) else "unsearched"})
+        if any(identifier in _scope(e, observations)[side + "_airports"] for e in entries):
+            continue
+        opportunities.append({"side": side, "node_id": identifier, "observation_id": node["observation_id"],
+                              "reason": node["reason"], "access": copy.deepcopy(node["access"]), "status": "no_comparable_candidate"})
+        if best and request["intent"]["ranking_basis"] == "mandatory_air_ticket_total":
+            access = node["access"]
+            cost = _convert(access.get("cost"), request["intent"]["base_currency"], request["intent"])
+            if cost is None:
+                gateway_actions.append((True, f"Via {identifier}: access cost/FX unknown; never assume zero."))
+            else:
+                basis = access.get("basis") if access.get("basis") in ("observed", "estimated") else "basis unspecified"
+                cutoff = _number(best["ranking_cost"]["unrounded_amount"]) - cost
+                gateway_actions.append((False, f"Via {identifier}: fares < {cutoff:.2f} {request['intent']['base_currency']} (best ticket minus {basis} access {cost:.2f}; price screen only)."))
     challenges = [{"query_id": q["query_id"], **copy.deepcopy(q["challenge"])}
                   for q in state["queries"] if q.get("challenge")]
     def comparison_context(value):
@@ -205,25 +281,39 @@ def research_feedback(state: dict[str, Any], projection: dict[str, Any] | None =
     gaps, actions = [], []
     if not best:
         actions.append("Find and record a usable dated journey to establish a comparison baseline.")
+    else:
+        actions.extend(_cheaper_leads(projection, observations, request["intent"], request["journey_shape"], _number(best["ranking_cost"]["unrounded_amount"])))
+        if not current_challenges:
+            actions.append("Challenge the current best: record a purpose=challenge query (other dates, airports, sellers or ticket structures).")
+    review_lines = []
+    for side in required:
+        missing = [c for c in REVIEW_CATEGORIES if c not in reviewed[side] and (c != "hub_positioning" or request["intent"].get("self_transfer_policy") != "never")]
+        if side in missing_sides:
+            actions.append(f"Discover reachable {side} airports from external sources ({', '.join(missing)}); borders are not limits.")
+        elif missing:
+            review_lines.append(f"Review {side} categories: " + ", ".join(missing) + ".")
+    actions.extend(line for _, line in sorted(gateway_actions))
+    actions.extend(review_lines)
+    actions.extend(_structure_hint(state, projection, request))
+    sources = {(str(o["source"].get("provider", "")).strip().casefold(), str(p.get("seller", "")).strip().casefold())
+               for o in observations.values() for p in o["offers"] if p["admission"]["status"] == "admitted"}
+    if len(sources) == 1:
+        actions.append("Cross-check another source; all complete offers use one source.")
     for side in missing_sides:
         gaps.append({"kind": "airport_discovery", "side": side, "reason": "External discovery of reachable gateways has not been evidenced for this request version."})
-        actions.append(f"Discover reachable {side} airports from external airport, route or transport information; do not infer an administrative boundary from the initial seeds.")
     if best and not current_challenges:
         gaps.append({"kind": "challenger", "reason": "No baseline-linked challenge has been recorded."})
-        actions.append("Select a promising alternative date, reachable airport, seller or ticket combination and register why it could improve the current baseline.")
     for challenge in current_challenges:
         if challenge["result"]["status"] in {"pending", "unresolved", "technical_unavailable"}:
             gaps.append({"kind": "challenge_unresolved", "query_id": challenge["query_id"], "reason": challenge["result"]["reason"]})
     for opportunity in opportunities:
         gaps.append({"kind": "gateway_opportunity", **opportunity})
-    if opportunities:
-        actions.append("Price the promising discovered gateways, or record an evidence-based deferral/exclusion; unknown access costs are not zero.")
     if best and current_challenges and not actions:
         actions.append("Assess whether another useful direction can improve the current best; retain and present earlier eligible candidates. Stop only with the actual remaining scope explained.")
     return {
         "current_best": best, "challenges": challenges,
         "airport_discovery": {"required_sides": required, "evidenced_sides": sorted(x for x in evidenced_sides if isinstance(x, str)),
-                              "missing_sides": missing_sides, "gateways": nodes},
-        "open_opportunities": opportunities, "search_gaps": gaps, "next_actions": actions,
+                              "missing_sides": missing_sides, "reviewed_categories": {s: sorted(v) for s, v in reviewed.items()}, "gateways": nodes},
+        "open_opportunities": opportunities, "search_gaps": gaps, "next_actions": list(dict.fromkeys(actions)),
         "completion_scope": "open_questions_remain" if gaps else "bounded_observations_only",
     }
