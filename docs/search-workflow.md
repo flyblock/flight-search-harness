@@ -121,7 +121,7 @@ Never multiply a per-person headline yourself or split a joint fare into invente
 
 ## 6. Deliver and answer
 
-`deliver` returns `entries` (ranked, meeting all checked requirements), `alternatives` (with failed or unknown checks listed), `signals` (leads) and the latest feedback. `--view matrix` groups by date without inventing unsearched cells.
+`deliver` returns `entries` (ranked, meeting all checked requirements), `alternatives` (with failed or unknown checks listed), `signals` (leads) and the latest feedback. Long lists are trimmed to the most useful 10 (components by km per currency for loops, newest leads first) with `not_shown` counts; `--view full` returns everything. `--view matrix` groups by date without inventing unsearched cells. Parallel `record` calls on one Run queue for up to 10 seconds instead of failing.
 
 Answer from `deliver`, not from browser memory:
 

@@ -12,6 +12,7 @@ import json
 import os
 import re
 import tempfile
+import time
 import uuid
 from contextlib import contextmanager
 from datetime import datetime, timezone
@@ -24,6 +25,7 @@ from .search_request import normalize_request
 
 
 SESSION_VERSION = "7.0"
+LOCK_WAIT_SECONDS = 10
 RUN_ID = re.compile(r"[a-z0-9][a-z0-9-]{0,95}\Z")
 
 
@@ -87,15 +89,21 @@ class ResearchStore:
                 stream.write(b"0")
                 stream.flush()
             stream.seek(0)
-            try:
-                if os.name == "nt":
-                    import msvcrt
-                    msvcrt.locking(stream.fileno(), msvcrt.LK_NBLCK, 1)
-                else:
-                    import fcntl
-                    fcntl.flock(stream.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-            except OSError as exc:
-                raise ValueError("Run is being written; retry the same operation") from exc
+            # Callers often record from parallel workers; queue briefly instead of failing.
+            deadline = time.monotonic() + LOCK_WAIT_SECONDS
+            while True:
+                try:
+                    if os.name == "nt":
+                        import msvcrt
+                        msvcrt.locking(stream.fileno(), msvcrt.LK_NBLCK, 1)
+                    else:
+                        import fcntl
+                        fcntl.flock(stream.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    break
+                except OSError as exc:
+                    if time.monotonic() >= deadline:
+                        raise ValueError("Run is being written; retry the same operation") from exc
+                    time.sleep(0.05)
             try:
                 yield
             finally:

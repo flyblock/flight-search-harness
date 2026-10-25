@@ -8,6 +8,9 @@ from .research import ResearchStore, read_json, now
 from .suite_layout import SuiteLayout
 
 
+COMPACT_LIST = 10
+
+
 def _money(value):
     return {k: value[k] for k in ("amount", "currency")} if value else None
 
@@ -60,6 +63,8 @@ def _candidate(entry, observations):
     if entry["status"] == "partial_component":
         result.pop("ranking_cost")
         result["component_cost"] = _money(entry["component_cost"])
+        if entry.get("distance_km") is not None:
+            result["distance_km"] = entry["distance_km"]
         result["dates"] = {"departure_date": entry["movements"][0]["departure"][:10] if entry["movements"] else None, "arrival_date": entry["final_arrival"][:10] if entry.get("final_arrival") else None}
     if checks:
         result["requirements"] = checks
@@ -141,6 +146,24 @@ def compact_response(value, state):
                 signal["issues"] = s["admission"]["issues"]
             compact["signals"].append(signal)
         compact["superseded_count"] = len(result["superseded"])
+        # Large Runs (thousands of legs/leads) must not flood the caller's context:
+        # keep the most useful few here; `--view full` still returns everything.
+        if compact["objective"] == "distance_per_currency":
+            def usefulness(e):
+                cost = float((e.get("component_cost") or {}).get("amount") or 0)
+                return -(float(e.get("distance_km") or 0) / cost) if cost > 0 else 0.0
+            compact["components"].sort(key=usefulness)
+        hidden = {}
+        for key, keep in (("alternatives", COMPACT_LIST), ("components", COMPACT_LIST), ("signals", COMPACT_LIST)):
+            items = compact[key] if key != "signals" else compact[key][::-1]
+            if len(items) > keep:
+                hidden[key] = len(items) - keep
+            compact[key] = items[:keep]
+        if len(compact.get("unlinked_observation_ids", [])) > COMPACT_LIST:
+            hidden["unlinked_observation_ids"] = len(compact["unlinked_observation_ids"]) - COMPACT_LIST
+            compact["unlinked_observation_ids"] = compact["unlinked_observation_ids"][:COMPACT_LIST]
+        if hidden:
+            compact["not_shown"] = {**hidden, "how": "deliver --view full"}
         value = {"kind": value["kind"], "result": compact}
     else:
         compact = {k: v for k, v in value.items() if k in {"kind", "run_id", "request_revision", "research", "observation_count", "query_count", "candidate_id", "repeat_requires_reason", "saved", "duplicates", "query_errors", "query_warnings", "unlinked_observation_ids", "source_run", "recording"} and v not in (None, [], {})}
@@ -151,7 +174,9 @@ def compact_response(value, state):
         if value.get("assessment"):
             compact["assessment"] = {k: value["assessment"][k] for k in ("candidate_id", "requirement_id", "status", "request_revision")}
         if "queries" in value:
-            compact["queries"] = [{"query_id": q["query_id"], "status": q["status"], **q["query"]} for q in value["queries"]]
+            compact["queries"] = [{"query_id": q["query_id"], "status": q["status"], **q["query"]} for q in value["queries"][-COMPACT_LIST:]]
+            if len(value["queries"]) > COMPACT_LIST:
+                compact["queries_not_shown"] = len(value["queries"]) - COMPACT_LIST
         if "recording" in value:
             recordings = value["recording"] if isinstance(value["recording"], list) else [value["recording"]]
             compact["recording"] = [{k: v for k, v in r.items() if k in {"saved", "duplicates", "admissions", "query_errors", "query_warnings"} and v} for r in recordings]
