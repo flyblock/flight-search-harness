@@ -1,7 +1,7 @@
 {
   "schema_version": "1.0.0",
   "product_id": "one_way",
-  "version": "3.4.0",
+  "version": "3.4.1",
   "journey_shape": "one_way",
   "request_schema_base": "plugin_root",
   "request_schema_ref": "flight_search_harness/schemas/search-request.schema.json",

@@ -24,6 +24,17 @@ Without timezone data, source records can still be saved; checks that need an un
 
 The optional `--runs-root` selects the data location independently of the caller's client or platform. By default the runtime resolves the configurable external `runtime_data_root` in [the suite manifest](FLIGHT-SEARCH-HARNESS-MANIFEST.json) and uses its `runs` child. Keep generated Requests, captures and results outside the source directory.
 
+## Use with any AI client
+
+The Skills are plain Markdown and the runtime is a plain CLI, so any AI client works if it can (1) run shell commands with Python 3.10+, (2) read web pages or call travel APIs, and (3) read and write local files. Clients that load Skills (for example via `skills/<journey>/SKILL.md`) pick the right one automatically. For any other client, start the conversation with:
+
+```text
+Read <plugin-directory>/skills/low-cost-round-trip-flight-search/SKILL.md and follow it for my request:
+<the user's travel request>
+```
+
+Use `low-cost-one-way-travel-flight-search` or `low-cost-random-loop-flight-search` for the other journey shapes. Nothing in the runtime depends on a particular model, client, browser or booking site.
+
 ## One interface
 
 All clients use the same JSON Request, query, observation and result structures. Commands read UTF-8 JSON files and return compact JSON on stdout (`--verbose` or `deliver --view full` for complete records); diagnostics go to stderr. There is no separate vendor or provider adapter contract.
