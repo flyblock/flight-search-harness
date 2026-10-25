@@ -34,7 +34,7 @@ Start from the Skill's request template. Required: `request_version: "7.0"`, `jo
 | `budget` / `price_target` | `{amount, currency}` hard limit / preference. |
 | `fx_rates` | `[{from_currency, to_currency, rate, observed_at, source_name and/or source_url}]`. Needed to compare foreign-currency prices. Never invent or recall a rate. |
 | `baggage_policy` | `{cabin_baggage, checked_bag_count, paid_baggage_allowed}` only if the user requires baggage. |
-| `overnight_allowed`, `self_transfer_policy`, `maximum_transfer_count`, `allowed_modes` | Only what the user said. |
+| `overnight_allowed` (true/false), `self_transfer_policy` (`allow`/`never`), `maximum_transfer_count` (integer), `allowed_modes` (array of `flight`, `rail`, `bus`, `coach`, `ferry`, `local_transit`, `walk`, `rideshare`, `car`) | Only what the user said. "Any transport mode" means omit `allowed_modes` or list all of them. |
 | `additional_requirements` | `[{requirement_id, text}]` for anything else; judge later with `assess`. |
 | `search_limits` | `{max_queries, max_elapsed_minutes}` only if the user set limits. |
 
@@ -53,7 +53,9 @@ Do not invent limits, baggage needs or airport restrictions. Journey-specific da
 }
 ```
 
-`endpoint_policy`: `anchor_required` when the journey must start/end in that city (access is then disclosed as unverified until you record it); `any_admitted_gateway` when "any airport there" is fine. `policy`: `exact` (only the seeds), `city_region`, or `extended_region` (open discovery). `country_codes` describes the anchor; it is not a search boundary. Optional user ceilings: `max_access_time_minutes`, `max_egress_time_minutes`, `max_ground_cost`, `allowed_ground_modes`.
+A `destination` region uses the same shape. Every region needs at least one `anchor_nodes` entry and a `seed_gateway_nodes` list, and every node needs all six fields shown.
+
+`endpoint_policy`: `anchor_required` when the journey must start/end in that city (access is then disclosed as unverified until you record it); `any_admitted_gateway` when "any airport there" is fine. `policy`: `exact` (only the seeds count), `city_region` (airports serving that city or named region), or `extended_region` (also airports farther away that are reachable by ground or a positioning trip; use this when the user did not restrict airports). `country_codes` lists the countries/regions the anchor itself covers (Greater Bay Area: `["CN", "HK", "MO"]`); it is descriptive, not a search boundary. Optional user ceilings: `max_access_time_minutes`, `max_egress_time_minutes`, `max_ground_cost`, `allowed_ground_modes`.
 
 ## 2. Search loop
 
@@ -72,15 +74,16 @@ A normal `record` input (templates: `record_quote_template_ref`, `record_signal_
 }
 ```
 
-- Record what you actually searched: provider, airports, dates or date window, travelers, filters, market. One wide search does not stand in for narrower ones you ran later.
+- Record what you actually searched: provider, airports, dates or date window, travelers, filters, market. `scope` is free-form; for a calendar or flexible-date scan use e.g. `"outbound_date_window": {"start", "end"}` and `"trip_length_days": 8` (say whether the source counts days or nights). One wide search does not stand in for narrower ones you ran later.
 - `query_result.status`: `completed`, `no_result` (needs the source text showing it), `unsupported`, `failed`. A failure means that method failed, not that no flights exist; try another source or approach.
 - Save every useful price immediately, including higher prices and partly checked itineraries. Do not wait for the cheapest or a complete itinerary.
 - Same source + scope again is reported as a duplicate. For a deliberate refresh add `retry_reason`.
-- An observation found without a planned query may be recorded without `query`.
+- An observation found without a planned query may be recorded without `query` (then omit `query_result` too).
+- Several observations from one page view (one calendar, one result list) go in one `record` call.
 
 **Quote vs signal.** `kind: "quote"` has `movements` (each flight with airports, offset-aware departure/arrival, `flight_identity`) and `offers` (price as `party_total` in the original currency, seller, `verification_stage`). `kind: "signal"` keeps a visible price that lacks itinerary detail (`observed_price`, `scope`, `missing_facts`, empty movements/offers). A signal is a lead, never a bookable runner-up.
 
-**Time.** Run `clock` (or any tool clock) while the page is on screen and put that UTC time in `captured_at` for that observation. Do not reuse one timestamp for a whole batch and never estimate. A bad time is flagged, not rejected.
+**Time.** Run `clock` (or any tool clock) while the page is on screen and put that UTC time in `captured_at`. Observations read from the same page view may share it; a different page or a later look needs a fresh reading. Never estimate or reuse an old reading. A bad time is flagged, not rejected.
 
 **Links and screenshots** are optional. Keep a full URL if you have one; a missing, long or expired link never invalidates a price.
 

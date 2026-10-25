@@ -795,6 +795,17 @@ def _evaluate(refs: list[dict], identifier: str, records: dict, request: dict,
                                       "reason": assessment.get("reason", "") if assessment else requirement.get("text", "No assessment saved."),
                                       "evidence_refs": copy.deepcopy(assessment.get("evidence_refs", [])) if assessment else []}
 
+    scope_checks = ("round_trip",) if shape == "round_trip" else ("destination_airport",) if shape == "one_way" else ("origin_airport", "return_airport")
+    journey_complete = all(checks.get(key, {}).get("status") == "satisfied" for key in scope_checks)
+    if not journey_complete:
+        # Keep a priced purchase available to combine, without applying a whole
+        # journey's outbound window/stay checks to a return leg or other fragment.
+        checks = {k: v for k, v in checks.items() if k in {"traveler_count", "price_scope", "price_conversion", "baggage", "admitted_offers", "flight_identity", "airline_identity", "movement_times"}}
+        check("journey_scope", None, "Partial component; combine purchases to cover the requested journey before comparison.")
+        verification["endpoints"] = []
+        disclosures = [d for d in disclosures if not d.startswith(("origin_access:", "origin_egress:", "destination_access:", "destination_egress:", "Gateway "))]
+        warnings = [w for w in warnings if not w.startswith("Ranking covers mandatory air tickets")]
+
     all_reviewed = bool(verification["ticket_offers"]) and all(t["status"] == "reviewed" for t in verification["ticket_offers"])
     all_connected = all(c["feasibility_status"] == "verified" and c["protection"] != "unknown"
                         and c["movement_chain_status"] == "observed_connection" for c in verification["connections"])
@@ -809,17 +820,19 @@ def _evaluate(refs: list[dict], identifier: str, records: dict, request: dict,
         *(f"{item['requirement_id']}: {item['status']}. {item['reason']}" for item in checks.values() if item["status"] != "satisfied"),
     ]))
     return {"candidate_id": identifier, "offer_refs": copy.deepcopy(refs), "request_revision": revision,
-            "eligibility_scope": "ticket_and_declared_constraints", "verification": verification,
+            "eligibility_scope": "ticket_and_declared_constraints" if journey_complete else "component_facts", "verification": verification,
             "discovery_refs": list(dict.fromkeys(d["observation_id"] for d in gateway_discoveries)),
             "gateway_discoveries": gateway_discoveries,
             "required_disclosures": required_disclosures,
             "requirements": list(checks.values()), "warnings": list(dict.fromkeys(warnings)),
-            "ranking_cost": _money(ranking, currency), "mandatory_air_ticket_total": _money(air_total if air_known and air_offer_count else None, currency),
+            "ranking_cost": _money(ranking, currency) if journey_complete else None, "mandatory_air_ticket_total": _money(air_total if air_known and air_offer_count else None, currency),
+            "journey_complete": journey_complete,
+            "component_cost": _money(ranking, currency) if not journey_complete else None,
             "ranking_basis": ranking_basis, "objective": objective, "prices": prices,
             "cost_coverage": "known_components" if ranking_basis == "complete_journey_cost" else "mandatory_air_tickets",
             "disclosed_mandatory_costs_known": complete_costs and full_known,
             "known_cost_components": _money(full_total if full_known else None, currency),
-            "price_target_met": ranking <= target if ranking is not None and target is not None else None,
+            "price_target_met": ranking <= target if journey_complete and ranking is not None and target is not None else None,
             "movements": movements, "outbound_departure": departure_value, "return_departure": return_value,
             "final_arrival": movements[-1].get("arrival") if movements else None,
             "outbound_date": departure_value[:10] if departure_value else None,
@@ -889,7 +902,7 @@ def evaluate_session(state: dict, *, evaluation_at: str, request_revision: int |
         if captured and newest and newest[0][0] > captured.timestamp():
             superseded_refs[key] = newest[1]
     explicit_ids = {c.get("candidate_id") or candidate_id(c.get("offer_refs", [])) for c in state.get("combinations", [])}
-    entries, alternatives, superseded = [], [], []
+    entries, alternatives, components, superseded = [], [], [], []
     for identifier, refs in candidates.items():
         result = _evaluate(refs, identifier, records, request, revision, assessments, evaluation_at)
         replaced = [superseded_refs[(r.get("observation_id"), r.get("offer_id"))] for r in refs
@@ -904,12 +917,17 @@ def evaluate_session(state: dict, *, evaluation_at: str, request_revision: int |
                 continue
             result["requirements"].append({"requirement_id": "current_offer_snapshot", "status": "unknown",
                                             "reason": "This explicit combination uses an older seller-variant snapshot; select the updated offer before ranking it."})
+        if not result["journey_complete"]:
+            result["status"] = "partial_component"
+            components.append(result)
+            continue
         failed = [r for r in result["requirements"] if r["status"] != "satisfied"]
         result["status"] = "violated" if any(r["status"] == "violated" for r in failed) else "unknown" if failed else "eligible"
         (alternatives if failed else entries).append(result)
 
     entries.sort(key=comparison_key)
     alternatives.sort(key=comparison_key)
+    components.sort(key=lambda e: comparison_key({**e, "ranking_cost": e["component_cost"]}))
     # Different sellers remain visible under one identical journey/ticket/fare
     # structure. Grouping never combines or splits ticket prices.
     grouped = {}
@@ -930,7 +948,7 @@ def evaluate_session(state: dict, *, evaluation_at: str, request_revision: int |
         entry["rank"] = index
     return {"request_revision": revision, "evaluated_at": evaluation_at,
             "gateway_discoveries": discoveries,
-            "entries": entries, "alternatives": alternatives, "signals": signals, "superseded": superseded,
+            "entries": entries, "alternatives": alternatives, "components": components, "signals": signals, "superseded": superseded,
             "missing_requirements": [{"candidate_id": e["candidate_id"], **r} for e in alternatives
                                      for r in e["requirements"] if r["status"] == "unknown"],
             "research": copy.deepcopy(state.get("research", {}))}

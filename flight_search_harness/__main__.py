@@ -2,6 +2,7 @@
 from __future__ import annotations
 import argparse
 import json
+import re
 import sys
 from .research import ResearchStore, read_json, now
 from .suite_layout import SuiteLayout
@@ -44,12 +45,18 @@ def _candidate(entry, observations):
             continue
         for ref in entry["offer_refs"]:
             line = line.removeprefix(f"Offer {ref['offer_id']}: ")
+        if re.match(r"(?:missing|invalid): .*\b(?:page_url|booking_url|url):", line):
+            continue
         if line not in disclosures:
             disclosures.append(line)
     result = {"candidate_id": entry["candidate_id"], "ranking_cost": _money(entry["ranking_cost"]),
               "dates": entry["dates"], "itinerary": _itinerary(entry), "tickets": tickets,
               "verification_status": entry["verification"]["overall_status"]}
     result.update({k: entry[k] for k in ("rank", "status", "stay_nights", "travel_duration_minutes", "distance_per_currency") if entry.get(k) is not None})
+    if entry["status"] == "partial_component":
+        result.pop("ranking_cost")
+        result["component_cost"] = _money(entry["component_cost"])
+        result["dates"] = {"departure_date": entry["outbound_date"], "arrival_date": entry["final_arrival"][:10] if entry.get("final_arrival") else None}
     if checks:
         result["requirements"] = checks
     if disclosures:
@@ -73,16 +80,22 @@ def _feedback(feedback, entries, *, delivered=False):
         counts[r["status"]] = counts.get(r["status"], 0) + 1
         line = f"{c['query_id']} r{c['request_revision']} {r['status']}"
         if r["status"] in {"pending", "unresolved", "technical_unavailable"}:
-            reason = "no comparable candidate yet" if r["status"] == "unresolved" and not r.get("candidate_ids") else r["reason"]
+            reason = r["reason"]
             line += ": " + reason[:160] + ("…" if len(reason) > 160 else "")
         if c.get("baseline_selection"):
             line += f" ({c['baseline_selection']})"
+        if r.get("comparison_basis"):
+            line += f" ({r['comparison_basis']})"
         challenges.append(line)
     gaps = [{k: v for k, v in g.items() if k in {"kind", "side", "node_id", "query_id", "status"}}
             for g in feedback["search_gaps"] if g["kind"] != "challenge_unresolved"]
-    return {"current_best": best, "challenge_counts": counts, "challenges": challenges[-3:],
+    result = {"current_best": best, "challenge_counts": counts, "challenges": challenges[-3:],
             "search_gap_count": len(gaps), "search_gaps": gaps[:6],
             "next_actions": list(dict.fromkeys(feedback["next_actions"]))[:6], "completion_scope": feedback["completion_scope"]}
+    if feedback.get("candidate_issues"):
+        result.update(candidate_issue_count=len(feedback["candidate_issues"]), candidate_issues=[
+            {k: _money(v) if k in {"ranking_cost", "component_cost"} else v for k, v in issue.items()} for issue in feedback["candidate_issues"][:3]])
+    return result
 
 
 def compact_response(value, state):
@@ -95,8 +108,19 @@ def compact_response(value, state):
         compact = {k: result[k] for k in ("run_id", "request_revision", "research", "claim_scope", "total_ranked", "unlinked_observation_ids") if result.get(k)}
         compact.update({k: state["requests"][-1]["request"]["intent"][k] for k in ("base_currency", "ranking_basis", "objective")})
         compact["eligibility_scope"] = "ticket_and_declared_constraints"
-        for key in ("entries", "alternatives"):
+        for key in ("entries", "alternatives", "components"):
             compact[key] = [_candidate(e, observations) for e in result[key]]
+        listed = [e for key in ("entries", "alternatives") for e in compact[key]]
+        listed.extend(v for e in list(listed) for v in e.get("seller_variants", []))
+        shared = [d for d in listed[0].get("required_disclosures", []) if len(listed) > 1 and all(d in e.get("required_disclosures", []) for e in listed[1:])] if listed else []
+        if shared:
+            compact["shared_required_disclosures"] = shared
+            for e in listed:
+                remaining = [d for d in e.get("required_disclosures", []) if d not in shared]
+                if remaining:
+                    e["required_disclosures"] = remaining
+                else:
+                    e.pop("required_disclosures", None)
         compact["signals"] = []
         for s in result["signals"]:
             raw = s["raw"] if isinstance(s["raw"], dict) else {}

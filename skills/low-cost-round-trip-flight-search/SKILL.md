@@ -18,6 +18,6 @@ Goal: find the cheapest bookable return journey that fits the user's request (or
 
 Round-trip specifics:
 - One seller's joint outbound-and-return price is one Offer covering all its flights; never split it into invented one-way prices.
-- Stay nights count from destination arrival date to return departure date (local). A return departure date says nothing about arrival time back home.
+- Stay nights count from destination arrival date to return departure date (local). Long-haul arrivals are often the next day, so a source's "7-day trip" (departure to return) can be only 6 nights: pick calendar lengths with that in mind. A return departure date says nothing about arrival time back home.
 - For recurring presence rules ("must be in the city on Mondays"), translate into concrete `presence_intervals` for this search horizon.
 - A cheap option that later violates a revised requirement stays saved and shows as an alternative with its violation.

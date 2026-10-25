@@ -258,7 +258,10 @@ class ResearchStore:
             if query_id is not None and query is None:
                 query_errors.append("query_id does not belong to this Run; observations saved without association")
             if result is not None:
-                if query is None or not isinstance(result, dict):
+                if query is None and "query" not in submission and query_id is None:
+                    query_warnings.append("Ignored query_result without a query association.")
+                    result = None
+                elif query is None or not isinstance(result, dict):
                     query_errors.append("query_result requires an object and this Run's query_id")
                 elif not isinstance(result.get("status"), str) or result["status"] not in {"completed", "no_result", "unsupported", "failed"}:
                     query_errors.append("query_result has an unsupported status")
@@ -320,7 +323,7 @@ class ResearchStore:
                 "research": state["research"], "query_errors": query_errors,
                 "query": copy.deepcopy(query), "query_warnings": query_warnings,
                 "unlinked_observation_ids": [identifier for identifier in [*saved, *duplicates] if existing[identifier].get("query_id") is None],
-                "research_feedback": research_feedback(state, evaluation_at=now()),
+                "research_feedback": research_feedback(state, evaluation_at=now(), focus_ids=[*saved, *duplicates]),
             }
 
     def combine(self, run_id: str, spec: dict[str, Any]) -> dict[str, Any]:
@@ -343,7 +346,7 @@ class ResearchStore:
                 self.save(state)
             from .exploration import research_feedback
             return {"kind": "combination_recorded", "run_id": run_id, "candidate_id": identifier,
-                    "research_feedback": research_feedback(state, evaluation_at=now())}
+                    "research_feedback": research_feedback(state, evaluation_at=now(), focus_ids=[identifier])}
 
     def assess(self, run_id: str, assessment: dict[str, Any]) -> dict[str, Any]:
         from .comparison import evaluate_session
@@ -360,7 +363,7 @@ class ResearchStore:
             if assessment.get("requirement_id") not in {r["requirement_id"] for r in requirements}:
                 raise ValueError("Assessments apply only to declared additional_requirements, never to arithmetic checks")
             projection = evaluate_session(state, evaluation_at=now())
-            candidates = [*projection.get("entries", []), *projection.get("alternatives", [])]
+            candidates = [*projection.get("entries", []), *projection.get("alternatives", []), *projection.get("components", [])]
             known_candidates = {c["candidate_id"] for c in candidates}
             known_candidates.update(v["candidate_id"] for c in candidates for v in c.get("seller_variants", []))
             if assessment.get("candidate_id") not in known_candidates:

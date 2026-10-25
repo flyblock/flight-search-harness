@@ -6,7 +6,7 @@ import copy
 from decimal import Decimal
 from typing import Any
 
-from .comparison import comparison_key, discovered_gateways, evaluate_session, _convert, _node, _number
+from .comparison import comparison_key, discovered_gateways, evaluate_session, _airports, _convert, _node, _number
 
 
 REVIEW_CATEGORIES = ("core_city", "nearby_city", "surface_connected", "cross_border", "secondary_or_low_cost", "hub_positioning")
@@ -15,6 +15,8 @@ REVIEW_CATEGORIES = ("core_city", "nearby_city", "surface_connected", "cross_bor
 def _scope(entry: dict, observations: dict) -> dict:
     counts = {o.get("traveler_count") for ref in entry["offer_refs"] for o in observations[ref["observation_id"]]["offers"] if o["offer_id"] == ref["offer_id"]}
     origins, destinations = {_node(entry.get("origin_airport"))}, {_node(entry.get("destination_airport"))}
+    if not entry.get("journey_complete", True) and entry["movements"]:
+        origins, destinations = {_node(entry["movements"][0].get("from_node"))}, {_node(entry["movements"][-1].get("to_node"))}
     if entry.get("return_departure"):
         origins.add(_node(entry.get("return_airport")))
         destinations.update(_node(m.get("from_node")) for m in entry["movements"] if m.get("departure") == entry["return_departure"])
@@ -23,12 +25,32 @@ def _scope(entry: dict, observations: dict) -> dict:
             "adult_count": next(iter(counts)) if len(counts) == 1 else None}
 
 
-def _cheaper_leads(projection: dict, observations: dict, intent: dict, shape: str, best: Decimal) -> list[str]:
-    """A price lead is a reason to inspect facts, never an eligible fare."""
-    candidates = [*projection["entries"], *projection["alternatives"], *projection["superseded"]]
-    complete = [(e["candidate_id"], _scope(e, observations), max(observations[r["observation_id"]]["received_at"] for r in e["offer_refs"]))
-                for e in candidates if e.get("origin_airport") and e.get("destination_airport")
-                and (shape != "round_trip" or e.get("return_date"))]
+def _whole_scope(scope: dict, request: dict, projection: dict) -> bool:
+    """Require explicit journey coverage before comparing a lead's price."""
+    intent, shape = request["intent"], request["journey_shape"]
+    pools = {side: _airports(intent, side) for side in ("origin", "destination")}
+    for d in projection["gateway_discoveries"]:
+        if d["eligible_for_expansion"]:
+            pools[d["side"]].add(d["node"]["node_id"])
+    if shape == "random_loop":
+        return scope.get("journey_shape") == shape and bool(scope.get("origin_airports")) and bool(scope.get("return_airports")) and all(
+            isinstance(scope.get(key), list) and all(isinstance(v, str) and v in intent[pool] for v in scope[key])
+            for key, pool in (("origin_airports", "departure_airports"), ("return_airports", "return_airports")))
+    endpoints = all(isinstance(scope.get(side + "_airports"), list) and scope[side + "_airports"] and all(
+        isinstance(v, str) and v in pools[side] for v in scope[side + "_airports"]) for side in pools)
+    outbound = any(scope.get(k) for k in ("outbound_date", "outbound_date_window", "departure_window", "outbound_departure_window"))
+    returning = any(scope.get(k) for k in ("return_date", "return_date_window", "return_departure_window", "trip_length_nights"))
+    return bool(endpoints and outbound and (returning if shape == "round_trip" else not returning))
+
+
+def _covers(actual: dict, wanted: dict) -> bool:
+    keys = [k for k in ("origin_airports", "destination_airports", "outbound_date", "return_date", "adult_count", "outbound_date_window", "return_date_window", "trip_length_nights") if wanted.get(k) is not None]
+    return ("origin_airports" in keys and "destination_airports" in keys and any(k.startswith("outbound_date") for k in keys)
+            and all((sorted(wanted[k]) == sorted(actual.get(k, [])) if isinstance(wanted[k], list) and all(isinstance(v, str) for v in wanted[k]) and isinstance(actual.get(k), list)
+                     else wanted[k] == actual.get(k)) for k in keys))
+
+
+def _price_leads(projection: dict, observations: dict) -> list[tuple]:
     leads = []
     for s in projection["signals"]:
         raw = s["raw"] if isinstance(s["raw"], dict) else {}
@@ -36,21 +58,25 @@ def _cheaper_leads(projection: dict, observations: dict, intent: dict, shape: st
         prices = [raw.get("observed_price"), *[o.get("price") for o in observations[s["observation_id"]]["offers"]]]
         leads.extend((s["observation_id"], p, scope, observations[s["observation_id"]]["received_at"]) for p in prices if isinstance(p, dict))
     for e in projection["alternatives"]:
-        values = [_convert(p.get("price"), intent["base_currency"], intent) for p in e["prices"]]
-        if values and all(v is not None for v in values):
-            leads.append((e["candidate_id"], e.get("ranking_cost") or {"amount": str(sum(values)), "currency": intent["base_currency"]},
+        if e.get("ranking_cost"):
+            leads.append((e["candidate_id"], e["ranking_cost"],
                           _scope(e, observations), max(observations[r["observation_id"]]["received_at"] for r in e["offer_refs"])))
-        else:
-            leads.extend((e["candidate_id"], p["price"], _scope(e, observations), max(observations[r["observation_id"]]["received_at"] for r in e["offer_refs"]))
-                         for p, v in zip(e["prices"], values) if v is None)
+    return leads
+
+
+def _cheaper_leads(state: dict, projection: dict, observations: dict, request: dict, best: Decimal) -> list[str]:
+    """Follow up once; neither a partial price nor a completed follow-up is a gap."""
+    intent = request["intent"]
+    candidates = [*projection["entries"], *projection["alternatives"], *projection.get("components", []), *projection["superseded"]]
+    used = {e["candidate_id"] for e in candidates} | {r["observation_id"] for e in candidates for r in e["offer_refs"]}
+    complete = [(_scope(e, observations), max(observations[r["observation_id"]]["received_at"] for r in e["offer_refs"])) for e in candidates if e.get("journey_complete", True)]
     actions, unconverted = [], []
-    for identifier, price, scope, recorded in leads:
-        scope = {k: sorted(v) if isinstance(v, list) and all(isinstance(x, str) for x in v) else v for k, v in scope.items()}
-        keys = [k for k in ("origin_airports", "destination_airports", "outbound_date", "return_date", "adult_count") if scope.get(k) is not None]
-        required = ("origin_airports", "destination_airports", "outbound_date", "return_date") if shape == "round_trip" else ("origin_airports", "destination_airports", "outbound_date")
-        covered = all(k in keys for k in required) and any(
-            other != identifier and instant > recorded and all(scope[k] == actual.get(k) for k in keys) for other, actual, instant in complete)
-        if covered:
+    for identifier, price, scope, recorded in _price_leads(projection, observations):
+        if identifier in used or not _whole_scope(scope, request, projection) or any(instant > recorded and _covers(actual, scope) for actual, instant in complete):
+            continue
+        own_query = observations.get(identifier, {}).get("query_id")
+        if any(q["query_id"] != own_query and q["status"] == "completed" and q.get("finished_at", "") > recorded
+               and _covers(q["query"]["scope"], scope) for q in state["queries"]):
             continue
         value = _convert(price, intent["base_currency"], intent)
         if value is not None and value < best:
@@ -84,6 +110,26 @@ def _structure_hint(state: dict, projection: dict, request: dict) -> list[str]:
         permitted.append("open_jaw")
     missing = [s for s in permitted if s not in tried]
     return ["Try permitted untried structures: " + ", ".join(missing) + "."] if missing else []
+
+
+def _candidate_issues(projection: dict, intent: dict, focus_ids: list[str] | None) -> list[dict]:
+    blocked = [*projection["alternatives"], *projection.get("components", [])]
+    if projection["entries"]:
+        blocked = [e for e in blocked if focus_ids and (e["candidate_id"] in focus_ids or any(r["observation_id"] in focus_ids for r in e["offer_refs"]))]
+    issues = []
+    for e in blocked:
+        failed = {}
+        for r in e["requirements"]:
+            if r["status"] == "satisfied":
+                continue
+            key, reason = r["requirement_id"], r["reason"]
+            metric = key.removeprefix("minimum_").removeprefix("maximum_")
+            if r["status"] == "violated" and metric != key and e.get(metric) is not None and key in intent:
+                reason = f"{metric} {e[metric]} {'<' if key.startswith('minimum_') else '>'} {intent[key]}"
+            failed[key] = f"{r['status']}: {reason}"
+        cost_key = "component_cost" if e["status"] == "partial_component" else "ranking_cost"
+        issues.append({"candidate_id": e["candidate_id"], cost_key: copy.deepcopy(e[cost_key]), "failed_checks": failed})
+    return issues
 
 
 def _score(entry: dict[str, Any]) -> list[str]:
@@ -179,6 +225,9 @@ def settle_challenges(state: dict[str, Any], instant: str) -> None:
             result.update(status="pending", reason="The query has no recorded result yet.")
         else:
             linked_candidates = [c for c in projection["alternatives"] if any(r["observation_id"] in usable for r in c["offer_refs"])]
+            linked_leads = [(price, scope) for identifier, price, scope, _ in _price_leads(projection, observations) if identifier in usable]
+            context_request = next(r["request"] for r in state["requests"] if r["revision"] == number)
+            lead_values = [_convert(price, context_request["intent"]["base_currency"], context_request["intent"]) for price, _ in linked_leads]
             unknown_cost = [c for c in linked_candidates if c.get("ranking_cost") is None]
             blocked = unknown_cost or linked_candidates
             issues = list(dict.fromkeys(f"{r['requirement_id']}: {r['reason']}" for c in blocked for r in c["requirements"]
@@ -188,8 +237,17 @@ def settle_challenges(state: dict[str, Any], instant: str) -> None:
                 if any(r["requirement_id"] == "price_conversion" for c in unknown_cost for r in c["requirements"]):
                     result["reason"] += " Add an attributed FX rate via revise."
                 result["candidate_ids"] = [c["candidate_id"] for c in linked_candidates]
+            elif (baseline and baseline["objective"] == "price" and linked_leads and not any(r["observation_id"] in usable for c in projection.get("components", []) for r in c["offer_refs"])
+                  and all(_whole_scope(scope, context_request, projection) for _, scope in linked_leads)
+                  and all(v is not None and v >= _number(baseline["ranking_cost"]["unrounded_amount"]) for v in lead_values)):
+                result.update(status="not_improved", comparison_basis="lead_prices",
+                              reason="All linked journey-scope lead prices are at or above the baseline; based on leads, not bookable quotes.")
             else:
-                result["reason"] = ("No eligible baseline is available yet. " if baseline is None else "No distinct comparable candidate is linked yet. ") + "Findings remain available; leads do not settle a comparison."
+                if linked_leads:
+                    result["reason"] = ("Linked prices cover components or unconfirmed journey scopes; no full-journey comparison." if not all(_whole_scope(scope, context_request, projection) for _, scope in linked_leads)
+                                        else "A cheaper or unconverted journey-scope lead still needs a complete quote.")
+                else:
+                    result["reason"] = ("No eligible baseline is available yet." if baseline is None else "No distinct comparable challenger is linked; this query may only establish the baseline.")
         if challenge.get("baseline_selection") == "best_eligible_at_evaluation":
             result["reason"] += " Baseline selected at evaluation under the query's revision, not fixed before the query."
         result["evaluated_at"] = instant
@@ -222,7 +280,7 @@ def _same_endpoints(state: dict[str, Any], query: dict[str, Any], request: dict[
 
 
 def research_feedback(state: dict[str, Any], projection: dict[str, Any] | None = None,
-                      *, evaluation_at: str) -> dict[str, Any]:
+                      *, evaluation_at: str, focus_ids: list[str] | None = None) -> dict[str, Any]:
     """Expose gaps without inventing work, stopping the agent, or gating delivery."""
     settle_challenges(state, evaluation_at)
     projection = projection if projection is not None else evaluate_session(state, evaluation_at=evaluation_at)
@@ -232,6 +290,7 @@ def research_feedback(state: dict[str, Any], projection: dict[str, Any] | None =
     best = _snapshot(entries[0], revision) if entries else None
     nodes = discovered_gateways(state)
     observations = {o["observation_id"]: o for o in state["observations"]}
+    candidate_issues = _candidate_issues(projection, request["intent"], focus_ids)
     required = _flexible_sides(request)
     queries = {q["query_id"]: q for q in state["queries"]}
     evidenced_sides: set[str] = set()
@@ -256,10 +315,15 @@ def research_feedback(state: dict[str, Any], projection: dict[str, Any] | None =
     missing_sides = [side for side in required if side not in evidenced_sides]
     opportunities, gateway_actions = [], []
     for node in nodes:
-        if not node.get("eligible_for_expansion") or not (node.get("decision") == "investigate" or node.get("access", {}).get("status") in {"plausible", "verified"}):
+        if not node.get("eligible_for_expansion") or node.get("decision") in {"defer", "exclude"}:
             continue
         side, identifier = node["side"], node["node"]["node_id"]
         if any(identifier in _scope(e, observations)[side + "_airports"] for e in entries):
+            continue
+        if best and any(identifier in scope.get(side + "_airports", []) and _whole_scope(scope, request, projection)
+                        and (value := _convert(price, request["intent"]["base_currency"], request["intent"])) is not None
+                        and value >= _number(best["ranking_cost"]["unrounded_amount"])
+                        for _, price, scope, _ in _price_leads(projection, observations)):
             continue
         opportunities.append({"side": side, "node_id": identifier, "observation_id": node["observation_id"],
                               "reason": node["reason"], "access": copy.deepcopy(node["access"]), "status": "no_comparable_candidate"})
@@ -280,9 +344,11 @@ def research_feedback(state: dict[str, Any], projection: dict[str, Any] | None =
     current_challenges = [c for c in challenges if revisions.get(c["request_revision"]) == revisions[revision]]
     gaps, actions = [], []
     if not best:
-        actions.append("Find and record a usable dated journey to establish a comparison baseline.")
+        actions.append("No eligible baseline; inspect candidate_issues for failed checks." if candidate_issues else "Find and record a usable dated journey to establish a comparison baseline.")
     else:
-        actions.extend(_cheaper_leads(projection, observations, request["intent"], request["journey_shape"], _number(best["ranking_cost"]["unrounded_amount"])))
+        if candidate_issues:
+            actions.append("Inspect failed checks for the newly saved candidates.")
+        actions.extend(_cheaper_leads(state, projection, observations, request, _number(best["ranking_cost"]["unrounded_amount"])))
         if not current_challenges:
             actions.append("Challenge the current best: record a purpose=challenge query (other dates, airports, sellers or ticket structures).")
     review_lines = []
@@ -311,7 +377,7 @@ def research_feedback(state: dict[str, Any], projection: dict[str, Any] | None =
     if best and current_challenges and not actions:
         actions.append("Assess whether another useful direction can improve the current best; retain and present earlier eligible candidates. Stop only with the actual remaining scope explained.")
     return {
-        "current_best": best, "challenges": challenges,
+        "current_best": best, "challenges": challenges, "candidate_issues": candidate_issues,
         "airport_discovery": {"required_sides": required, "evidenced_sides": sorted(x for x in evidenced_sides if isinstance(x, str)),
                               "missing_sides": missing_sides, "reviewed_categories": {s: sorted(v) for s, v in reviewed.items()}, "gateways": nodes},
         "open_opportunities": opportunities, "search_gaps": gaps, "next_actions": list(dict.fromkeys(actions)),
