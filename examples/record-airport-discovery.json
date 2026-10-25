@@ -1,0 +1,51 @@
+{
+  "query": {
+    "source": {
+      "provider": "REPLACE_WITH_EXTERNAL_AIRPORT_OR_TRANSPORT_SOURCE"
+    },
+    "scope": {
+      "side": "origin",
+      "anchor_node_id": "REPLACE_WITH_USER_ANCHOR_NODE_ID",
+      "search_terms": "REPLACE_WITH_ACTUAL_DISCOVERY_QUERY",
+      "geography": "REPLACE_WITH_GEOGRAPHY_ACTUALLY_INSPECTED_WITHOUT_INVENTING_A_USER_BORDER"
+    },
+    "purpose": "airport_discovery",
+    "reason": "REPLACE_WITH_WHY_EXTERNAL_REACHABLE_AIRPORT_DISCOVERY_IS_RELEVANT"
+  },
+  "observations": [
+    {
+      "kind": "signal",
+      "source": {
+        "provider": "REPLACE_WITH_EXTERNAL_AIRPORT_OR_TRANSPORT_SOURCE"
+      },
+      "captured_at": "REPLACE_WITH_TOOL_CLOCK_UTC_TIMESTAMP",
+      "source_text": "REPLACE_WITH_OBSERVED_AIRPORT_AND_CONNECTION_FACTS",
+      "gateway_discovery": {
+        "side": "origin",
+        "reason": "REPLACE_WITH_HOW_THE_SOURCE_INFORMS_THE_USER_ENDPOINT_SCOPE",
+        "airports": [
+          {
+            "node": {
+              "node_id": "REPLACE_WITH_OBSERVED_IATA",
+              "node_type": "airport",
+              "location": "REPLACE_WITH_OBSERVED_AIRPORT_NAME",
+              "country_code": "REPLACE_WITH_COUNTRY_CODE",
+              "timezone": "REPLACE_WITH_LOCATION_TIMEZONE"
+            },
+            "decision": "investigate",
+            "reason": "REPLACE_WITH_AI_JUDGMENT_OF_PRICE_POTENTIAL_AND_ACCESS_PLAUSIBILITY",
+            "access": {
+              "status": "unknown"
+            }
+          }
+        ]
+      },
+      "movements": [],
+      "offers": []
+    }
+  ],
+  "query_result": {
+    "status": "completed",
+    "reason": "REPLACE_WITH_THE_ACTUAL_EXTERNAL_DISCOVERY_SCOPE_AND_LIMITS"
+  }
+}

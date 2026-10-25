@@ -162,3 +162,17 @@ class SuiteLayout:
             raise SuiteLayoutError(
                 f"unknown runtime_id {runtime_id!r}; available runtime IDs: {available}"
             ) from exc
+
+    def runtime_data_root(self) -> Path:
+        """Resolve generated data outside the authored Plugin directory."""
+
+        manifest = _load_json_object(
+            self.root / SUITE_MANIFEST_NAME, label="suite manifest"
+        )
+        configured = manifest.get("runtime_data_root")
+        if not isinstance(configured, str) or not configured.strip():
+            raise SuiteLayoutError("suite manifest runtime_data_root must be a path")
+        resolved = (self.root / configured).resolve()
+        if resolved == self.root or self.root in resolved.parents or resolved in self.root.parents:
+            raise SuiteLayoutError("runtime_data_root must be separate from the Plugin directory")
+        return resolved

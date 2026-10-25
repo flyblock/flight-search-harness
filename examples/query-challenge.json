@@ -1,0 +1,19 @@
+{
+  "source": {
+    "provider": "REPLACE_WITH_ACTUAL_PROVIDER"
+  },
+  "scope": {
+    "origin_airports": [
+      "REPLACE_WITH_ACTUAL_ORIGIN_IATA"
+    ],
+    "destination_airports": [
+      "REPLACE_WITH_ACTUAL_DESTINATION_IATA"
+    ],
+    "outbound_date": "REPLACE_WITH_OUTBOUND_LOCAL_DATE",
+    "return_date": "REPLACE_WITH_RETURN_LOCAL_DATE",
+    "adult_count": "REPLACE_WITH_ADULT_COUNT_NUMBER",
+    "fare_conditions": "REPLACE_WITH_ACTUAL_FILTERS_AND_MARKET"
+  },
+  "purpose": "challenge",
+  "reason": "REPLACE_WITH_WHY_THIS_QUERY_COULD_IMPROVE_THE_CURRENT_BEST"
+}

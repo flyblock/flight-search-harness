@@ -1,17 +1,11 @@
 {
   "schema_version": "1.0.0",
   "product_id": "random_loop",
-  "version": "2.0.0",
+  "version": "3.0.0",
+  "journey_shape": "random_loop",
+  "request_schema_base": "plugin_root",
+  "request_schema_ref": "flight_search_harness/schemas/search-request.schema.json",
   "package_files": [
-    "PRODUCT-MANIFEST.json",
-    "data/source-registry.json",
-    "references/AIRPORT-TRANSIT.md",
-    "references/airport-transit.schema.json",
-    "references/search-config.schema.json",
-    "references/random-loop-result.schema.json",
-    "references/workflow.md",
-    "scripts/airport_transit.py",
-    "scripts/route_engine.py",
-    "scripts/scope_coverage.py"
+    "PRODUCT-MANIFEST.json"
   ]
 }

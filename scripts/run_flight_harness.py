@@ -10,6 +10,7 @@ PLUGIN_ROOT = Path(__file__).resolve().parents[1]
 
 
 def main() -> int:
+    sys.dont_write_bytecode = True
     plugin_root = str(PLUGIN_ROOT)
     if plugin_root not in sys.path:
         sys.path.insert(0, plugin_root)

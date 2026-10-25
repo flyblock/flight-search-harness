@@ -1,8 +1,8 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "flight-search-harness",
-  "version": "2.0.0",
-  "description": "Run recoverable browser-assisted searches for low-cost random loops, one-way journeys, and round trips.",
+  "version": "3.0.0",
+  "description": "Explore flight dates and combinations with AI, preserving findings in one recoverable comparison and delivery record.",
   "license": "Apache-2.0",
   "keywords": [
     "travel",

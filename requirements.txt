@@ -1,0 +1,2 @@
+# IANA timezone database for Python zoneinfo on platforms without system data.
+tzdata

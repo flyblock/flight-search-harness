@@ -1,0 +1,131 @@
+{
+  "query": {
+    "source": {
+      "provider": "REPLACE_WITH_PROVIDER_NAME"
+    },
+    "scope": {
+      "origin_airports": [
+        "REPLACE_WITH_ORIGIN_IATA"
+      ],
+      "destination_airports": [
+        "REPLACE_WITH_DESTINATION_IATA"
+      ],
+      "outbound_date": "REPLACE_WITH_OUTBOUND_LOCAL_DATE",
+      "return_date": "REPLACE_WITH_RETURN_LOCAL_DATE",
+      "adult_count": "REPLACE_WITH_ACTUAL_ADULT_COUNT_NUMBER",
+      "fare_conditions": "REPLACE_WITH_ACTUAL_FILTERS_AND_MARKET"
+    }
+  },
+  "observations": [
+    {
+      "kind": "quote",
+      "source": {
+        "provider": "REPLACE_WITH_PROVIDER_NAME",
+        "seller": "REPLACE_WITH_OBSERVED_SELLER"
+      },
+      "captured_at": "REPLACE_WITH_CAPTURE_TIME_OFFSET_TIMESTAMP",
+      "source_text": "REPLACE_WITH_SOURCE_TEXT_SUPPORTING_THIS_DATED_PRICE_AND_ITS_TERMS",
+      "movements": [
+        {
+          "movement_id": "outbound-1",
+          "mode": "flight",
+          "from_node": "REPLACE_WITH_ORIGIN_IATA",
+          "to_node": "REPLACE_WITH_OUTBOUND_CONNECTION_IATA",
+          "departure": "REPLACE_WITH_OUTBOUND_FIRST_DEPARTURE_OFFSET_TIMESTAMP",
+          "arrival": "REPLACE_WITH_OUTBOUND_FIRST_ARRIVAL_OFFSET_TIMESTAMP",
+          "operator": "REPLACE_WITH_OBSERVED_OPERATING_AIRLINE",
+          "flight_identity": {
+            "marketing_carrier": "REPLACE_WITH_OBSERVED_MARKETING_CARRIER",
+            "flight_numbers": [
+              "REPLACE_WITH_OBSERVED_FLIGHT_NUMBER"
+            ]
+          }
+        },
+        {
+          "movement_id": "outbound-2",
+          "mode": "flight",
+          "from_node": "REPLACE_WITH_OUTBOUND_CONNECTION_IATA",
+          "to_node": "REPLACE_WITH_DESTINATION_IATA",
+          "departure": "REPLACE_WITH_OUTBOUND_SECOND_DEPARTURE_OFFSET_TIMESTAMP",
+          "arrival": "REPLACE_WITH_OUTBOUND_SECOND_ARRIVAL_OFFSET_TIMESTAMP",
+          "operator": "REPLACE_WITH_OBSERVED_OPERATING_AIRLINE",
+          "flight_identity": {
+            "marketing_carrier": "REPLACE_WITH_OBSERVED_MARKETING_CARRIER",
+            "flight_numbers": [
+              "REPLACE_WITH_OBSERVED_FLIGHT_NUMBER"
+            ]
+          },
+          "transfer_from_previous": {
+            "status": "unknown",
+            "connection_protection": "unknown"
+          }
+        },
+        {
+          "movement_id": "return-1",
+          "mode": "flight",
+          "from_node": "REPLACE_WITH_DESTINATION_IATA",
+          "to_node": "REPLACE_WITH_RETURN_CONNECTION_IATA",
+          "departure": "REPLACE_WITH_RETURN_FIRST_DEPARTURE_OFFSET_TIMESTAMP",
+          "arrival": "REPLACE_WITH_RETURN_FIRST_ARRIVAL_OFFSET_TIMESTAMP",
+          "operator": "REPLACE_WITH_OBSERVED_OPERATING_AIRLINE",
+          "flight_identity": {
+            "marketing_carrier": "REPLACE_WITH_OBSERVED_MARKETING_CARRIER",
+            "flight_numbers": [
+              "REPLACE_WITH_OBSERVED_FLIGHT_NUMBER"
+            ]
+          }
+        },
+        {
+          "movement_id": "return-2",
+          "mode": "flight",
+          "from_node": "REPLACE_WITH_RETURN_CONNECTION_IATA",
+          "to_node": "REPLACE_WITH_ORIGIN_IATA",
+          "departure": "REPLACE_WITH_RETURN_SECOND_DEPARTURE_OFFSET_TIMESTAMP",
+          "arrival": "REPLACE_WITH_RETURN_SECOND_ARRIVAL_OFFSET_TIMESTAMP",
+          "operator": "REPLACE_WITH_OBSERVED_OPERATING_AIRLINE",
+          "flight_identity": {
+            "marketing_carrier": "REPLACE_WITH_OBSERVED_MARKETING_CARRIER",
+            "flight_numbers": [
+              "REPLACE_WITH_OBSERVED_FLIGHT_NUMBER"
+            ]
+          },
+          "transfer_from_previous": {
+            "status": "unknown",
+            "connection_protection": "unknown"
+          }
+        }
+      ],
+      "offers": [
+        {
+          "offer_id": "REPLACE_WITH_STABLE_OFFER_ID",
+          "movement_ids": [
+            "outbound-1",
+            "outbound-2",
+            "return-1",
+            "return-2"
+          ],
+          "price": {
+            "amount": "REPLACE_WITH_OBSERVED_PARTY_TOTAL_NUMBER",
+            "currency": "REPLACE_WITH_ORIGINAL_CURRENCY_CODE"
+          },
+          "price_scope": "party_total",
+          "traveler_count": "REPLACE_WITH_OBSERVED_TRAVELER_COUNT_NUMBER",
+          "seller": "REPLACE_WITH_OBSERVED_SELLER",
+          "verification_stage": "REPLACE_WITH_OBSERVED_VERIFICATION_STAGE",
+          "ticketing_structure": "REPLACE_WITH_OBSERVED_TICKETING_STRUCTURE_OR_UNKNOWN",
+          "included_baggage": [
+            "REPLACE_WITH_OBSERVED_BAGGAGE_DISCLOSURE"
+          ],
+          "checked_bag_count": "REPLACE_WITH_OBSERVED_CHECKED_BAG_COUNT_NUMBER_OR_REMOVE_FIELD",
+          "restrictions": [
+            "REPLACE_WITH_OBSERVED_FARE_RESTRICTIONS"
+          ]
+        }
+      ]
+    }
+  ],
+  "query_result": {
+    "status": "completed",
+    "reason": "REPLACE_WITH_THE_ACTUAL_NARROW_QUERY_EXECUTED_AND_VERIFICATION_REACHED"
+  }
+}

@@ -1,0 +1,56 @@
+{
+  "query": {
+    "source": {
+      "provider": "REPLACE_WITH_PROVIDER_NAME"
+    },
+    "scope": {
+      "origin_airports": [
+        "REPLACE_WITH_ORIGIN_IATA"
+      ],
+      "destination_airports": [
+        "REPLACE_WITH_DESTINATION_IATA"
+      ],
+      "outbound_date": "REPLACE_WITH_OUTBOUND_LOCAL_DATE",
+      "return_date": "REPLACE_WITH_RETURN_LOCAL_DATE",
+      "adult_count": "REPLACE_WITH_ACTUAL_ADULT_COUNT_NUMBER",
+      "fare_conditions": "REPLACE_WITH_ACTUAL_FILTERS_AND_MARKET"
+    }
+  },
+  "observations": [
+    {
+      "kind": "signal",
+      "source": {
+        "provider": "REPLACE_WITH_PROVIDER_NAME",
+        "seller": "REPLACE_WITH_OBSERVED_SELLER"
+      },
+      "captured_at": "REPLACE_WITH_CAPTURE_TIME_OFFSET_TIMESTAMP",
+      "source_text": "REPLACE_WITH_EXACT_OBSERVED_PRICE_AND_TERMS_WITHOUT_CLAIMING_UNSEEN_DETAILS",
+      "scope": {
+        "origin_airports": [
+          "REPLACE_WITH_ORIGIN_IATA"
+        ],
+        "destination_airports": [
+          "REPLACE_WITH_DESTINATION_IATA"
+        ],
+        "outbound_date": "REPLACE_WITH_OUTBOUND_LOCAL_DATE",
+        "return_date": "REPLACE_WITH_RETURN_LOCAL_DATE",
+        "adult_count": "REPLACE_WITH_ACTUAL_ADULT_COUNT_NUMBER",
+        "fare_conditions": "REPLACE_WITH_ACTUAL_FILTERS_AND_MARKET"
+      },
+      "observed_price": {
+        "amount": "REPLACE_WITH_OBSERVED_NUMBER",
+        "currency": "REPLACE_WITH_ORIGINAL_CURRENCY_CODE"
+      },
+      "verification_stage": "selected_itinerary",
+      "missing_facts": [
+        "REPLACE_WITH_FIELDS_NOT_DISCLOSED_OR_NOT_YET_CHECKED"
+      ],
+      "movements": [],
+      "offers": []
+    }
+  ],
+  "query_result": {
+    "status": "completed",
+    "reason": "REPLACE_WITH_THE_ACTUAL_QUERY_EXECUTED; THIS_RECORD_PRESERVES_A_LEAD_NOT_A_COMPLETE_PAYABLE_OFFER"
+  }
+}

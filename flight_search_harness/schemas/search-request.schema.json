@@ -1,0 +1,1258 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "search-request.schema.json",
+  "title": "Flight search request version 7",
+  "description": "Small user request contract. normalize_request additionally checks ordering, same-currency limits, finite numbers, and unique requirement IDs. It accepts version 6 without silently carrying research-credit policy forward. Departure windows never imply arrival windows.",
+  "type": "object",
+  "required": [
+    "request_version",
+    "journey_shape",
+    "intent"
+  ],
+  "properties": {
+    "request_version": {
+      "const": "7.0"
+    },
+    "journey_shape": {
+      "enum": [
+        "round_trip",
+        "one_way",
+        "random_loop"
+      ]
+    },
+    "user_request": {
+      "type": "string",
+      "minLength": 1
+    },
+    "intent": {
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "oneOf": [
+    {
+      "properties": {
+        "journey_shape": {
+          "const": "round_trip"
+        },
+        "intent": {
+          "type": "object",
+          "properties": {
+            "additional_requirements": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "requirement_id": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "text": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "requirement_id",
+                  "text"
+                ],
+                "additionalProperties": false
+              },
+              "description": "User conditions requiring evidence-based AI assessment. Text is not an executable expression. IDs must be unique."
+            },
+            "adult_count": {
+              "type": "integer",
+              "minimum": 1,
+              "default": 1,
+              "description": "Adult travelers. Agents should make traveler count explicit rather than infer a party size from unrelated context."
+            },
+            "airport_transit_unknown_policy": {
+              "enum": [
+                "allow_with_warning",
+                "reject"
+              ],
+              "description": "Unknown transit feasibility may remain an explicitly unverified candidate or be rejected; it is never confirmed transit eligibility."
+            },
+            "allowed_modes": {
+              "$ref": "#/$defs/allowed_modes"
+            },
+            "baggage_policy": {
+              "$ref": "#/$defs/baggage_policy"
+            },
+            "base_currency": {
+              "$ref": "#/$defs/currency_code"
+            },
+            "budget": {
+              "oneOf": [
+                {
+                  "$ref": "#/$defs/money"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Inclusive hard budget in base_currency for the requested ranking_basis."
+            },
+            "destination": {
+              "$ref": "#/$defs/fixed_region_side"
+            },
+            "destination_airports": {
+              "$ref": "#/$defs/airport_pool"
+            },
+            "fx_rates": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "from_currency": {
+                    "$ref": "#/$defs/currency_code"
+                  },
+                  "to_currency": {
+                    "$ref": "#/$defs/currency_code"
+                  },
+                  "rate": {
+                    "type": "number",
+                    "exclusiveMinimum": 0
+                  },
+                  "observed_at": {
+                    "$ref": "#/$defs/offset_timestamp"
+                  },
+                  "source_url": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "description": "Optional full reference, retained without link syntax or length gating."
+                  },
+                  "source_name": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "description": "Observed rate source name; usable attribution even when its URL is unavailable."
+                  }
+                },
+                "required": [
+                  "from_currency",
+                  "to_currency",
+                  "rate",
+                  "observed_at"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "maximum_outbound_duration_minutes": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "Inclusive elapsed-time ceiling for the complete outbound journey."
+            },
+            "maximum_return_duration_minutes": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "Inclusive elapsed-time ceiling for the complete return journey."
+            },
+            "maximum_stay_minutes": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "maximum_stay_nights": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Maximum difference between the destination-local arrival date and first return-departure date."
+            },
+            "maximum_total_duration_minutes": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "maximum_transfer_count": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Optional explicit hard transfer-count ceiling. Omission leaves transfer count unbounded by product policy."
+            },
+            "minimum_stay_nights": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Minimum difference between the destination-local arrival date and first return-departure date."
+            },
+            "objective": {
+              "enum": [
+                "price",
+                "travel_duration",
+                "distance_per_currency",
+                "stay_duration"
+              ],
+              "description": "Defaults to price, or distance_per_currency for random_loop."
+            },
+            "origin": {
+              "$ref": "#/$defs/fixed_region_side"
+            },
+            "origin_airports": {
+              "$ref": "#/$defs/airport_pool"
+            },
+            "outbound_departure_window": {
+              "$ref": "#/$defs/date_or_datetime_window",
+              "description": "Date-only boundaries use the origin Anchor IANA timezone."
+            },
+            "outbound_exact_departure_dates": {
+              "$ref": "#/$defs/exact_departure_dates"
+            },
+            "output": {
+              "type": "object",
+              "properties": {
+                "view": {
+                  "enum": [
+                    "ranked",
+                    "matrix"
+                  ]
+                },
+                "limit": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              },
+              "required": [
+                "view"
+              ],
+              "additionalProperties": false,
+              "description": "Output selection only; does not limit retained discoveries."
+            },
+            "overnight_allowed": {
+              "type": "boolean"
+            },
+            "presence_intervals": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "start": {
+                    "$ref": "#/$defs/offset_timestamp"
+                  },
+                  "end": {
+                    "$ref": "#/$defs/offset_timestamp"
+                  },
+                  "location_node_id": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "start",
+                  "end",
+                  "location_node_id"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "price_target": {
+              "oneOf": [
+                {
+                  "$ref": "#/$defs/money"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Soft price preference in base_currency; does not exclude more expensive alternatives."
+            },
+            "ranking_basis": {
+              "enum": [
+                "mandatory_air_ticket_total",
+                "complete_journey_cost"
+              ],
+              "default": "mandatory_air_ticket_total",
+              "description": "Ticket comparison is the default; complete journey costs are calculated only when requested."
+            },
+            "return_arrival_window": {
+              "$ref": "#/$defs/date_or_datetime_window"
+            },
+            "return_departure_window": {
+              "$ref": "#/$defs/date_or_datetime_window",
+              "description": "Date-only boundaries use the destination Anchor IANA timezone."
+            },
+            "return_exact_departure_dates": {
+              "$ref": "#/$defs/exact_departure_dates"
+            },
+            "search_limits": {
+              "type": "object",
+              "properties": {
+                "max_queries": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "max_elapsed_minutes": {
+                  "type": "number",
+                  "exclusiveMinimum": 0
+                }
+              },
+              "required": [],
+              "additionalProperties": false,
+              "description": "Only explicit limits apply. No research-credit defaults or implicit limit conversions."
+            },
+            "self_transfer_policy": {
+              "enum": [
+                "allow",
+                "never"
+              ]
+            },
+            "travel_windows": {
+              "type": "array",
+              "minItems": 1,
+              "uniqueItems": true,
+              "items": {
+                "type": "object",
+                "required": [
+                  "outbound_departure_window",
+                  "return_departure_window"
+                ],
+                "properties": {
+                  "label": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "outbound_departure_window": {
+                    "$ref": "#/$defs/date_or_datetime_window"
+                  },
+                  "return_departure_window": {
+                    "$ref": "#/$defs/date_or_datetime_window"
+                  },
+                  "minimum_stay_nights": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "maximum_stay_nights": {
+                    "type": "integer",
+                    "minimum": 0
+                  }
+                },
+                "additionalProperties": false
+              },
+              "description": "Disjoint round-trip date alternatives inside one Search Mission."
+            }
+          },
+          "required": [
+            "base_currency"
+          ],
+          "additionalProperties": false,
+          "allOf": [
+            {
+              "oneOf": [
+                {
+                  "required": [
+                    "origin"
+                  ]
+                },
+                {
+                  "required": [
+                    "origin_airports"
+                  ]
+                }
+              ]
+            },
+            {
+              "oneOf": [
+                {
+                  "required": [
+                    "destination"
+                  ]
+                },
+                {
+                  "required": [
+                    "destination_airports"
+                  ]
+                }
+              ]
+            },
+            {
+              "oneOf": [
+                {
+                  "required": [
+                    "outbound_departure_window"
+                  ],
+                  "not": {
+                    "required": [
+                      "travel_windows"
+                    ]
+                  }
+                },
+                {
+                  "required": [
+                    "travel_windows"
+                  ],
+                  "not": {
+                    "anyOf": [
+                      {
+                        "required": [
+                          "outbound_departure_window"
+                        ]
+                      },
+                      {
+                        "required": [
+                          "return_departure_window"
+                        ]
+                      }
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "properties": {
+        "journey_shape": {
+          "const": "one_way"
+        },
+        "intent": {
+          "type": "object",
+          "properties": {
+            "additional_requirements": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "requirement_id": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "text": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "requirement_id",
+                  "text"
+                ],
+                "additionalProperties": false
+              },
+              "description": "User conditions requiring evidence-based AI assessment. Text is not an executable expression. IDs must be unique."
+            },
+            "adult_count": {
+              "type": "integer",
+              "minimum": 1,
+              "default": 1,
+              "description": "Adult travelers. Agents should make traveler count explicit rather than infer a party size from unrelated context."
+            },
+            "airport_transit_unknown_policy": {
+              "enum": [
+                "allow_with_warning",
+                "reject"
+              ],
+              "description": "Unknown transit feasibility may remain an explicitly unverified candidate or be rejected; it is never confirmed transit eligibility."
+            },
+            "allowed_modes": {
+              "$ref": "#/$defs/allowed_modes"
+            },
+            "arrival_window": {
+              "$ref": "#/$defs/date_or_datetime_window"
+            },
+            "baggage_policy": {
+              "$ref": "#/$defs/baggage_policy"
+            },
+            "base_currency": {
+              "$ref": "#/$defs/currency_code"
+            },
+            "budget": {
+              "oneOf": [
+                {
+                  "$ref": "#/$defs/money"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Inclusive hard budget in base_currency for the requested ranking_basis."
+            },
+            "departure_window": {
+              "$ref": "#/$defs/date_or_datetime_window"
+            },
+            "destination": {
+              "$ref": "#/$defs/fixed_region_side"
+            },
+            "destination_airports": {
+              "$ref": "#/$defs/airport_pool"
+            },
+            "exact_departure_dates": {
+              "$ref": "#/$defs/exact_departure_dates"
+            },
+            "fx_rates": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "from_currency": {
+                    "$ref": "#/$defs/currency_code"
+                  },
+                  "to_currency": {
+                    "$ref": "#/$defs/currency_code"
+                  },
+                  "rate": {
+                    "type": "number",
+                    "exclusiveMinimum": 0
+                  },
+                  "observed_at": {
+                    "$ref": "#/$defs/offset_timestamp"
+                  },
+                  "source_url": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "description": "Optional full reference, retained without link syntax or length gating."
+                  },
+                  "source_name": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "description": "Observed rate source name; usable attribution even when its URL is unavailable."
+                  }
+                },
+                "required": [
+                  "from_currency",
+                  "to_currency",
+                  "rate",
+                  "observed_at"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "maximum_total_duration_minutes": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "maximum_transfer_count": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Optional explicit hard transfer-count ceiling. Omission leaves transfer count unbounded by product policy."
+            },
+            "objective": {
+              "enum": [
+                "price",
+                "travel_duration",
+                "distance_per_currency"
+              ],
+              "description": "Defaults to price, or distance_per_currency for random_loop."
+            },
+            "origin": {
+              "$ref": "#/$defs/fixed_region_side"
+            },
+            "origin_airports": {
+              "$ref": "#/$defs/airport_pool"
+            },
+            "output": {
+              "type": "object",
+              "properties": {
+                "view": {
+                  "enum": [
+                    "ranked",
+                    "matrix"
+                  ]
+                },
+                "limit": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              },
+              "required": [
+                "view"
+              ],
+              "additionalProperties": false,
+              "description": "Output selection only; does not limit retained discoveries."
+            },
+            "overnight_allowed": {
+              "type": "boolean"
+            },
+            "presence_intervals": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "start": {
+                    "$ref": "#/$defs/offset_timestamp"
+                  },
+                  "end": {
+                    "$ref": "#/$defs/offset_timestamp"
+                  },
+                  "location_node_id": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "start",
+                  "end",
+                  "location_node_id"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "price_target": {
+              "oneOf": [
+                {
+                  "$ref": "#/$defs/money"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Soft price preference in base_currency; does not exclude more expensive alternatives."
+            },
+            "ranking_basis": {
+              "enum": [
+                "mandatory_air_ticket_total",
+                "complete_journey_cost"
+              ],
+              "default": "mandatory_air_ticket_total",
+              "description": "Ticket comparison is the default; complete journey costs are calculated only when requested."
+            },
+            "search_limits": {
+              "type": "object",
+              "properties": {
+                "max_queries": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "max_elapsed_minutes": {
+                  "type": "number",
+                  "exclusiveMinimum": 0
+                }
+              },
+              "required": [],
+              "additionalProperties": false,
+              "description": "Only explicit limits apply. No research-credit defaults or implicit limit conversions."
+            },
+            "self_transfer_policy": {
+              "enum": [
+                "allow",
+                "never"
+              ]
+            }
+          },
+          "required": [
+            "base_currency",
+            "departure_window"
+          ],
+          "additionalProperties": false,
+          "allOf": [
+            {
+              "oneOf": [
+                {
+                  "required": [
+                    "origin"
+                  ]
+                },
+                {
+                  "required": [
+                    "origin_airports"
+                  ]
+                }
+              ]
+            },
+            {
+              "oneOf": [
+                {
+                  "required": [
+                    "destination"
+                  ]
+                },
+                {
+                  "required": [
+                    "destination_airports"
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "properties": {
+        "journey_shape": {
+          "const": "random_loop"
+        },
+        "intent": {
+          "type": "object",
+          "properties": {
+            "additional_requirements": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "requirement_id": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "text": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "requirement_id",
+                  "text"
+                ],
+                "additionalProperties": false
+              },
+              "description": "User conditions requiring evidence-based AI assessment. Text is not an executable expression. IDs must be unique."
+            },
+            "adult_count": {
+              "type": "integer",
+              "minimum": 1,
+              "default": 1,
+              "description": "Adult travelers. Agents should make traveler count explicit rather than infer a party size from unrelated context."
+            },
+            "airport_transit": {
+              "type": "object",
+              "properties": {
+                "unknown_policy": {
+                  "enum": [
+                    "allow_with_warning",
+                    "reject"
+                  ]
+                },
+                "airside_only": {
+                  "type": "boolean"
+                }
+              },
+              "additionalProperties": false
+            },
+            "airport_transit_unknown_policy": {
+              "enum": [
+                "allow_with_warning",
+                "reject"
+              ],
+              "description": "Unknown transit feasibility may remain an explicitly unverified candidate or be rejected; it is never confirmed transit eligibility."
+            },
+            "allowed_modes": {
+              "$ref": "#/$defs/allowed_modes"
+            },
+            "baggage_policy": {
+              "$ref": "#/$defs/baggage_policy"
+            },
+            "base_currency": {
+              "$ref": "#/$defs/currency_code"
+            },
+            "budget": {
+              "oneOf": [
+                {
+                  "$ref": "#/$defs/money"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Inclusive hard budget in base_currency for the requested ranking_basis."
+            },
+            "connection_buffer_minutes": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "departure_airports": {
+              "$ref": "#/$defs/airport_pool"
+            },
+            "first_departure_window": {
+              "$ref": "#/$defs/date_or_datetime_window"
+            },
+            "first_leg_earliest_local_time": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "string",
+                "pattern": "^(?:[01][0-9]|2[0-3]):[0-5][0-9]$"
+              }
+            },
+            "fx_rates": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "from_currency": {
+                    "$ref": "#/$defs/currency_code"
+                  },
+                  "to_currency": {
+                    "$ref": "#/$defs/currency_code"
+                  },
+                  "rate": {
+                    "type": "number",
+                    "exclusiveMinimum": 0
+                  },
+                  "observed_at": {
+                    "$ref": "#/$defs/offset_timestamp"
+                  },
+                  "source_url": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "description": "Optional full reference, retained without link syntax or length gating."
+                  },
+                  "source_name": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "description": "Observed rate source name; usable attribution even when its URL is unavailable."
+                  }
+                },
+                "required": [
+                  "from_currency",
+                  "to_currency",
+                  "rate",
+                  "observed_at"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "max_connection_wait_minutes": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "Must be strictly greater than connection_buffer_minutes."
+            },
+            "max_legs": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "maximum_total_duration_minutes": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "min_legs": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "objective": {
+              "enum": [
+                "price",
+                "travel_duration",
+                "distance_per_currency"
+              ],
+              "description": "Defaults to price, or distance_per_currency for random_loop."
+            },
+            "output": {
+              "type": "object",
+              "properties": {
+                "view": {
+                  "enum": [
+                    "ranked",
+                    "matrix"
+                  ]
+                },
+                "limit": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              },
+              "required": [
+                "view"
+              ],
+              "additionalProperties": false,
+              "description": "Output selection only; does not limit retained discoveries."
+            },
+            "overnight_allowed": {
+              "type": "boolean"
+            },
+            "presence_intervals": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "start": {
+                    "$ref": "#/$defs/offset_timestamp"
+                  },
+                  "end": {
+                    "$ref": "#/$defs/offset_timestamp"
+                  },
+                  "location_node_id": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "start",
+                  "end",
+                  "location_node_id"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "price_target": {
+              "oneOf": [
+                {
+                  "$ref": "#/$defs/money"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Soft price preference in base_currency; does not exclude more expensive alternatives."
+            },
+            "quality_gate": {
+              "type": "object",
+              "required": [],
+              "properties": {
+                "minimum_complete_loop_efficiency_km_per_base_currency_unit": {
+                  "type": "number",
+                  "exclusiveMinimum": 0
+                },
+                "maximum_leg_price_in_base_currency": {
+                  "type": [
+                    "number",
+                    "null"
+                  ],
+                  "exclusiveMinimum": 0
+                }
+              },
+              "additionalProperties": false
+            },
+            "ranking_basis": {
+              "enum": [
+                "mandatory_air_ticket_total",
+                "complete_journey_cost"
+              ],
+              "default": "mandatory_air_ticket_total",
+              "description": "Ticket comparison is the default; complete journey costs are calculated only when requested."
+            },
+            "return_airports": {
+              "$ref": "#/$defs/airport_pool"
+            },
+            "return_arrival_window": {
+              "$ref": "#/$defs/date_or_datetime_window"
+            },
+            "search_limits": {
+              "type": "object",
+              "properties": {
+                "max_queries": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "max_elapsed_minutes": {
+                  "type": "number",
+                  "exclusiveMinimum": 0
+                }
+              },
+              "required": [],
+              "additionalProperties": false,
+              "description": "Only explicit limits apply. No research-credit defaults or implicit limit conversions."
+            },
+            "self_transfer_policy": {
+              "enum": [
+                "allow",
+                "never"
+              ]
+            }
+          },
+          "required": [
+            "base_currency",
+            "departure_airports",
+            "return_airports",
+            "first_departure_window"
+          ],
+          "additionalProperties": false
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "currency_code": {
+      "type": "string",
+      "pattern": "^[A-Z]{3}$"
+    },
+    "money": {
+      "type": "object",
+      "required": [
+        "amount",
+        "currency"
+      ],
+      "properties": {
+        "amount": {
+          "type": "number",
+          "minimum": 0
+        },
+        "currency": {
+          "$ref": "#/$defs/currency_code"
+        }
+      },
+      "additionalProperties": false
+    },
+    "baggage_policy": {
+      "type": "object",
+      "required": [
+        "cabin_baggage",
+        "checked_bag_count",
+        "paid_baggage_allowed"
+      ],
+      "properties": {
+        "cabin_baggage": {
+          "enum": [
+            "none_required",
+            "personal_item",
+            "cabin_bag",
+            "personal_item_and_cabin_bag"
+          ],
+          "description": "The minimum cabin-baggage entitlement required. none_required does not exclude fares that include baggage."
+        },
+        "checked_bag_count": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "The total number of checked bags required for the traveler party."
+        },
+        "paid_baggage_allowed": {
+          "type": "boolean",
+          "description": "Whether missing required baggage may be purchased when its observed mandatory cost is included in the total."
+        }
+      },
+      "additionalProperties": false
+    },
+    "date_or_datetime_window": {
+      "type": "object",
+      "description": "A same-representation window whose end must not precede its start; a Product may require a strict interval.",
+      "required": [
+        "start",
+        "end"
+      ],
+      "properties": {
+        "start": {
+          "oneOf": [
+            {
+              "type": "string",
+              "format": "date",
+              "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+            },
+            {
+              "$ref": "#/$defs/offset_timestamp"
+            }
+          ]
+        },
+        "end": {
+          "oneOf": [
+            {
+              "type": "string",
+              "format": "date",
+              "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+            },
+            {
+              "$ref": "#/$defs/offset_timestamp"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "exact_departure_dates": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "description": "Optional exact departure dates inside the required departure window. Omission allows the whole window.",
+      "items": {
+        "type": "string",
+        "format": "date"
+      }
+    },
+    "node": {
+      "type": "object",
+      "required": [
+        "node_id",
+        "node_type",
+        "location",
+        "country_or_region",
+        "country_code",
+        "timezone"
+      ],
+      "properties": {
+        "node_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "node_type": {
+          "enum": [
+            "airport",
+            "railway_station",
+            "bus_terminal",
+            "ferry_terminal",
+            "city_destination",
+            "address"
+          ]
+        },
+        "location": {
+          "type": "string",
+          "minLength": 1
+        },
+        "country_or_region": {
+          "type": "string",
+          "minLength": 1
+        },
+        "country_code": {
+          "type": "string",
+          "pattern": "^[A-Z]{2}$"
+        },
+        "timezone": {
+          "type": "string",
+          "minLength": 1
+        },
+        "utc_offset": {
+          "type": "string",
+          "pattern": "^[+-][0-9]{2}:[0-9]{2}$"
+        }
+      },
+      "additionalProperties": false
+    },
+    "fixed_region_side": {
+      "type": "object",
+      "required": [
+        "region_id",
+        "label",
+        "country_codes",
+        "policy",
+        "endpoint_policy",
+        "anchor_nodes",
+        "seed_gateway_nodes"
+      ],
+      "properties": {
+        "region_id": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9._-]*$"
+        },
+        "label": {
+          "type": "string",
+          "minLength": 1
+        },
+        "country_codes": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Z]{2}$"
+          }
+        },
+        "search_geography": {
+          "type": "object",
+          "required": [
+            "kind",
+            "country_code"
+          ],
+          "properties": {
+            "kind": {
+              "const": "country"
+            },
+            "country_code": {
+              "type": "string",
+              "pattern": "^[A-Z]{2}$"
+            }
+          },
+          "additionalProperties": false,
+          "description": "Optional user-declared whole-country search scope. Omit for a city or bounded region."
+        },
+        "policy": {
+          "enum": [
+            "exact",
+            "city_region",
+            "extended_region"
+          ],
+          "description": "Gateway discovery geography, independent of whether the user requires connection to the Anchor."
+        },
+        "endpoint_policy": {
+          "enum": [
+            "anchor_required",
+            "any_admitted_gateway"
+          ],
+          "description": "Per-side user requirement. anchor_required connects the declared city, address, station, or airport Anchor to the selected Gateway; it permits independent seed Gateways and regional expansion. any_admitted_gateway applies only when the user accepts independently reaching or leaving a selected Gateway. In a round trip, the origin rule applies to outbound access and return egress; the destination rule applies to outbound egress and return access."
+        },
+        "anchor_nodes": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/node"
+          }
+        },
+        "seed_gateway_nodes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/node"
+          }
+        },
+        "max_access_time_minutes": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0,
+          "description": "Optional user hard ceiling for regional access time; null or omission means no user ceiling."
+        },
+        "max_egress_time_minutes": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0,
+          "description": "Optional user hard ceiling for regional egress time; null or omission means no user ceiling."
+        },
+        "max_ground_cost": {
+          "description": "Inclusive hard price ceiling for one required regional access or egress Offer; null means no price ceiling.",
+          "oneOf": [
+            {
+              "$ref": "#/$defs/money"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "allowed_ground_modes": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "rail",
+              "bus",
+              "coach",
+              "ferry",
+              "local_transit",
+              "walk",
+              "rideshare",
+              "car"
+            ]
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "allowed_modes": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "description": "Explicit allowed transport modes; omission does not invent a mode restriction.",
+      "items": {
+        "enum": [
+          "flight",
+          "rail",
+          "bus",
+          "coach",
+          "ferry",
+          "local_transit",
+          "walk",
+          "rideshare",
+          "car"
+        ]
+      }
+    },
+    "airport_pool": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "pattern": "^[A-Z]{3}$"
+      }
+    },
+    "offset_timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d+)?(?:Z|[+-]\\d{2}:\\d{2})$"
+    }
+  }
+}

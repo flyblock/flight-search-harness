@@ -1,33 +1,16 @@
 ---
 name: low-cost-one-way-travel-flight-search
-description: Search the lowest verified one-way Mandatory Air Ticket Total across flexible regional airports. Use when the user does not need to return to the origin.
+description: Search one-way journeys to a selected destination using the user's endpoints, constraints, and objective. Use when no return to the origin is required.
 ---
 
-# Low-Cost One-Way Flight Search
+# One-way flight search
 
-Use the one-way Product Kernel through the Flight Search Harness. Rank complete feasible flight paths by Mandatory Air Ticket Total; do not turn optional ground transport or accommodation research into a prerequisite for finding the airfare winner.
+Search toward the selected destination without adding a return journey. Explore useful date, airport, airline, and separate-ticket combinations inside the user's accepted scope.
 
-## Prepare
+Run `python -B <skill-directory>/scripts/resolve_harness.py`. Read its `workflow_ref` and [this journey's workflow](references/product-workflow.md). Keep the returned launcher, Request Schema, record-template and external runtime paths; use the same `--runs-root` for the whole Run. The returned quote, signal, challenge-query and airport-discovery templates show the public format without reading implementation files.
 
-1. From the caller workspace, run `python <skill-directory>/scripts/resolve_harness.py`. Keep the returned `launcher_ref`, `mission_runtime_ref`, and `request_schema_ref`; the resolver uses the bundled Harness when present and obtains the matching Harness when this Skill was installed by itself.
-2. Copy and fill [the compact request template](assets/request-template.json). Replace every `REPLACE_...` value and store the request in the caller workspace, normally under `runs/requests/`.
-3. Read [the one-way workflow](references/product-workflow.md) and the returned `mission_runtime_ref` for product decisions and the shared Search Mission procedure.
-4. Read the returned public `request_schema_ref` only when uncommon optional constraints or a request-validation failure require fields beyond the template. Product Kernel Schemas are internal and are not Skill request contracts.
+Create a fresh Request and Run from the current user request, using [the request template](assets/request-template.json) where appropriate. Preserve city Anchors and the user's original words; airport-only template values require accepted airport endpoints. Read no unrelated old Runs or conclusions. The shared workflow defines the common fields and rules, including default ticket-cost comparison and optional full journey costs.
 
-Record `base_currency`, `adult_count`, `baggage_policy`, `overnight_allowed`, `self_transfer_policy`, and `search_effort` explicitly. Default `search_effort` to `standard`. This Product supports adult travelers only: treat an unspecified age as adult, but stop with a focused limitation when the user explicitly includes a child or infant. Its current deterministic baggage capability is fixed to `cabin_baggage: "none_required"`, `checked_bag_count: 0`, and `paid_baggage_allowed: true`; this does not exclude fares that include baggage. A stated baggage requirement is currently unsupported and must not be presented as verified. Request Provider prices in the Base Currency; the Harness owns required FX normalization.
+Use the best known eligible candidate as a benchmark to challenge. Choose research from saved findings, external discovery and the user's objective; a first usable ticket is not by itself a reason to stop. Save each actual query together with its findings using inline `query` in `record`, or associate a previously registered `query_id`. Preserve partially checked and higher prices as well as useful complete Offers. Missing details do not justify dropping an observed price. Read a tool clock (or the portable `clock` command) while observing the source and reuse that timestamp when saving. Reference and time metadata problems must not discard useful facts; screenshots and page attachments are optional.
 
-For a city or region, let the AI define the finite Self-access Gateway Pool and use `any_admitted_gateway`; there is no numeric airport cap. The user arranges Endpoint Access and Endpoint Egress outside the ranking. Use `anchor_required` only for an exact airport endpoint explicitly requested by the user. Do not create priced Endpoint Work Items.
-
-Ask one focused question only when a missing origin or destination region, hard date boundary, Base Currency, adult count, overnight permission, self-transfer policy, or explicit hard constraint would materially change the search. Omit duration and transfer-count limits unless the user states them; long waits and unprotected or overnight connections are warnings when otherwise allowed.
-
-## Run
-
-Start or resume the Search Mission with the resolved launcher and External Worker. Follow the Product Kernel's browser briefs, submit item-bound Receipts, and continue through the same Run. Representation correction and Evidence replay must reuse captured facts and must not repeat Provider research. A Worker-directed `blocked` Outcome is an execution instruction, not a result to hand to the user. Resume an actionable `draft` while the active request still authorizes progress.
-
-Execute every live research Work Item through an authorized user-visible Browser page.
-
-For a new user search, start a fresh Run and do not inspect or reuse another chat's Run, old Receipt, Session, result, or price. Resume only a Run created earlier in the current task, unless the user explicitly names an older Run to continue.
-
-## Deliver
-
-After the Product Kernel returns a `completed` Outcome, run `python <launcher_ref> --runs-root runs deliver --run-id <run-id>` and present only a `kind=deliverable` Result. State that the winner is the lowest verified Mandatory Air Ticket Total within the disclosed Self-access Gateway Pool, searched scope, Search Effort, and Research Credits. Disclose excluded Endpoint, Internal Surface Transfer, accommodation, and other non-air costs; show booking links, freshness, warnings, and unresolved or unsearched scope. Never construct the answer from private state or browser memory. A `delivery_blocked` response requires its recovery action. Never fabricate Evidence, book, pay, or present a final result before `completed`.
+Use `purpose: "challenge"` with a reason on competitive queries, and consult `research_feedback` after saving. Where the user permits flexible endpoints, discover reachable airports from external sources rather than treating the first airport list or an administrative border as the search boundary. Follow the shared workflow for `airport_discovery`. Adjust the method when a source cannot execute it. Present the current best and useful complete alternatives already found, including beaten baselines; do not research solely to fill ranks or present unverified signals as bookable runners-up. Include actual dates, airports, flight identities, prices and restrictions from the saved result, including `verification` and `required_disclosures`. Ticket eligibility, booking-page stage, connection protection and endpoint feasibility are separate facts. Record a reason when stopping; neither a stopped Run nor a ranked ticket establishes a global optimum.
