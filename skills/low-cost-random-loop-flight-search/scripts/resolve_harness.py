@@ -7,7 +7,7 @@ import sys
 from pathlib import Path
 
 
-HARNESS_VERSION = "3.5.0"
+HARNESS_VERSION = "3.5.1"
 PRODUCT_ID = "random_loop"
 
 
