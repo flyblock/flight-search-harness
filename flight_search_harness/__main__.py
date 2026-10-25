@@ -53,8 +53,10 @@ def _candidate(entry, observations):
               "dates": entry["dates"], "itinerary": _itinerary(entry), "tickets": tickets,
               "verification_status": entry["verification"]["overall_status"]}
     result.update({k: entry[k] for k in ("rank", "status", "stay_nights", "travel_duration_minutes", "distance_per_currency") if entry.get(k) is not None})
-    if entry["cost_coverage"] == "mandatory_air_tickets_and_internal_surface":
-        result["cost_coverage"] = entry["cost_coverage"]
+    if entry.get("outside_gateway_access"):
+        result["mandatory_air_ticket_total"] = _money(entry["mandatory_air_ticket_total"])
+        result["outside_gateway_access"] = [
+            {k: _money(v) if k == "cost" else v for k, v in c.items()} for c in entry["outside_gateway_access"]]
     if entry["status"] == "partial_component":
         result.pop("ranking_cost")
         result["component_cost"] = _money(entry["component_cost"])
@@ -76,6 +78,9 @@ def _feedback(feedback, entries, *, delivered=False):
         best = {"candidate_id": best["candidate_id"]}
         if not delivered:
             best.update(ranking_cost=_money(entry.get("ranking_cost")), itinerary=_itinerary(entry))
+            if entry.get("outside_gateway_access"):
+                best["mandatory_air_ticket_total"] = _money(entry["mandatory_air_ticket_total"])
+                best["outside_gateway_access"] = [{k: _money(v) if k == "cost" else v for k, v in c.items()} for c in entry["outside_gateway_access"]]
     challenges, counts = [], {}
     for c in feedback["challenges"]:
         r = c["result"]
@@ -153,6 +158,8 @@ def compact_response(value, state):
             if not isinstance(value["recording"], list):
                 compact["recording"] = compact["recording"][0]
         value = compact
+    if state["requests"][-1]["request"]["intent"]["ranking_basis"] == "mandatory_air_ticket_total":
+        compact["cost_coverage"] = "tickets_internal_surface_and_outside_gateway_access"
     if "research_feedback" in result:
         compact["research_feedback"] = _feedback(result["research_feedback"], projection["entries"], delivered="entries" in result)
     return value

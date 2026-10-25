@@ -652,6 +652,7 @@ def _evaluate(refs: list[dict], identifier: str, records: dict, request: dict,
 
     # Endpoint limits apply only when declared. Absent access observations remain
     # unknown; choosing an airfare objective does not waive an explicit limit.
+    endpoint_paths = []
     for side in ("origin", "destination"):
         region = intent.get(side, {})
         anchors = {_node(n) for n in region.get("anchor_nodes", [])}
@@ -667,8 +668,8 @@ def _evaluate(refs: list[dict], identifier: str, records: dict, request: dict,
                 segments.append(("egress", movements[arrival_index + 1:], _node(destination_arrival.get("to_node")) in anchors))
             elif return_movement:
                 return_index = movements.index(return_movement)
-                arrival_anchor_index = movements.index(stay_arrival) if stay_arrival else arrival_index
-                departure_anchor_index = movements.index(stay_departure) if stay_departure else return_index
+                arrival_anchor_index = next((i for i in range(arrival_index + 1, return_index) if _node(movements[i].get("to_node")) in anchors), arrival_index)
+                departure_anchor_index = next((i for i in range(return_index - 1, arrival_index, -1) if _node(movements[i].get("from_node")) in anchors), return_index)
                 segments.append(("egress", movements[arrival_index + 1:arrival_anchor_index + 1], _node(destination_arrival.get("to_node")) in anchors))
                 segments.append(("access", movements[departure_anchor_index:return_index], _node(return_movement.get("from_node")) in anchors))
         for direction, segment, coincident in segments:
@@ -678,7 +679,9 @@ def _evaluate(refs: list[dict], identifier: str, records: dict, request: dict,
                 known = at_anchor in anchors
             gateway = (_node(first.get("from_node")) if direction == "access" else _node(last.get("to_node"))) if side == "origin" else (
                 _node((return_movement or {}).get("from_node")) if direction == "access" else _node(destination_arrival.get("to_node")))
-            required = region.get("endpoint_policy") == "anchor_required"
+            outside = any(d["side"] == side and d["node"]["node_id"] == gateway and d["outside_seed_pool"] for d in gateway_discoveries)
+            required = region.get("endpoint_policy") == "anchor_required" and (intent.get("ranking_basis") == "complete_journey_cost" or outside)
+            endpoint_paths.append((side, direction, gateway, segment))
             continuous = coincident
             if segment:
                 at_gateway = _node(segment[-1].get("to_node")) if direction == "access" else _node(segment[0].get("from_node"))
@@ -747,16 +750,97 @@ def _evaluate(refs: list[dict], identifier: str, records: dict, request: dict,
                     if shape == "round_trip":
                         connected = connected and any(_node(m.get("from_node")) in anchors for m in movements)
                 check(side + "_completion", True if connected else None, "Complete journey cost requires observed transport to the requested anchor.")
-    else:
-        if any(intent.get(side, {}).get("endpoint_policy") == "anchor_required" for side in ("origin", "destination")):
-            warnings.append("Ranking covers mandatory air tickets; endpoint access and egress costs are excluded unless separately evidenced.")
     internal_surface = {owners[id(m)] for m in movements[movements.index(flights[0]):movements.index(flights[-1]) + 1]
                         if owners[id(m)] in surface_prices} if flights else set()
+    endpoint_ids = {id(m) for _, _, _, path in endpoint_paths for m in path}
+    internal_surface -= {ref for ref in internal_surface if all(id(m) in endpoint_ids for m in movements if owners[id(m)] == ref)}
     surface_known = all(surface_prices[ref] is not None for ref in internal_surface)
     core_total = air_total + sum((surface_prices[ref] for ref in internal_surface if surface_prices[ref] is not None), Decimal(0))
-    if internal_surface and ranking_basis != "complete_journey_cost":
-        warnings.append("Ranking includes mandatory internal surface tickets; endpoint access and egress remain excluded.")
-    ranking = full_total if ranking_basis == "complete_journey_cost" and full_known else core_total if ranking_basis != "complete_journey_cost" and air_known and air_offer_count and surface_known else None
+    outside_access, access_extra, access_known = [], Decimal(0), True
+    if ranking_basis != "complete_journey_cost":
+        outside = {(d["side"], d["node"]["node_id"]): d for d in request.get("_gateway_discoveries", [])
+                   if d["outside_seed_pool"] and intent.get(d["side"], {}).get("endpoint_policy") == "anchor_required"}
+        accepted = {side: _airports(intent, side) - {g for s, g in outside if s == side}
+                    | {_node(n) for n in intent.get(side, {}).get("anchor_nodes", [])} for side in ("origin", "destination")}
+        paths = [(s, direction, g, path) for s, direction, g, path in endpoint_paths if (s, g) in outside]
+        # Positioning flights already belong to air_total. Identify separately
+        # priced paths on either side without adding them again or splitting a joint fare.
+        positioning = []
+        for side in ("origin", "destination"):
+            for flight in flights:
+                index = movements.index(flight)
+                for direction, gateway in (("access", _node(flight.get("from_node"))), ("egress", _node(flight.get("to_node")))):
+                    if (side, gateway) not in outside:
+                        continue
+                    if side == "origin":
+                        boundary = destination_arrival if direction == "access" else return_movement
+                        if not boundary or (index > movements.index(boundary) if direction == "access" else index < movements.index(boundary)):
+                            continue
+                    elif not destination_arrival or index < movements.index(destination_arrival):
+                        continue
+                    if direction == "access":
+                        start = next((i for i in range(index - 1, -1, -1) if _node(movements[i].get("from_node")) in accepted[side]), index)
+                        path = movements[start:index]
+                    else:
+                        end = next((i for i in range(index + 1, len(movements)) if _node(movements[i].get("to_node")) in accepted[side]), index)
+                        path = movements[index + 1:end + 1]
+                    if path:
+                        positioning.append((side, direction, gateway, path))
+        def access_connected(side, direction, gateway, path):
+            if not path:
+                return False
+            home = _node(path[0].get("from_node")) if direction == "access" else _node(path[-1].get("to_node"))
+            airport = _node(path[-1].get("to_node")) if direction == "access" else _node(path[0].get("from_node"))
+            return home in accepted[side] and airport == gateway and all(
+                _node(a.get("to_node")) == _node(b.get("from_node")) for a, b in zip(path, path[1:]))
+
+        path_ids = {id(m) for s, direction, g, path in endpoint_paths + positioning if access_connected(s, direction, g, path) for m in path}
+        endpoint_only = {ref for ref in owners.values() if all(id(m) in path_ids for m in movements if owners[id(m)] == ref)}
+        positioned_roles = set()
+        for item in sorted(positioning, key=lambda p: len(p[3]), reverse=True):
+            if item[:2] not in positioned_roles and access_connected(*item) and {owners[id(m)] for m in item[3]} <= endpoint_only:
+                paths = [p for p in paths if p[:2] != item[:2]] + [item]
+                positioned_roles.add(item[:2])
+        core_refs = internal_surface | {owners[id(m)] for m in flights}
+        observed = {}
+        for side, direction, gateway, path in paths:
+            path_refs = {owners[id(m)] for m in path}
+            if access_connected(side, direction, gateway, path) and (path_refs <= endpoint_only or (side, direction, gateway, path) in endpoint_paths):
+                for ref in sorted(path_refs):
+                    if ref not in observed:
+                        observation, offer = records[ref]
+                        bundled = ref not in endpoint_only
+                        amount = _convert(offer.get("price"), currency, intent) if not bundled else None
+                        component = {"side": side, "gateway_node_ids": [], "directions": [], "cost": _money(amount, currency),
+                                     "basis": "observed", "offer_refs": [{"observation_id": ref[0], "offer_id": ref[1]}], "included_in_core_total": ref in core_refs}
+                        if bundled:
+                            component["allocation"] = "included_in_joint_price"
+                        outside_access.append(component)
+                        observed[ref] = component
+                        if amount is None and not bundled:
+                            access_known = False
+                            check(side + "_" + direction + "_outside_gateway_cost", None, f"Access cost unknown for outside gateway {gateway} (price or FX missing).")
+                        elif ref not in core_refs and amount is not None:
+                            access_extra += amount
+                    if direction not in observed[ref]["directions"]:
+                        observed[ref]["directions"].append(direction)
+                    if gateway not in observed[ref]["gateway_node_ids"]:
+                        observed[ref]["gateway_node_ids"].append(gateway)
+            elif (side, direction, gateway, path) in endpoint_paths:
+                discovery = outside[(side, gateway)]
+                access = discovery["access"]
+                basis = access.get("basis") if access.get("basis") in ("observed", "estimated") else "unknown"
+                amount = _convert(access.get("cost"), currency, intent) if basis in ("observed", "estimated") else None
+                outside_access.append({"side": side, "gateway_node_ids": [gateway], "directions": [direction], "cost": _money(amount, currency),
+                                       "basis": basis, "observation_id": discovery["observation_id"], "included_in_core_total": False})
+                if amount is None:
+                    access_known = False
+                    check(side + "_" + direction + "_outside_gateway_cost", None, f"Access cost unknown for outside gateway {gateway} (amount, FX or basis missing).")
+                else:
+                    access_extra += amount
+                    if basis == "estimated":
+                        disclosures.append(f"{side}_{direction}: outside gateway {gateway} access cost is AI-estimated, not an observed payable price.")
+    ranking = full_total if ranking_basis == "complete_journey_cost" and full_known else core_total + access_extra if ranking_basis != "complete_journey_cost" and air_known and air_offer_count and surface_known and access_known else None
     if ranking is None:
         check("ranking_cost", None, "The requested comparison cost is not known.")
     if intent.get("budget"):
@@ -840,10 +924,12 @@ def _evaluate(refs: list[dict], identifier: str, records: dict, request: dict,
             "required_disclosures": required_disclosures,
             "requirements": list(checks.values()), "warnings": list(dict.fromkeys(warnings)),
             "ranking_cost": _money(ranking, currency) if journey_complete else None, "mandatory_air_ticket_total": _money(air_total if air_known and air_offer_count else None, currency),
+            "gateway_complete_cost": _money(core_total if air_known and air_offer_count and surface_known else None, currency),
+            "outside_gateway_access": outside_access if journey_complete else [],
             "journey_complete": journey_complete,
             "component_cost": _money(full_total, currency) if not journey_complete and full_known else None,
             "ranking_basis": ranking_basis, "objective": objective, "prices": prices,
-            "cost_coverage": "known_components" if not journey_complete or ranking_basis == "complete_journey_cost" else "mandatory_air_tickets_and_internal_surface" if internal_surface else "mandatory_air_tickets",
+            "cost_coverage": "known_components" if not journey_complete or ranking_basis == "complete_journey_cost" else "tickets_internal_surface_and_outside_gateway_access",
             "disclosed_mandatory_costs_known": complete_costs and full_known,
             "known_cost_components": _money(full_total if full_known else None, currency),
             "price_target_met": ranking <= target if journey_complete and ranking is not None and target is not None else None,
@@ -951,7 +1037,7 @@ def evaluate_session(state: dict, *, evaluation_at: str, request_revision: int |
             observation, offer = records[(ref["observation_id"], ref["offer_id"])]
             partitions.append(_variant_key(observation, offer, include_seller=False))
         group_key = tuple(sorted(partitions))
-        variant = {key: copy.deepcopy(entry[key]) for key in ("candidate_id", "offer_refs", "prices", "ranking_cost", "last_observed", "quote_observations", "requirements", "warnings", "eligibility_scope", "verification", "required_disclosures", "discovery_refs", "gateway_discoveries")}
+        variant = {key: copy.deepcopy(entry[key]) for key in ("candidate_id", "offer_refs", "prices", "ranking_cost", "mandatory_air_ticket_total", "gateway_complete_cost", "outside_gateway_access", "last_observed", "quote_observations", "requirements", "warnings", "eligibility_scope", "verification", "required_disclosures", "discovery_refs", "gateway_discoveries")}
         if group_key in grouped:
             grouped[group_key]["seller_variants"].append(variant)
         else:

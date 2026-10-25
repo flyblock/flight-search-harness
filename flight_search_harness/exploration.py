@@ -166,13 +166,19 @@ def _budget_hints(state: dict, projection: dict, observations: dict, request: di
                     if not any(p[4] | other[4] <= r for r in parents):
                         add(cap - p[1], f"Combine {p[0]['candidate_id']},{other[0]['candidate_id']}: {p[1] + other[1]:.2f} vs best {upper:.2f} {intent['base_currency']}.")
                 direction(pools[origin], pools[destination], cap, labels[origin], labels[destination], name + ": ", other)
-    prices = [*_price_leads(projection, observations), *[(e["candidate_id"], e["ranking_cost"], _scope(e, observations), "") for e in projection["entries"]]]
+    # Positioning budgets subtract the core fare, never a ranking total that
+    # already includes that same positioning cost. Unknown-access quotes remain leads.
+    prices = [p for p in _price_leads(projection, observations) if p[0] in observations]
+    prices.extend((e["candidate_id"], e["gateway_complete_cost"], _scope(e, observations), "")
+                  for e in [*projection["entries"], *projection["alternatives"]] if e.get("gateway_complete_cost"))
     active = {p[0] for p in _pending_leads(state, projection, observations, request)} | {e["candidate_id"] for e in [*projection["entries"], *projection["alternatives"]]}
     for identifier, price, scope, _ in prices:
         value = _convert(price, intent["base_currency"], intent)
         if value is None or not _whole_scope(scope, request, projection):
             continue
         for side in pools:
+            if intent.get(side, {}).get("endpoint_policy") == "any_admitted_gateway":
+                continue
             for gateway in set(scope.get(side + "_airports", [])) - _airports(intent, side):
                 priced.add((side, gateway))
                 anchors = {n["node_id"] for n in intent.get(side, {}).get("anchor_nodes", [])}
@@ -180,7 +186,7 @@ def _budget_hints(state: dict, projection: dict, observations: dict, request: di
                 inward = any(a == gateway and b in anchors for a, b in routes)
                 joint = any(p[2] in anchors and p[3] in anchors and any(_node(m["to_node"]) == gateway for m in p[0]["movements"]) for p in parts)
                 filled = (outward and inward or joint) if shape == "round_trip" else (outward if side == "origin" else inward)
-                if identifier not in active or filled:
+                if identifier not in active or identifier == best["candidate_id"] or filled:
                     continue
                 span = "<->" if shape == "round_trip" else "->" if side == "origin" else "<-"
                 add(upper - value, f"Positioning {labels[side]}{span}{gateway} must cost < {upper - value:.2f} {intent['base_currency']} ({'return total; ' if shape == 'round_trip' else ''}fare {value:.2f}) [{identifier}].", identifier)
@@ -447,15 +453,17 @@ def research_feedback(state: dict[str, Any], projection: dict[str, Any] | None =
             continue
         opportunities.append({"side": side, "node_id": identifier, "observation_id": node["observation_id"],
                               "reason": node["reason"], "access": copy.deepcopy(node["access"]), "status": "no_comparable_candidate"})
-        if best and (side, identifier) not in priced_gateways and request["intent"]["ranking_basis"] == "mandatory_air_ticket_total":
+        if (best and node["outside_seed_pool"] and request["intent"].get(side, {}).get("endpoint_policy") != "any_admitted_gateway"
+                and (side, identifier) not in priced_gateways and request["intent"]["ranking_basis"] == "mandatory_air_ticket_total"):
             access = node["access"]
-            cost = _convert(access.get("cost"), request["intent"]["base_currency"], request["intent"])
+            cost = _convert(access.get("cost"), request["intent"]["base_currency"], request["intent"]) if access.get("basis") in ("observed", "estimated") else None
             if cost is None:
                 gateway_actions.append((True, f"Via {identifier}: access cost/FX unknown; never assume zero."))
             else:
-                basis = access.get("basis") if access.get("basis") in ("observed", "estimated") else "basis unspecified"
+                basis = access["basis"]
+                cost *= 2 if request["journey_shape"] == "round_trip" else 1
                 cutoff = _number(best["ranking_cost"]["unrounded_amount"]) - cost
-                gateway_actions.append((False, f"Via {identifier}: fares < {cutoff:.2f} {request['intent']['base_currency']} (best ticket minus {basis} access {cost:.2f}; price screen only)."))
+                gateway_actions.append((False, f"Via {identifier}: fares < {cutoff:.2f} {request['intent']['base_currency']} (best ranking cost minus {basis} access {cost:.2f}; price screen only)."))
     challenges = [{"query_id": q["query_id"], **copy.deepcopy(q["challenge"])}
                   for q in state["queries"] if q.get("challenge")]
     def comparison_context(value):
