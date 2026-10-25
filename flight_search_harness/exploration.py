@@ -73,13 +73,16 @@ def _price_leads(projection: dict, observations: dict) -> list[tuple]:
 
 def _pending_leads(state: dict, projection: dict, observations: dict, request: dict) -> list[tuple]:
     """Reuse follow-up closure for both fare and positioning budget nudges."""
+    followed = {identifier for q in state["queries"] if q["status"] in {"completed", "no_result", "unsupported", "failed"}
+                for identifier in (q["query"].get("follows_up") if isinstance(q["query"].get("follows_up"), list) else [])
+                if isinstance(identifier, str) and identifier in observations}
     candidates = [*projection["entries"], *projection["alternatives"], *projection.get("components", []), *projection["superseded"]]
     used = {e["candidate_id"] for e in candidates} | {r["observation_id"] for e in candidates for r in e["offer_refs"]}
     complete = [(_scope(e, observations), max(observations[r["observation_id"]]["received_at"] for r in e["offer_refs"])) for e in candidates if e.get("journey_complete", True)]
     pending = []
     for item in _price_leads(projection, observations):
         identifier, price, scope, recorded = item
-        if identifier in used or not _whole_scope(scope, request, projection) or any(instant > recorded and _covers(actual, scope) for actual, instant in complete):
+        if identifier in followed or identifier in used or not _whole_scope(scope, request, projection) or any(instant > recorded and _covers(actual, scope) for actual, instant in complete):
             continue
         own_query = observations.get(identifier, {}).get("query_id")
         if any(q["query_id"] != own_query and q["status"] == "completed" and q.get("finished_at", "") > recorded
@@ -121,11 +124,12 @@ def _budget_hints(state: dict, projection: dict, observations: dict, request: di
     fresh = [p for p in parts if not any(p[4] <= r for r in parents) and not any(p[4] < q[4] for q in parts)]
     routes = {(_node(e["movements"][0]["from_node"]), _node(e["movements"][-1]["to_node"])) for e in projection["components"]
               if e["movements"] and not any(r["status"] == "violated" for r in e["requirements"])}
-    hints, priced = [], set()
+    hints, priced, positioned = {}, set(), set()
 
-    def add(slack, line, lead_id=None):
-        if slack > 0:
-            hints.append((slack, line, lead_id))
+    def add(slack, line, key=None):
+        key = key or line
+        if slack > 0 and (key not in hints or (-slack, line) < (-hints[key][0], hints[key][1])):
+            hints[key] = (slack, line)
 
     def direction(origins, destinations, cap, origin_label, destination_label, prefix="", other=None):
         available = [p for p in fresh if not other or not p[4] & other[4]]
@@ -133,10 +137,10 @@ def _budget_hints(state: dict, projection: dict, observations: dict, request: di
         suffixes = [s for s in available if s[3] in destinations and s[2] not in origins]
         for p in prefixes:
             if not any(a == p[3] and b in destinations for a, b in routes):
-                add(cap - p[1], f"{prefix}From {p[3]} reach {destination_label} for < {cap - p[1]:.2f} {intent['base_currency']} [{p[0]['candidate_id']}].")
+                add(cap - p[1], f"{prefix}From {p[3]} reach {destination_label} for < {cap - p[1]:.2f} {intent['base_currency']} [{p[0]['candidate_id']}].", (prefix, "from", p[3]))
         for s in suffixes:
             if not any(a in origins and b == s[2] for a, b in routes):
-                add(cap - s[1], f"{prefix}Reach {s[2]} from {origin_label} for < {cap - s[1]:.2f} {intent['base_currency']} [{s[0]['candidate_id']}].")
+                add(cap - s[1], f"{prefix}Reach {s[2]} from {origin_label} for < {cap - s[1]:.2f} {intent['base_currency']} [{s[0]['candidate_id']}].", (prefix, "reach", s[2]))
         for p in prefixes:
             for s in suffixes:
                 if p[4] & s[4] or other and (p[4] | s[4]) & other[4]:
@@ -147,7 +151,7 @@ def _budget_hints(state: dict, projection: dict, observations: dict, request: di
                     ids = ",".join(x[0]["candidate_id"] for x in ([p, s, other] if other else [p, s]))
                     add(slack, f"Combine {ids}: {total:.2f} vs best {upper:.2f} {intent['base_currency']}.")
                 elif p[3] != s[2] and (p[3], s[2]) not in routes:
-                    add(slack, f"{prefix}Connect {p[3]}->{s[2]} (any permitted mode) for < {slack:.2f} {intent['base_currency']} [{p[0]['candidate_id']},{s[0]['candidate_id']}].")
+                    add(slack, f"{prefix}Connect {p[3]}->{s[2]} (any permitted mode) for < {slack:.2f} {intent['base_currency']} [{p[0]['candidate_id']},{s[0]['candidate_id']}].", (prefix, "connect", p[3], s[2]))
 
     if intent.get("self_transfer_policy", "allow") != "never":
         if shape == "one_way":
@@ -181,6 +185,9 @@ def _budget_hints(state: dict, projection: dict, observations: dict, request: di
                 continue
             for gateway in set(scope.get(side + "_airports", [])) - _airports(intent, side):
                 priced.add((side, gateway))
+                # Every outside lead belongs to its gateway budget, including
+                # those displaced by a better fare or the compact hint cap.
+                positioned.add(identifier)
                 anchors = {n["node_id"] for n in intent.get(side, {}).get("anchor_nodes", [])}
                 outward = any(a in anchors and b == gateway for a, b in routes)
                 inward = any(a == gateway and b in anchors for a, b in routes)
@@ -189,12 +196,12 @@ def _budget_hints(state: dict, projection: dict, observations: dict, request: di
                 if identifier not in active or identifier == best["candidate_id"] or filled:
                     continue
                 span = "<->" if shape == "round_trip" else "->" if side == "origin" else "<-"
-                add(upper - value, f"Positioning {labels[side]}{span}{gateway} must cost < {upper - value:.2f} {intent['base_currency']} ({'return total; ' if shape == 'round_trip' else ''}fare {value:.2f}) [{identifier}].", identifier)
-    chosen = sorted(set(hints), key=lambda h: (-h[0], h[1]))[:3]
+                add(upper - value, f"Positioning {labels[side]}{span}{gateway} must cost < {upper - value:.2f} {intent['base_currency']} ({'return total; ' if shape == 'round_trip' else ''}fare {value:.2f}) [{identifier}].", ("positioning", side, gateway))
+    chosen = sorted(hints.values(), key=lambda h: (-h[0], h[1]))[:3]
     lines = [h[1] for h in chosen]
     if lines:
         lines[0] += " Check timing/visa."
-    return lines, priced, {h[2] for h in chosen if h[2] is not None}
+    return lines, priced, positioned
 
 
 def _structure_hint(state: dict, projection: dict, request: dict) -> list[str]:
@@ -484,7 +491,8 @@ def research_feedback(state: dict[str, Any], projection: dict[str, Any] | None =
     for side in required:
         missing = [c for c in REVIEW_CATEGORIES if c not in reviewed[side] and (c != "hub_positioning" or request["intent"].get("self_transfer_policy") != "never")]
         if side in missing_sides:
-            actions.append(f"Discover reachable {side} airports from external sources ({', '.join(missing)}); borders are not limits.")
+            actions.append(f"Discover reachable {side} airports from external sources ({', '.join(missing)}); borders are not limits." if missing
+                           else f"Link the saved {side} airport discovery to a completed purpose=airport_discovery query.")
         elif missing:
             review_lines.append(f"Review {side} categories: " + ", ".join(missing) + ".")
     actions.extend(line for _, line in sorted(gateway_actions))

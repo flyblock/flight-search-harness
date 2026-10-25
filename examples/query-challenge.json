@@ -16,5 +16,8 @@
     "ticketing_structure": "REPLACE_WITH_separate_purchases_open_jaw_OR_hub_positioning_IF_ACTUALLY_QUERIED_OR_REMOVE_FIELD"
   },
   "purpose": "challenge",
-  "reason": "REPLACE_WITH_WHY_THIS_QUERY_COULD_IMPROVE_THE_CURRENT_BEST"
+  "reason": "REPLACE_WITH_WHY_THIS_QUERY_COULD_IMPROVE_THE_CURRENT_BEST",
+  "follows_up": [
+    "REPLACE_WITH_SAVED_OBSERVATION_ID_IF_FOLLOWING_UP_A_LEAD_OR_REMOVE_FIELD"
+  ]
 }

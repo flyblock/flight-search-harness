@@ -189,12 +189,24 @@ class ResearchStore:
         if retry_reason is not None and (not isinstance(retry_reason, str) or not retry_reason.strip()):
             raise ValueError("retry_reason must explain refresh or another attempt")
         key, context = self._query_key(query, state["requests"][-1]["request"]["intent"])
+        warnings = []
+        follows_up = query.get("follows_up", [])
+        if not isinstance(follows_up, list) or any(not isinstance(i, str) or not i.strip() for i in follows_up):
+            warnings.append("query.follows_up must be an array of nonempty observation IDs; invalid entries are ignored.")
+        known = {o["observation_id"] for o in state["observations"]}
+        if isinstance(follows_up, list):
+            unknown = [i for i in follows_up if isinstance(i, str) and i.strip() and i not in known]
+            if unknown:
+                warnings.append("query.follows_up names unknown observation IDs: " + ", ".join(dict.fromkeys(unknown)))
         previous = [item for item in state["queries"] if item["query_key"] == key]
         if previous and not retry_reason:
-            return previous[-1], False, []
+            if follows_up != previous[-1]["query"].get("follows_up", []):
+                warnings.append("Duplicate query retains its original follows_up; use retry_reason for a new follow-up attempt.")
+            return previous[-1], False, warnings
         issues = self._query_limits(state)
         if issues and not observed:
             raise ValueError("; ".join(issues) + "; saved findings remain deliverable")
+        issues.extend(warnings)
         instant = now()
         item = {
             "query_id": "query-" + uuid.uuid4().hex[:16], "query_key": key,
@@ -221,12 +233,13 @@ class ResearchStore:
     def query(self, run_id: str, query: dict[str, Any], retry_reason: str | None = None) -> dict[str, Any]:
         with self.locked(run_id):
             state = self.load(run_id)
-            item, created, _ = self._register_query(state, query, retry_reason)
+            item, created, warnings = self._register_query(state, query, retry_reason)
             if created:
                 self.save(state)
             from .exploration import research_feedback
             return {"kind": "query_ready" if created else "query_exists", "run_id": run_id,
                     "query": copy.deepcopy(item), "repeat_requires_reason": not created,
+                    "query_warnings": warnings,
                     "research_feedback": research_feedback(state, evaluation_at=now())}
 
     def record(self, run_id: str, submission: dict[str, Any]) -> dict[str, Any]:

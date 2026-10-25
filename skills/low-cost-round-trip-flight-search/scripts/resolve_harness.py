@@ -7,7 +7,7 @@ import sys
 from pathlib import Path
 
 
-HARNESS_VERSION = "3.5.1"
+HARNESS_VERSION = "3.6.0"
 PRODUCT_ID = "round_trip"
 
 
