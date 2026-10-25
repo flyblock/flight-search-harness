@@ -136,9 +136,10 @@ def _endpoint(value, path, currency):
         _array(value[pool], path + "." + pool, pool == "seed_gateway_nodes")
         for node in value[pool]:
             node_fields = {"node_id", "node_type", "location", "country_or_region", "country_code", "timezone", "utc_offset"}
-            _object(node, path + "." + pool, node_fields, node_fields - {"utc_offset"})
+            _object(node, path + "." + pool, node_fields, node_fields - {"utc_offset", "country_or_region"})
             for key in node_fields - {"utc_offset"}:
-                _string(node[key], path + "." + pool + "." + key)
+                if key in node:
+                    _string(node[key], path + "." + pool + "." + key)
             _enum(node["node_type"], path + ".node_type", {"airport", "railway_station", "bus_terminal", "ferry_terminal", "city_destination", "address"})
             _string(node["country_code"], path + ".country_code", r"[A-Z]{2}")
             # Retain the declared zone without needing the host's timezone database

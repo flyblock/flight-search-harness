@@ -13,7 +13,7 @@ Goal: find the cheapest bookable return journey that fits the user's request (or
    - A city or region endpoint ("Frankfurt city", "Greater Bay Area") becomes an `origin`/`destination` region declaration (workflow §1), not an airport list.
    - Origin rules govern outbound access and return egress; destination rules govern outbound egress and return access.
 3. Search and `record` each finding as you go (workflow §2). Read `clock` for each observation's `captured_at`.
-4. Explore (workflow §3): challenge the current best; discover airports beyond borders on both sides; try open-jaw (fly into one airport, home from another) and separate outbound/return tickets via `combine` when allowed; follow cheaper leads; cross-check sellers. Search both date windows, not just the first attractive pair.
+4. Explore (workflow §3): challenge the current best; discover airports beyond borders on both sides; try open-jaw (fly into one airport, home from another) and separate outbound/return tickets via `combine` when allowed; for each direction, search from both ends and connect cheap pieces (air, rail, bus) as in a one-way search; follow cheaper leads; cross-check sellers. Search both date windows, not just the first attractive pair.
 5. `deliver`, then answer as in workflow §6.
 
 Round-trip specifics:

@@ -53,10 +53,12 @@ def _candidate(entry, observations):
               "dates": entry["dates"], "itinerary": _itinerary(entry), "tickets": tickets,
               "verification_status": entry["verification"]["overall_status"]}
     result.update({k: entry[k] for k in ("rank", "status", "stay_nights", "travel_duration_minutes", "distance_per_currency") if entry.get(k) is not None})
+    if entry["cost_coverage"] == "mandatory_air_tickets_and_internal_surface":
+        result["cost_coverage"] = entry["cost_coverage"]
     if entry["status"] == "partial_component":
         result.pop("ranking_cost")
         result["component_cost"] = _money(entry["component_cost"])
-        result["dates"] = {"departure_date": entry["outbound_date"], "arrival_date": entry["final_arrival"][:10] if entry.get("final_arrival") else None}
+        result["dates"] = {"departure_date": entry["movements"][0]["departure"][:10] if entry["movements"] else None, "arrival_date": entry["final_arrival"][:10] if entry.get("final_arrival") else None}
     if checks:
         result["requirements"] = checks
     if disclosures:
@@ -227,7 +229,8 @@ def main(argv=None):
                          separators=None if detailed else (",", ":"), allow_nan=False))
         return 0
     except (ValueError, OSError, KeyError, TypeError) as exc:
-        print(json.dumps({"kind": "command_error", "message": str(exc)}, ensure_ascii=True), file=sys.stderr)
+        pointer = "; see workflow §1 (Request)" if args.command in {"start", "revise"} else ""
+        print(json.dumps({"kind": "command_error", "message": str(exc) + pointer}, ensure_ascii=True), file=sys.stderr)
         return 2
 
 

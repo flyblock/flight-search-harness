@@ -12,7 +12,7 @@ Goal: find the cheapest bookable one-way journey that fits the user's request (o
    - `journey_shape: one_way`; dates: `departure_window` or `exact_departure_dates`; optional `arrival_window` for a real arrival deadline. Never add a return.
    - A city or region endpoint becomes an `origin`/`destination` region declaration (workflow §1), not an airport list.
 3. Search and `record` each finding as you go (workflow §2). Read `clock` for each observation's `captured_at`.
-4. Explore (workflow §3): challenge the current best; discover airports beyond borders on both sides; try separate tickets via a hub and surface legs (train/bus) when allowed, joined with `combine`; follow cheaper leads; cross-check sellers.
+4. Explore (workflow §3): challenge the current best; discover airports beyond borders on both sides; search from both ends (cheapest flights out of the origin to anywhere, cheapest flights into the destination from anywhere) and connect them by air, rail or bus, recording each priced piece and joining them with `combine`; follow cheaper leads; cross-check sellers.
 5. `deliver`, then answer as in workflow §6.
 
 One-way specifics:

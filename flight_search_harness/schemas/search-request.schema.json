@@ -1057,7 +1057,6 @@
         "node_id",
         "node_type",
         "location",
-        "country_or_region",
         "country_code",
         "timezone"
       ],

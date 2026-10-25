@@ -299,6 +299,7 @@ def _evaluate(refs: list[dict], identifier: str, records: dict, request: dict,
     movement_signatures = set()
     prices = []
     air_total, full_total = Decimal(0), Decimal(0)
+    surface_prices = {}
     air_known = full_known = True
     air_offer_count = 0
     timestamps = []
@@ -334,6 +335,8 @@ def _evaluate(refs: list[dict], identifier: str, records: dict, request: dict,
         check("price_scope", offer.get("price_scope") == "party_total" if offer.get("price_scope") else None,
               "A payable party total is required; per-person prices are not silently multiplied.")
         amount = _convert(offer.get("price"), currency, intent)
+        if not is_air:
+            surface_prices[(observation["observation_id"], offer["offer_id"])] = amount
         if amount is None:
             full_known = False
             if is_air:
@@ -598,7 +601,12 @@ def _evaluate(refs: list[dict], identifier: str, records: dict, request: dict,
             "ground_movement_ids": [m["movement_id"] for m in connection_path[1:-1] if m.get("mode") != "flight"],
         }
         verification["connections"].append(connection)
-        connection_label = f"Connection {previous['movement_id']} to {following['movement_id']}"
+        # Movement IDs repeat across separately recorded purchases; name the
+        # connection by flight number and place so each one stays distinct.
+        services = [next(iter((m.get("flight_identity") or {}).get("flight_numbers") or []), None) or m["movement_id"]
+                    for m in (previous, following)]
+        places = list(dict.fromkeys(_node(n) for n in (previous.get("to_node"), following.get("from_node"))))
+        connection_label = f"Connection {services[0]} to {services[1]} at {'->'.join(places)}"
         if feasibility != "verified":
             disclosures.append(f"{connection_label}: feasibility is {feasibility}.")
         if protection == "unknown":
@@ -742,7 +750,13 @@ def _evaluate(refs: list[dict], identifier: str, records: dict, request: dict,
     else:
         if any(intent.get(side, {}).get("endpoint_policy") == "anchor_required" for side in ("origin", "destination")):
             warnings.append("Ranking covers mandatory air tickets; endpoint access and egress costs are excluded unless separately evidenced.")
-    ranking = full_total if ranking_basis == "complete_journey_cost" and full_known else air_total if ranking_basis != "complete_journey_cost" and air_known and air_offer_count else None
+    internal_surface = {owners[id(m)] for m in movements[movements.index(flights[0]):movements.index(flights[-1]) + 1]
+                        if owners[id(m)] in surface_prices} if flights else set()
+    surface_known = all(surface_prices[ref] is not None for ref in internal_surface)
+    core_total = air_total + sum((surface_prices[ref] for ref in internal_surface if surface_prices[ref] is not None), Decimal(0))
+    if internal_surface and ranking_basis != "complete_journey_cost":
+        warnings.append("Ranking includes mandatory internal surface tickets; endpoint access and egress remain excluded.")
+    ranking = full_total if ranking_basis == "complete_journey_cost" and full_known else core_total if ranking_basis != "complete_journey_cost" and air_known and air_offer_count and surface_known else None
     if ranking is None:
         check("ranking_cost", None, "The requested comparison cost is not known.")
     if intent.get("budget"):
@@ -795,7 +809,7 @@ def _evaluate(refs: list[dict], identifier: str, records: dict, request: dict,
                                       "reason": assessment.get("reason", "") if assessment else requirement.get("text", "No assessment saved."),
                                       "evidence_refs": copy.deepcopy(assessment.get("evidence_refs", [])) if assessment else []}
 
-    scope_checks = ("round_trip",) if shape == "round_trip" else ("destination_airport",) if shape == "one_way" else ("origin_airport", "return_airport")
+    scope_checks = ("round_trip",) if shape == "round_trip" else ("origin_airport", "destination_airport") if shape == "one_way" else ("origin_airport", "return_airport")
     journey_complete = all(checks.get(key, {}).get("status") == "satisfied" for key in scope_checks)
     if not journey_complete:
         # Keep a priced purchase available to combine, without applying a whole
@@ -827,9 +841,9 @@ def _evaluate(refs: list[dict], identifier: str, records: dict, request: dict,
             "requirements": list(checks.values()), "warnings": list(dict.fromkeys(warnings)),
             "ranking_cost": _money(ranking, currency) if journey_complete else None, "mandatory_air_ticket_total": _money(air_total if air_known and air_offer_count else None, currency),
             "journey_complete": journey_complete,
-            "component_cost": _money(ranking, currency) if not journey_complete else None,
+            "component_cost": _money(full_total, currency) if not journey_complete and full_known else None,
             "ranking_basis": ranking_basis, "objective": objective, "prices": prices,
-            "cost_coverage": "known_components" if ranking_basis == "complete_journey_cost" else "mandatory_air_tickets",
+            "cost_coverage": "known_components" if not journey_complete or ranking_basis == "complete_journey_cost" else "mandatory_air_tickets_and_internal_surface" if internal_surface else "mandatory_air_tickets",
             "disclosed_mandatory_costs_known": complete_costs and full_known,
             "known_cost_components": _money(full_total if full_known else None, currency),
             "price_target_met": ranking <= target if journey_complete and ranking is not None and target is not None else None,
