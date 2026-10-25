@@ -789,7 +789,7 @@ def _evaluate(refs: list[dict], identifier: str, records: dict, request: dict,
                 check("maximum_leg_price", None, "A joint-ticket price cannot be invented for individual legs.")
     for requirement in intent.get("additional_requirements", []):
         key = requirement["requirement_id"]
-        evidence = [a for a in assessments if a.get("candidate_id") == identifier and a.get("request_revision") == revision and a.get("requirement_id") == key]
+        evidence = [a for a in assessments if a.get("candidate_id") == identifier and a.get("requirement_id") == key]
         assessment = evidence[-1] if evidence else None
         checks["additional:" + key] = {"requirement_id": key, "status": assessment["status"] if assessment else "unknown",
                                       "reason": assessment.get("reason", "") if assessment else requirement.get("text", "No assessment saved."),
@@ -836,11 +836,19 @@ def _evaluate(refs: list[dict], identifier: str, records: dict, request: dict,
             "last_observed": max(timestamps, key=lambda value: _time(value).timestamp()) if timestamps else None, "quote_observations": quote_states}
 
 
-def evaluate_session(state: dict, *, evaluation_at: str) -> dict:
+def evaluate_session(state: dict, *, evaluation_at: str, request_revision: int | None = None) -> dict:
     """Return all saved alternatives, ranking only those meeting the current request."""
-    current = state["requests"][-1]
+    current = next(r for r in state["requests"] if r["revision"] == request_revision) if request_revision else state["requests"][-1]
     request, revision = copy.deepcopy(current["request"]), current["revision"]
-    discoveries = discovered_gateways(state)
+    # A judgment belongs to the requirement's content, not the enclosing Request.
+    # A removal or edit breaks continuity even if that ID/text is later restored.
+    requirements = {r["revision"]: {v["requirement_id"]: v["text"] for v in r["request"]["intent"].get("additional_requirements", [])}
+                    for r in state["requests"]}
+    assessments = [a for a in state.get("assessments", []) if a.get("request_revision") in requirements
+                   and a.get("requirement_id") in requirements[revision]
+                   and all(values.get(a["requirement_id"]) == requirements[revision][a["requirement_id"]]
+                           for number, values in requirements.items() if min(a["request_revision"], revision) <= number <= max(a["request_revision"], revision))]
+    discoveries = discovered_gateways({**state, "requests": [r for r in state["requests"] if r["revision"] <= revision]})
     request["_gateway_discoveries"] = [d for d in discoveries if d["eligible_for_expansion"]]
     for discovery in request["_gateway_discoveries"]:
         region = request["intent"][discovery["side"]]
@@ -883,7 +891,7 @@ def evaluate_session(state: dict, *, evaluation_at: str) -> dict:
     explicit_ids = {c.get("candidate_id") or candidate_id(c.get("offer_refs", [])) for c in state.get("combinations", [])}
     entries, alternatives, superseded = [], [], []
     for identifier, refs in candidates.items():
-        result = _evaluate(refs, identifier, records, request, revision, state.get("assessments", []), evaluation_at)
+        result = _evaluate(refs, identifier, records, request, revision, assessments, evaluation_at)
         replaced = [superseded_refs[(r.get("observation_id"), r.get("offer_id"))] for r in refs
                     if (r.get("observation_id"), r.get("offer_id")) in superseded_refs]
         if replaced:

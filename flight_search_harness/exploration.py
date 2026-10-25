@@ -52,19 +52,10 @@ def settle_challenges(state: dict[str, Any], instant: str) -> None:
     active = [q for q in state["queries"] if q.get("challenge")]
     if not active:
         return
-    revision = state["requests"][-1]["revision"]
-    projection = evaluate_session(state, evaluation_at=instant)
-    candidates = list(projection["entries"])
-    # A seller variant may be grouped beneath the same itinerary's cheaper seller.
-    for entry in projection["entries"]:
-        for variant in entry.get("seller_variants", [])[1:]:
-            candidates.append({**entry, **variant})
+    projections = {}
     observations = {o["observation_id"]: o for o in state["observations"]}
     for query in active:
         challenge = query["challenge"]
-        if challenge["request_revision"] != revision:
-            # A historical result remains historical; do not recompute it under new requirements.
-            continue
         linked = [i for i in query["observation_ids"] if i not in challenge["observation_ids_before"] and i in observations]
         usable = [i for i in linked if observations[i]["admission"]["status"] in {"admitted", "signal"}]
         previous = challenge.get("result", {})
@@ -74,25 +65,56 @@ def settle_challenges(state: dict[str, Any], instant: str) -> None:
             # Subsequent price refreshes may replace a candidate, not the fact
             # that an earlier challenge succeeded under its recorded conditions.
             continue
+        number = challenge["request_revision"]
+        if number not in projections:
+            # Resolve unfinished comparisons in their own Request context. Later
+            # revisions' findings must not be smuggled into a historical result.
+            context = {**state, "observations": [o for o in state["observations"] if o.get("request_revision", 1) <= number]}
+            known = {o["observation_id"] for o in context["observations"]}
+            context["combinations"] = [c for c in state.get("combinations", []) if all(r["observation_id"] in known for r in c["offer_refs"])
+                                       and c.get("created_at", "") <= (next((r["recorded_at"] for r in state["requests"] if r["revision"] > number), instant))]
+            projections[number] = evaluate_session(context, evaluation_at=instant, request_revision=number)
+        projection = projections[number]
+        candidates = [variant for entry in projection["entries"]
+                      for variant in [{**entry, **v} for v in entry.get("seller_variants", [])] or [entry]]
         matches = [c for c in candidates if any(ref["observation_id"] in usable for ref in c["offer_refs"])]
         baseline = challenge["baseline"]
+        requested = query["query"].get("baseline_candidate_id")
+        baselines = [c for c in candidates if not requested or c["candidate_id"] == requested]
+        if baseline is None and baselines:
+            # Prefer an independent comparator; if only one option exists, it
+            # establishes a baseline but cannot serve as its own challenger.
+            independent = [c for c in baselines if c not in matches]
+            baseline = _snapshot(min(independent or baselines, key=comparison_key), number)
+            challenge.update(baseline=baseline, baseline_selection="best_eligible_at_evaluation")
         matches = [c for c in matches if not baseline or c["candidate_id"] != baseline["candidate_id"]]
         result = {"status": "unresolved", "query_status": query["status"], "observation_ids": usable, "candidate_ids": [c["candidate_id"] for c in matches]}
-        if baseline is None:
-            result["reason"] = "No eligible baseline was fixed before this query. Findings remain available."
-        elif query["status"] in {"failed", "unsupported"}:
+        if query["status"] in {"failed", "unsupported"}:
             result.update(status="technical_unavailable", reason=query.get("reason", "The attempted method failed; no absence of cheaper options is established."))
-        elif matches:
+        elif baseline and matches:
             best = min(matches, key=comparison_key)
             improved = tuple(Decimal(v) for v in _score(best)) < tuple(Decimal(v) for v in baseline["score"])
-            result.update(status="improved" if improved else "not_improved", challenger=_snapshot(best, revision),
-                          reason="Comparable observed candidate improves the fixed baseline." if improved else "Comparable observed candidates do not improve the fixed baseline.")
+            result.update(status="improved" if improved else "not_improved", challenger=_snapshot(best, number),
+                          reason="Comparable observed candidate improves the baseline." if improved else "Comparable observed candidates do not improve the baseline.")
         elif query["status"] == "no_result" and usable:
             result.update(status="no_result", reason="The recorded source reported no result for this query scope; this is not a market-wide conclusion.")
         elif query["status"] == "running" and not linked:
             result.update(status="pending", reason="The query has no recorded result yet.")
         else:
-            result["reason"] = "No comparable complete candidate is linked yet. A lead or unavailable query does not settle a price comparison."
+            linked_candidates = [c for c in projection["alternatives"] if any(r["observation_id"] in usable for r in c["offer_refs"])]
+            unknown_cost = [c for c in linked_candidates if c.get("ranking_cost") is None]
+            blocked = unknown_cost or linked_candidates
+            issues = list(dict.fromkeys(f"{r['requirement_id']}: {r['reason']}" for c in blocked for r in c["requirements"]
+                                        if r["status"] != "satisfied" and r["requirement_id"] != "ranking_cost"))
+            if blocked:
+                result["reason"] = ("Linked candidate ranking cost is unknown. " if unknown_cost else "Linked candidates are not eligible. ") + "; ".join(issues)
+                if any(r["requirement_id"] == "price_conversion" for c in unknown_cost for r in c["requirements"]):
+                    result["reason"] += " Add an attributed FX rate via revise."
+                result["candidate_ids"] = [c["candidate_id"] for c in linked_candidates]
+            else:
+                result["reason"] = ("No eligible baseline is available yet. " if baseline is None else "No distinct comparable candidate is linked yet. ") + "Findings remain available; leads do not settle a comparison."
+        if challenge.get("baseline_selection") == "best_eligible_at_evaluation":
+            result["reason"] += " Baseline selected at evaluation under the query's revision, not fixed before the query."
         result["evaluated_at"] = instant
         challenge["result"] = result
 
@@ -125,6 +147,7 @@ def _same_endpoints(state: dict[str, Any], query: dict[str, Any], request: dict[
 def research_feedback(state: dict[str, Any], projection: dict[str, Any] | None = None,
                       *, evaluation_at: str) -> dict[str, Any]:
     """Expose gaps without inventing work, stopping the agent, or gating delivery."""
+    settle_challenges(state, evaluation_at)
     projection = projection if projection is not None else evaluate_session(state, evaluation_at=evaluation_at)
     current = state["requests"][-1]
     revision, request = current["revision"], current["request"]
@@ -175,7 +198,10 @@ def research_feedback(state: dict[str, Any], projection: dict[str, Any] | None =
                                   "status": "access_unverified" if observed and access_unknown else "method_unavailable" if related and all(q["status"] in {"failed", "unsupported"} for q in related) else "unsearched"})
     challenges = [{"query_id": q["query_id"], **copy.deepcopy(q["challenge"])}
                   for q in state["queries"] if q.get("challenge")]
-    current_challenges = [c for c in challenges if c["request_revision"] == revision]
+    def comparison_context(value):
+        return {"journey_shape": value["journey_shape"], "intent": {k: v for k, v in value["intent"].items() if k not in {"output", "search_limits"}}}
+    revisions = {r["revision"]: comparison_context(r["request"]) for r in state["requests"]}
+    current_challenges = [c for c in challenges if revisions.get(c["request_revision"]) == revisions[revision]]
     gaps, actions = [], []
     if not best:
         actions.append("Find and record a usable dated journey to establish a comparison baseline.")

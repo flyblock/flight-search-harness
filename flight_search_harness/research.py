@@ -114,6 +114,8 @@ class ResearchStore:
         return state
 
     def save(self, state: dict[str, Any]) -> None:
+        from .exploration import settle_challenges
+        settle_challenges(state, now())
         state["updated_at"] = now()
         write_atomic(self.path(state["run_id"]), state)
 
@@ -222,8 +224,10 @@ class ResearchStore:
             item, created, _ = self._register_query(state, query, retry_reason)
             if created:
                 self.save(state)
+            from .exploration import research_feedback
             return {"kind": "query_ready" if created else "query_exists", "run_id": run_id,
-                    "query": copy.deepcopy(item), "repeat_requires_reason": not created}
+                    "query": copy.deepcopy(item), "repeat_requires_reason": not created,
+                    "research_feedback": research_feedback(state, evaluation_at=now())}
 
     def record(self, run_id: str, submission: dict[str, Any]) -> dict[str, Any]:
         if not isinstance(submission, dict):
@@ -308,8 +312,7 @@ class ResearchStore:
                         existing[identifier]["query_id"] = query["query_id"]
                 if result is not None and not query_errors:
                     query.update(status=result["status"], reason=result["reason"], finished_at=now())
-            from .exploration import settle_challenges, research_feedback
-            settle_challenges(state, now())
+            from .exploration import research_feedback
             self.save(state)
             return {
                 "kind": "findings_recorded", "run_id": run_id, "saved": saved, "duplicates": duplicates,
@@ -337,10 +340,10 @@ class ResearchStore:
             identifier = candidate_id(refs)
             if not any(c["candidate_id"] == identifier for c in state["combinations"]):
                 state["combinations"].append({"candidate_id": identifier, "offer_refs": copy.deepcopy(refs), "reason": spec["reason"], "created_at": now()})
-                from .exploration import settle_challenges
-                settle_challenges(state, now())
                 self.save(state)
-            return {"kind": "combination_recorded", "run_id": run_id, "candidate_id": identifier}
+            from .exploration import research_feedback
+            return {"kind": "combination_recorded", "run_id": run_id, "candidate_id": identifier,
+                    "research_feedback": research_feedback(state, evaluation_at=now())}
 
     def assess(self, run_id: str, assessment: dict[str, Any]) -> dict[str, Any]:
         from .comparison import evaluate_session
@@ -370,10 +373,10 @@ class ResearchStore:
                 raise ValueError("A conclusive model assessment requires saved source observations")
             item = {**copy.deepcopy(assessment), "judged_by": "ai", "recorded_at": now()}
             state["assessments"].append(item)
-            from .exploration import settle_challenges
-            settle_challenges(state, now())
             self.save(state)
-            return {"kind": "assessment_recorded", "assessment": item}
+            from .exploration import research_feedback
+            return {"kind": "assessment_recorded", "run_id": run_id, "assessment": item,
+                    "research_feedback": research_feedback(state, evaluation_at=now())}
 
     def set_research(self, run_id: str, status: str, reason: str | None = None) -> dict[str, Any]:
         if status == "stopped" and not (reason or "").strip():

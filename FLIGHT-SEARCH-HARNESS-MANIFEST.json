@@ -1,7 +1,7 @@
 {
   "schema_version": "1.0.0",
   "package_id": "flight-search-harness",
-  "version": "3.0.0",
+  "version": "3.1.0",
   "installable": true,
   "runtime_data_root": "../Archive/flight-search-harness-runtime",
   "root_files": [

@@ -7,6 +7,127 @@ from .research import ResearchStore, read_json, now
 from .suite_layout import SuiteLayout
 
 
+def _money(value):
+    return {k: value[k] for k in ("amount", "currency")} if value else None
+
+
+def _itinerary(entry):
+    lines = []
+    for m in entry.get("movements", []):
+        identity = m.get("flight_identity") if isinstance(m.get("flight_identity"), dict) else {}
+        carriers = list(dict.fromkeys(v for v in (identity.get("marketing_carrier"), identity.get("operating_carrier"), m.get("operator")) if isinstance(v, str) and v))
+        numbers = identity.get("flight_numbers", [])
+        service = "/".join(numbers) if isinstance(numbers, list) and all(isinstance(n, str) for n in numbers) else ""
+        service = service or m.get("service_id", "")
+        lines.append(f"{m.get('from_node')}>{m.get('to_node')} {m.get('departure')}/{m.get('arrival')} {'/'.join(carriers) or m.get('mode', '')} {service}".strip())
+    return lines
+
+
+def _candidate(entry, observations):
+    tickets = []
+    for ref in entry["offer_refs"]:
+        observation = observations.get(ref["observation_id"], {})
+        offer = next((o for o in observation.get("offers", []) if o["offer_id"] == ref["offer_id"]), {})
+        ticket = {k: v for k, v in offer.items() if k in {
+            "price", "seller", "price_scope", "traveler_count", "verification_stage", "included_baggage", "checked_bag_count",
+            "ticketing_structure", "restrictions", "ticket_context", "refundability", "change_policy", "membership_required",
+            "cabin", "fare_brand", "fare_basis", "fare_type", "price_type", "mandatory_baggage_cost", "price_includes_mandatory_baggage",
+            "requires_accommodation", "required_accommodation_cost", "price_includes_required_accommodation", "mandatory_costs_complete"} and v not in (None, [], {})}
+        ticket.update(provider=observation.get("source", {}).get("provider"), captured_at=observation.get("captured_at"))
+        ticket.setdefault("verification_stage", "unknown")
+        tickets.append(ticket)
+    checks = [r for r in entry["requirements"] if r["status"] != "satisfied"]
+    repeated = {f"{r['requirement_id']}: {r['status']}. {r['reason']}" for r in checks}
+    disclosures = []
+    for line in entry["required_disclosures"]:
+        if line in repeated:
+            continue
+        for ref in entry["offer_refs"]:
+            line = line.removeprefix(f"Offer {ref['offer_id']}: ")
+        if line not in disclosures:
+            disclosures.append(line)
+    result = {"candidate_id": entry["candidate_id"], "ranking_cost": _money(entry["ranking_cost"]),
+              "dates": entry["dates"], "itinerary": _itinerary(entry), "tickets": tickets,
+              "verification_status": entry["verification"]["overall_status"]}
+    result.update({k: entry[k] for k in ("rank", "status", "stay_nights", "travel_duration_minutes", "distance_per_currency") if entry.get(k) is not None})
+    if checks:
+        result["requirements"] = checks
+    if disclosures:
+        result["required_disclosures"] = disclosures
+    # Other sellers are useful choices; omit the duplicate primary snapshot.
+    if len(entry.get("seller_variants", [])) > 1:
+        result["seller_variants"] = [_candidate({**entry, **v, "seller_variants": []}, observations) for v in entry["seller_variants"][1:]]
+    return result
+
+
+def _feedback(feedback, entries, *, delivered=False):
+    best = feedback["current_best"]
+    if best:
+        entry = next((e for e in entries if e["candidate_id"] == best["candidate_id"]), {})
+        best = {"candidate_id": best["candidate_id"]}
+        if not delivered:
+            best.update(ranking_cost=_money(entry.get("ranking_cost")), itinerary=_itinerary(entry))
+    challenges = []
+    for c in feedback["challenges"]:
+        r, baseline = c["result"], c.get("baseline") or {}
+        line = f"{c['query_id']} r{c['request_revision']} {r['status']}: {r['reason']}"
+        if baseline:
+            line += f" baseline={baseline['candidate_id']}"
+        if r.get("challenger"):
+            line += f" challenger={r['challenger']['candidate_id']}"
+        challenges.append(line)
+    return {"current_best": best, "challenges": challenges,
+            "search_gaps": [g for g in feedback["search_gaps"] if g["kind"] != "challenge_unresolved"],
+            "next_actions": feedback["next_actions"], "completion_scope": feedback["completion_scope"]}
+
+
+def compact_response(value, state):
+    """Project CLI decisions without changing the complete Store/API records."""
+    from .comparison import evaluate_session
+    result = value.get("result", value)
+    projection = result if "entries" in result else evaluate_session(state, evaluation_at=now())
+    observations = {o["observation_id"]: o for o in state["observations"]}
+    if "entries" in result:
+        compact = {k: result[k] for k in ("run_id", "request_revision", "research", "claim_scope", "total_ranked", "unlinked_observation_ids") if result.get(k)}
+        compact.update({k: state["requests"][-1]["request"]["intent"][k] for k in ("base_currency", "ranking_basis", "objective")})
+        compact["eligibility_scope"] = "ticket_and_declared_constraints"
+        for key in ("entries", "alternatives"):
+            compact[key] = [_candidate(e, observations) for e in result[key]]
+        compact["signals"] = []
+        for s in result["signals"]:
+            raw = s["raw"] if isinstance(s["raw"], dict) else {}
+            signal = {"observation_id": s["observation_id"], "provider": (s.get("source") or {}).get("provider"), "admission": s["admission"]["status"]}
+            signal.update({k: raw[k] for k in ("observed_price", "scope", "verification_stage", "missing_facts") if raw.get(k)})
+            signal["note"] = str(raw.get("source_text", ""))[:180] + ("…" if len(str(raw.get("source_text", ""))) > 180 else "")
+            prices = [o["price"] for o in observations[s["observation_id"]].get("offers", []) if "price" in o]
+            if prices:
+                signal["prices"] = prices
+            if s["admission"].get("issues"):
+                signal["issues"] = s["admission"]["issues"]
+            compact["signals"].append(signal)
+        compact["superseded_count"] = len(result["superseded"])
+        value = {"kind": value["kind"], "result": compact}
+    else:
+        compact = {k: v for k, v in value.items() if k in {"kind", "run_id", "request_revision", "research", "observation_count", "query_count", "candidate_id", "repeat_requires_reason", "saved", "duplicates", "query_errors", "query_warnings", "unlinked_observation_ids", "source_run", "recording"} and v not in (None, [], {})}
+        if value.get("admissions"):
+            compact["admissions"] = [{k: v for k, v in a.items() if v != []} for a in value["admissions"]]
+        if value.get("query"):
+            compact["query"] = {k: v for k, v in value["query"].items() if k in {"query_id", "status", "reason", "registration_warnings"}}
+        if value.get("assessment"):
+            compact["assessment"] = {k: value["assessment"][k] for k in ("candidate_id", "requirement_id", "status", "request_revision")}
+        if "queries" in value:
+            compact["queries"] = [{"query_id": q["query_id"], "status": q["status"], **q["query"]} for q in value["queries"]]
+        if "recording" in value:
+            recordings = value["recording"] if isinstance(value["recording"], list) else [value["recording"]]
+            compact["recording"] = [{k: v for k, v in r.items() if k in {"saved", "duplicates", "admissions", "query_errors", "query_warnings"} and v} for r in recordings]
+            if not isinstance(value["recording"], list):
+                compact["recording"] = compact["recording"][0]
+        value = compact
+    if "research_feedback" in result:
+        compact["research_feedback"] = _feedback(result["research_feedback"], projection["entries"], delivered="entries" in result)
+    return value
+
+
 def build_parser():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--runs-root", help="Defaults to external runtime_data_root/runs")
@@ -15,9 +136,12 @@ def build_parser():
     start = sub.add_parser("start", help="Start a fresh Request and Run")
     start.add_argument("--request", required=True)
     start.add_argument("--run-id")
+    start.add_argument("--verbose", action="store_true", help="Return complete records")
     for name in ("status", "resume", "stop", "query", "record", "combine", "assess", "revise", "deliver"):
         command = sub.add_parser(name)
         command.add_argument("--run-id", required=True)
+        if name != "deliver":
+            command.add_argument("--verbose", action="store_true", help="Return complete records")
         if name in {"record", "combine", "assess"}:
             command.add_argument("--input", required=True)
         if name == "revise":
@@ -34,6 +158,7 @@ def build_parser():
     legacy.add_argument("--source-run", required=True)
     legacy.add_argument("--request", required=True)
     legacy.add_argument("--run-id")
+    legacy.add_argument("--verbose", action="store_true", help="Return complete records")
     return parser
 
 
@@ -65,9 +190,13 @@ def main(argv=None):
             value = store.set_research(args.run_id, "stopped", args.reason)
         else:
             value = store.import_legacy(args.source_run, read_json(args.request), args.run_id)
+        detailed = getattr(args, "verbose", False) or "session" in value or "cells" in value.get("result", {})
+        if not detailed:
+            value = compact_response(value, store.load(value.get("run_id", args.run_id)))
         if hasattr(sys.stdout, "reconfigure"):
             sys.stdout.reconfigure(encoding="utf-8")
-        print(json.dumps(value, ensure_ascii=False, indent=2, allow_nan=False))
+        print(json.dumps(value, ensure_ascii=False, indent=2 if detailed else None,
+                         separators=None if detailed else (",", ":"), allow_nan=False))
         return 0
     except (ValueError, OSError, KeyError, TypeError) as exc:
         print(json.dumps({"kind": "command_error", "message": str(exc)}, ensure_ascii=True), file=sys.stderr)
