@@ -327,7 +327,7 @@ def _loop_efficiency_hint(projection: dict, request: dict) -> list[str]:
     if best is None and gate is not None:
         # Complete loops exist but miss the user's gate: say how far off the closest one is.
         loops = [(value, cost, distance) for e in projection["alternatives"]
-                 if (value := _number(e.get("distance_per_currency"))) is not None
+                 if (value := _number(e.get("distance_per_currency"))) is not None and value < gate
                  and (cost := _number((e.get("ranking_cost") or {}).get("unrounded_amount"))) and (distance := _number(e.get("distance_km")))]
         if loops:
             value, cost, distance = max(loops)

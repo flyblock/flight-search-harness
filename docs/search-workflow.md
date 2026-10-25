@@ -32,7 +32,7 @@ Start from the Skill's request template. Required: `request_version: "7.0"`, `jo
 | `ranking_basis` | `mandatory_air_ticket_total` (default) ranks by what can change the choice: tickets, mandatory surface legs between flights, and access to/from airports *you discovered* outside the user's own ones (city access to the user's own airports, or egress when "any airport there" is fine, is the same for every option and is not counted). `complete_journey_cost` only when the user asks for door-to-door cost. |
 | `objective` | `price` (default), `stay_duration`, `travel_duration`, `distance_per_currency` (loop default). |
 | `budget` / `price_target` | `{amount, currency}` hard limit / preference. |
-| `fx_rates` | `[{from_currency, to_currency, rate, observed_at, source_name and/or source_url}]`. Needed to compare foreign-currency prices. Never invent or recall a rate. |
+| `fx_rates` | `[{from_currency, to_currency, rate, observed_at (offset timestamp, or the publication date of a reference rate), source_name and/or source_url}]`. Needed to compare foreign-currency prices. Never invent or recall a rate. |
 | `baggage_policy` | `{cabin_baggage, checked_bag_count, paid_baggage_allowed}` only if the user requires baggage. |
 | `overnight_allowed` (true/false), `self_transfer_policy` (`allow`/`never`), `maximum_transfer_count` (integer), `allowed_modes` (array of `flight`, `rail`, `bus`, `coach`, `ferry`, `local_transit`, `walk`, `rideshare`, `car`) | Only what the user said. "Any transport mode" means omit `allowed_modes` or list all of them. |
 | `maximum_total_duration_minutes`, `min_legs`/`max_legs`, `quality_gate` (random loop) | Hard limits the code checks for you. |

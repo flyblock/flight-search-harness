@@ -168,9 +168,13 @@ def _convert(money: Any, currency: str, intent: dict[str, Any]) -> Decimal | Non
     if source == currency:
         return amount
     # Only explicit, attributed conversions are usable. No live lookup or guessed FX.
-    rates = [r for r in intent.get("fx_rates", []) if _time(r.get("observed_at")) and any(
+    # A published reference rate may carry only its date; that date orders rates.
+    def observed(rate):
+        value = rate.get("observed_at")
+        return _time(value) or (_time(value + "T00:00:00+00:00") if isinstance(value, str) and len(value) == 10 else None)
+    rates = [r for r in intent.get("fx_rates", []) if observed(r) and any(
         isinstance(r.get(field), str) and r[field].strip() for field in ("source_name", "source_url"))]
-    for rate in sorted(rates, key=lambda r: _time(r["observed_at"]).timestamp(), reverse=True):
+    for rate in sorted(rates, key=lambda r: observed(r).timestamp(), reverse=True):
         value = _number(rate.get("rate"))
         if value is None or value <= 0:
             continue

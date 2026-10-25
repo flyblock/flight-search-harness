@@ -267,7 +267,7 @@ def _validate_options(intent):
         for key in ("from_currency", "to_currency"):
             _string(rate[key], "intent.fx_rates[]." + key, r"[A-Z]{3}")
         _number(rate["rate"], "intent.fx_rates[].rate", positive=True)
-        _instant(rate["observed_at"], "intent.fx_rates[].observed_at")
+        _instant(rate["observed_at"], "intent.fx_rates[].observed_at", date_allowed=True)
         # A source name can attribute the numeric rate when its link is absent,
         # expired or truncated. Link syntax must not reject the whole Request.
         for field in ("source_url", "source_name"):
