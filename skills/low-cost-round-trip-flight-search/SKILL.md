@@ -7,7 +7,7 @@ description: Search outbound-and-return journeys to a selected destination using
 
 Goal: find the cheapest bookable return journey that fits the user's request (or their stated objective), and show the useful runners-up you found on the way, with dates, airports, flight numbers, price and key restrictions.
 
-1. Run `python -B <skill-directory>/scripts/resolve_harness.py`. Keep the returned paths. Read `workflow_ref` once; it is the full reference. You do not need the Request Schema or implementation files.
+1. Run `python -B <skill-directory>/scripts/resolve_harness.py`. Keep the returned paths. Read `workflow_ref` once; it is the full reference. You do not need the Request Schema or implementation files. If this Skill was installed on its own, the resolver downloads the matching framework release from github.com/flyblock/flight-search-harness into `~/.flight-search-harness` on first use (it says so on stderr); tell the user once.
 2. Write a fresh Request from [the template](assets/request-template.json) and the user's words, then `start`. Do not open old Runs.
    - `journey_shape: round_trip`; dates: `outbound_departure_window`, `return_departure_window` (or exact dates / `travel_windows` for disjoint options); stay: `minimum_stay_nights`, `maximum_stay_nights`.
    - A city or region endpoint ("Frankfurt city", "Greater Bay Area") becomes an `origin`/`destination` region declaration (workflow §1), not an airport list.

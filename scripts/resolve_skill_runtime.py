@@ -36,8 +36,15 @@ def _root_ref(root: Path, value: Any) -> Path:
     return result
 
 
-def resolve(entry_file: str, *, harness_version: str, product_id: str) -> dict[str, str]:
-    root = Path(entry_file).resolve().parents[3]
+def resolve(
+    entry_file: str,
+    *,
+    harness_version: str,
+    product_id: str,
+    plugin_root: Path | None = None,
+    runtime_data_root: Path | None = None,
+) -> dict[str, str]:
+    root = plugin_root.resolve() if plugin_root is not None else Path(entry_file).resolve().parents[3]
     suite = _read_object(root / "FLIGHT-SEARCH-HARNESS-MANIFEST.json")
     plugin = _read_object(root / "plugin.json")
     if (suite.get("package_id") != "flight-search-harness"
@@ -67,14 +74,19 @@ def resolve(entry_file: str, *, harness_version: str, product_id: str) -> dict[s
     }
     if missing := [str(path) for path in required.values() if not path.is_file()]:
         raise RuntimeResolutionError("installed Plugin is incomplete: " + ", ".join(missing))
-    try:
-        data_root = SuiteLayout.discover(root=root).runtime_data_root()
-    except SuiteLayoutError as exc:
-        raise RuntimeResolutionError(str(exc)) from exc
+    if runtime_data_root is None:
+        try:
+            data_root = SuiteLayout.discover(root=root).runtime_data_root()
+        except SuiteLayoutError as exc:
+            raise RuntimeResolutionError(str(exc)) from exc
+    else:
+        data_root = runtime_data_root.resolve()
+        if data_root == root or data_root.is_relative_to(root) or root.is_relative_to(data_root):
+            raise RuntimeResolutionError("runtime_data_root must be separate from the Plugin directory")
     return {
         "harness_version": harness_version,
         "journey_shape": product_id,
-        "source": "plugin",
+        "source": "plugin" if runtime_data_root is None else "cache",
         "harness_root_ref": str(root),
         "runtime_data_root_ref": str(data_root),
         "runs_root_ref": str(data_root / "runs"),

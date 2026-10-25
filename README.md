@@ -35,6 +35,10 @@ Read <plugin-directory>/skills/low-cost-round-trip-flight-search/SKILL.md and fo
 
 Use `low-cost-one-way-travel-flight-search` or `low-cost-random-loop-flight-search` for the other journey shapes. Nothing in the runtime depends on a particular model, client, browser or booking site.
 
+Standalone Skill installs (for example `npx skills add flyblock/flight-search-harness`) also work. The Skill resolver first uses a matching complete Plugin beside the Skill. Otherwise it uses `<base>/plugins/<version>/`, downloading the exact `v<version>` GitHub source archive on first use and reporting the source and destination on stderr. Archive paths and manifest versions are checked before installation; download and extraction do not execute archive code. Later calls reuse the matching cache.
+
+Set `FLIGHT_SEARCH_HARNESS_HOME` to choose `<base>` (default `~/.flight-search-harness`). Cached Plugins use `<base>/data` for generated data and `<base>/data/runs` for Runs. `FLIGHT_SEARCH_HARNESS_ARCHIVE_URL` can select a mirror URL or a local ZIP file instead of GitHub. For manual setup, clone or extract the matching release into `<base>/plugins/<version>/` and set `FLIGHT_SEARCH_HARNESS_HOME` to `<base>`, or install the full repository. The resolver returns `source: "plugin"` for a complete Plugin beside the Skill and `source: "cache"` for the per-user cache.
+
 ## One interface
 
 All clients use the same JSON Request, query, observation and result structures. Commands read UTF-8 JSON files and return compact JSON on stdout (`--verbose` or `deliver --view full` for complete records); diagnostics go to stderr. There is no separate vendor or provider adapter contract.
