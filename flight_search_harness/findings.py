@@ -280,12 +280,14 @@ def normalize_observation(raw: Any, *, received_at: str) -> dict[str, Any]:
             _issue(problems, field + ".traveler_count", "must be a positive integer")
         offer_seller = offer.get("seller", seller)
         _text(offer_seller, field + ".seller", problems)
+        # A meta-search page often names the airline as seller; keep the offer's
+        # own seller and note the difference instead of discarding the price.
         if seller is not None and offer_seller != seller:
-            _issue(problems, field + ".seller", "conflicts with explicitly observed source seller")
+            _issue(offer_metadata, field + ".seller", "differs from the source seller; offer seller kept")
         if offer_seller is not None:
             offer["seller"] = offer_seller
         if offer.get("provider") is not None and offer["provider"] != provider:
-            _issue(problems, field + ".provider", "conflicts with observation provider")
+            _issue(offer_metadata, field + ".provider", "differs from the observation provider; originals retained in raw")
         offer_capture_status = capture_time_status
         if offer.get("observed_at") is not None:
             offer_time = _instant(offer["observed_at"], field + ".observed_at", offer_metadata)

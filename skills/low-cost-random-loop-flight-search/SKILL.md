@@ -12,7 +12,7 @@ Goal: find multi-leg loops from the user's accepted departure airports back to t
    - `journey_shape: random_loop`; `departure_airports`, `return_airports`, `first_departure_window`. Add only what the user set: `min_legs`/`max_legs`; `maximum_total_duration_minutes` (first departure to final arrival, e.g. 2880 for "all flights within 48 hours"); `quality_gate: {minimum_complete_loop_efficiency_km_per_base_currency_unit}` (e.g. 5 for "at least 5 km per CNY") and `maximum_leg_price_in_base_currency`; connection buffers, maximum waits, earliest local departure, `airport_transit`. The code checks these itself; do not restate them as `additional_requirements`.
    - A loose area ("airports around Frankfurt") becomes an explicit airport list you choose from external route sources; say which airports you included.
    - Departure and return airport sets are hard endpoints; intermediate destinations are open and borders do not limit them.
-3. Search and `record` each leg's findings as you go (workflow §2); single legs are useful leads before a loop is complete. Read `clock` for each observation's `captured_at`.
+3. Search and `record` every priced leg as its own quote as you go (workflow §2), including legs you will not use yet; the feedback ranks legs by km per currency and shows how far a loop is from the user's efficiency gate. Read `clock` for each observation's `captured_at`.
 4. Propose promising next destinations and return connections from external route and fare sources. When you have a complete loop, `combine` its saved Offers with a reason. Challenge the best loop with new intermediates, structures and dates (workflow §3).
 5. `deliver`, then answer as in workflow §6.
 

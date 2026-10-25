@@ -81,6 +81,7 @@ A normal `record` input (templates: `record_quote_template_ref`, `record_signal_
 - Same source + scope again is reported as a duplicate. For a deliberate refresh add `retry_reason`.
 - An observation found without a planned query may be recorded without `query` (then omit `query_result` too).
 - Several observations from one page view (one calendar, one result list) go in one `record` call.
+- Record as you go and keep only the facts you need from a page (prices, flights, times, terms). Holding whole pages in your context instead of saving them costs many tokens and loses findings if the session is interrupted.
 
 **Quote vs signal.** `kind: "quote"` has `movements` (each flight with airports, offset-aware departure/arrival, `flight_identity`) and `offers` (price as `party_total` in the original currency, seller, `verification_stage`). `kind: "signal"` keeps a visible price that lacks itinerary detail (`observed_price`, `scope`, `missing_facts`, empty movements/offers). A signal is a lead, never a bookable runner-up.
 

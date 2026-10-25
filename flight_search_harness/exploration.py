@@ -322,6 +322,21 @@ def _loop_efficiency_hint(projection: dict, request: dict) -> list[str]:
     intent = request["intent"]
     best = projection["entries"][0] if projection["entries"] else None
     efficiency = _number(best["distance_per_currency"]) if best else None
+    gate = _number(intent.get("quality_gate", {}).get("minimum_complete_loop_efficiency_km_per_base_currency_unit"))
+    lines = []
+    if best is None and gate is not None:
+        # Complete loops exist but miss the user's gate: say how far off the closest one is.
+        loops = [(value, cost, distance) for e in projection["alternatives"]
+                 if (value := _number(e.get("distance_per_currency"))) is not None
+                 and (cost := _number((e.get("ranking_cost") or {}).get("unrounded_amount"))) and (distance := _number(e.get("distance_km")))]
+        if loops:
+            value, cost, distance = max(loops)
+            lines.append(f"Closest complete loop {value:.2f} km/{intent['base_currency']} < required {gate:g}: needs >= {gate * cost:.0f} km at "
+                         f"{cost:.2f} {intent['base_currency']}, or <= {distance / gate:.2f} {intent['base_currency']} for {distance:.0f} km; build from legs above {gate:g} km/{intent['base_currency']}.")
+        efficiency = gate
+    if not any(len(e["movements"]) == 1 and e["movements"][0]["mode"] == "flight" for e in projection["components"]):
+        lines.append("Record each priced leg you see as its own quote (single legs count); efficient-leg hints are computed from them.")
+        return lines
     def signature(m):
         return (_node(m["from_node"]), _node(m["to_node"]), m.get("departure"), m.get("arrival"),
                 tuple((m.get("flight_identity") or {}).get("flight_numbers", [])))
@@ -350,8 +365,8 @@ def _loop_efficiency_hint(projection: dict, request: dict) -> list[str]:
         if key not in legs or value > legs[key][0]:
             legs[key] = (value, label)
     ordered = sorted(legs, key=lambda key: (-legs[key][0], key))
-    if efficiency is not None:
-        return [f"Legs above best {efficiency:.2f} km/{intent['base_currency']}: " + "; ".join(legs[key][1] for key in ordered[:3]) + "."] if ordered else []
+    if best is not None:
+        return lines + ([f"Legs above best {efficiency:.2f} km/{intent['base_currency']}: " + "; ".join(legs[key][1] for key in ordered[:3]) + "."] if ordered else [])
     anchors, selected = [], set()
     for role, index, airports in (("departure", 0, intent["departure_airports"]), ("return", 1, intent["return_airports"])):
         window = intent.get("first_departure_window" if role == "departure" else "return_arrival_window", {})
@@ -361,7 +376,7 @@ def _loop_efficiency_hint(projection: dict, request: dict) -> list[str]:
         if key is not None and key not in selected:
             anchors.append(role + ": " + legs[key][1])
             selected.add(key)
-    return [f"Build a loop around recorded legs (km/{intent['base_currency']}): " + "; ".join(anchors) + ". Check connections."] if anchors else []
+    return lines + ([f"Build a loop around recorded legs (km/{intent['base_currency']}): " + "; ".join(anchors) + ". Check connections."] if anchors else [])
 
 
 def _candidate_issues(projection: dict, intent: dict, focus_ids: list[str] | None) -> list[dict]:
