@@ -1,60 +1,89 @@
 # Flight Search Harness
 
-A small, client-independent Python runtime for AI-directed flight research. An agent chooses dates, airports, providers and combinations; the runtime preserves findings, avoids accidental repeat queries, compares known options and produces ranked results.
+**Let any AI agent hunt for genuinely cheap flights, and keep score while it does.**
 
-It works with any AI client or a person using the JSON interface. Codex, MCP, a specific browser, a particular booking provider and hosted services are not required. Use the caller's available browser, HTTP or API tools to collect observations. The runtime does not control those tools.
+Flight Search Harness is a small standard-library Python ledger plus three Skills. Your AI client does the searching with its own browser or APIs; the harness saves every price it sees, compares the options under your rules, and keeps pushing the agent toward the cheaper routes it would not think of by itself. It works with Codex, Claude, DeepSeek, your own model, or a person typing JSON.
 
-## Start
+## What makes it different
 
-Use Python 3.10 or later. Install the standard IANA timezone data package for consistent cross-platform `zoneinfo` support, then run from this directory:
+- **Nothing found is lost.** Every fare, partial price and lead is saved the moment it is seen. Missing links, odd timestamps or a seller name that differs from the website never cause a price to be discarded.
+- **The best fare is a target, not a finish line.** The agent challenges the current best with other dates, airports, sellers and ticket structures. A beaten fare stays as a runner-up, so you get a ranked shortlist for free.
+- **It looks past borders.** For a city or region, the agent is asked to check nearby, cross-border, secondary and hub airports (Frankfurt → Luxembourg, Brussels, Zurich; New York → Philadelphia) and gets told how cheap a fare from each must be after getting there.
+- **It searches from both ends.** Priced pieces become budgets: "reach Urumqi from Frankfurt for under ¥1,820", "connect Almaty → Urumqi by any mode for under ¥840". That is how routes like *Frankfurt → Almaty (low-cost) → bus across the Khorgos border → train → domestic flight to Hong Kong* become findable.
+- **Random loops are first-class.** Multi-leg loops from a set of nearby airports are ranked by distance per unit of currency, with your hard limits (legs, total hours, minimum km per currency) checked by code, and hints listing the legs that could improve the loop.
+- **Honest answers.** Results state how far each price was verified (listing, selected itinerary, fare review, checkout), self-transfer and visa risks, and what was not searched. Nothing claims to be the global cheapest.
+- **Small output for small context windows.** Commands return compact JSON; a Run with thousands of observations still answers in a few kilobytes.
 
-```text
-python -m pip install -r requirements.txt
-python -B -m flight_search_harness --help
-python -B -m flight_search_harness --runs-root <external-runs-directory> start --request <request.json>
+## Three Skills
+
+| Skill | Use it for | Default goal |
+|---|---|---|
+| `low-cost-round-trip-flight-search` | Outbound and return to a chosen destination | Lowest total, with stay-length rules |
+| `low-cost-one-way-travel-flight-search` | One way to a chosen destination | Lowest total, including bus/rail pieces when allowed |
+| `low-cost-random-loop-flight-search` | Open-destination loops back to your accepted airports | Most kilometres per unit of currency |
+
+## Quick start
+
+**Install a Skill from [skills.sh](https://skills.sh/flyblock/flight-search-harness):**
+
+```bash
+npx skills add flyblock/flight-search-harness --skill low-cost-round-trip-flight-search
 ```
 
-From another working directory, use the portable launcher:
+On first use the Skill downloads the matching framework release from this repository into `~/.flight-search-harness` (it says so) and reuses it afterwards. Then just ask your AI, for example:
 
-```text
-python -B <plugin-directory>/scripts/run_flight_harness.py --runs-root <external-runs-directory> status --run-id <run-id>
+> Find the cheapest round trip from Frankfurt city to any Greater Bay Area airport for 1 adult, both flights before 30 November, staying 7–14 nights, priced in CNY. Overnight and self-transfer connections are fine.
+
+> Plan a random loop from budget airports around Frankfurt and back to any of them: at least 4 flights, all within 48 hours, at least 5 km per CNY.
+
+**Or use the whole repository** (Python 3.10+):
+
+```bash
+git clone https://github.com/flyblock/flight-search-harness.git
 ```
 
-Without timezone data, source records can still be saved; checks that need an unavailable location timezone remain unknown rather than passing by assumption. No client SDK is required. User limits on client tool calls remain the caller's responsibility; the harness's `max_queries` counts recorded logical query attempts, not every browser or API interaction.
+`python -m pip install -r requirements.txt` adds the IANA timezone data (`tzdata`) on systems that lack it; without it, time-zone-dependent checks stay "unknown" rather than guessed.
 
-The optional `--runs-root` selects the data location independently of the caller's client or platform. By default the runtime resolves the configurable external `runtime_data_root` in [the suite manifest](FLIGHT-SEARCH-HARNESS-MANIFEST.json) and uses its `runs` child. Keep generated Requests, captures and results outside the source directory.
+**Any other AI client:** start the conversation with "Read `<repo>/skills/low-cost-round-trip-flight-search/SKILL.md` and follow it for my request: …". The client needs to run shell commands with Python, read web pages or travel APIs, and write local files. Nothing else is required.
 
-## Use with any AI client
+## What you get
 
-The Skills are plain Markdown and the runtime is a plain CLI, so any AI client works if it can (1) run shell commands with Python 3.10+, (2) read web pages or call travel APIs, and (3) read and write local files. Clients that load Skills (for example via `skills/<journey>/SKILL.md`) pick the right one automatically. For any other client, start the conversation with:
+A ranked comparison built from what was actually observed, for example (live test, 25 Oct 2026; prices change):
 
-```text
-Read <plugin-directory>/skills/low-cost-round-trip-flight-search/SKILL.md and follow it for my request:
-<the user's travel request>
-```
+| Rank | One way Frankfurt city → Greater Bay Area | Total (CNY) | Verified to |
+|---|---|---|---|
+| 1 | FlixBus Frankfurt → Brussels, then HU492 + HU7803 Brussels → Beijing → Guangzhou | 2,221 incl. bus and transit | seller passenger page |
+| 2 | CA932 + CA115 Frankfurt → Beijing → Hong Kong | 2,262 incl. airport train | fare review |
 
-Use `low-cost-one-way-travel-flight-search` or `low-cost-random-loop-flight-search` for the other journey shapes. Nothing in the runtime depends on a particular model, client, browser or booking site.
+Each line comes with dates, flight numbers, baggage and fare rules, connection times, and disclosures such as "separate tickets: a missed connection is at your risk".
 
-Standalone Skill installs (for example `npx skills add flyblock/flight-search-harness`) also work. The Skill resolver first uses a matching complete Plugin beside the Skill. Otherwise it uses `<base>/plugins/<version>/`, downloading the exact `v<version>` GitHub source archive on first use and reporting the source and destination on stderr. Archive paths and manifest versions are checked before installation; download and extraction do not execute archive code. Later calls reuse the matching cache.
-
-Set `FLIGHT_SEARCH_HARNESS_HOME` to choose `<base>` (default `~/.flight-search-harness`). Cached Plugins use `<base>/data` for generated data and `<base>/data/runs` for Runs. `FLIGHT_SEARCH_HARNESS_ARCHIVE_URL` can select a mirror URL or a local ZIP file instead of GitHub. For manual setup, clone or extract the matching release into `<base>/plugins/<version>/` and set `FLIGHT_SEARCH_HARNESS_HOME` to `<base>`, or install the full repository. The resolver returns `source: "plugin"` for a complete Plugin beside the Skill and `source: "cache"` for the per-user cache.
-
-## One interface
-
-All clients use the same JSON Request, query, observation and result structures. Commands read UTF-8 JSON files and return compact JSON on stdout (`--verbose` or `deliver --view full` for complete records); diagnostics go to stderr. There is no separate vendor or provider adapter contract.
+## How it works
 
 ```text
-start → external discovery → challenge current best → record → compare and continue → deliver
+Request ─► search a source ─► record (query + observations) ─► feedback hints
+   ▲                                                              │
+   └── challenge / discover airports / combine pieces ◄───────────┘
+                                   │
+                                deliver ─► ranked answer with disclosures
 ```
 
-`record` can save the actual `query`, its observations and outcome together. It also accepts a previously registered query ID or an unlinked incidental discovery. Use [the complete quote example](examples/record-quote.json) and [the incomplete price lead example](examples/record-signal.json) as the public submission reference; replace every placeholder with observed facts. `revise` reevaluates saved findings under changed requirements. `combine` records an explicit combination of saved purchases. `status`, `stop`, and `resume` preserve continuity without claiming exhaustive search. Sources do not need to appear in a whitelist. Missing or unusable links and uncertain capture times are metadata notices, not reasons to discard useful flight facts; raw inputs are retained. Screenshots and original-page attachments are optional.
+The agent decides what to search; code saves, deduplicates queries, checks the user's rules, ranks, and computes the hints. Main commands: `start`, `record`, `combine`, `revise`, `deliver`, `status`, `clock`. The full reference is [docs/search-workflow.md](docs/search-workflow.md); fill-in examples are in [examples/](examples).
 
-A challenge query names its purpose and reason; the runtime records the baseline and uses the same ledger to compare the result. `research_feedback` makes open discovery and challenge opportunities visible. The prior best remains a ranked alternative when beaten. For flexible city/region endpoints, the agent discovers realistically reachable airports from external information rather than relying only on memory or administrative borders. Explicit user restrictions remain binding.
+Ranking counts what can change the choice: tickets, mandatory bus/rail legs between flights, and access to airports the agent discovered outside your own. City-to-airport access that is the same for every option is left out unless you ask for a door-to-door total.
 
-Use [the challenge query example](examples/query-challenge.json) and [the airport-discovery record](examples/record-airport-discovery.json). `python -B <plugin-directory>/scripts/run_flight_harness.py clock` returns a UTC tool time without starting a Run; sample it while observing the source, not later while saving. Flight schedules retain local times and offsets.
+## Data and privacy
 
-See [the workflow and JSON interface](docs/search-workflow.md) and [the Request Schema](flight_search_harness/schemas/search-request.schema.json). Three optional [Skills](skills) supply guidance for one-way travel, round trips and random loops; they are not runtime dependencies. Their `agents/openai.yaml` files are optional client display metadata.
+Everything stays on your machine. Runs are JSON files under the data directory the Skill reports (`~/.flight-search-harness/data` for standalone installs; `runtime_data_root` in [FLIGHT-SEARCH-HARNESS-MANIFEST.json](FLIGHT-SEARCH-HARNESS-MANIFEST.json) for a full checkout). The harness never books, pays, signs in or sends your data anywhere.
 
-The default comparison is mandatory flight-ticket cost. Full door-to-door cost, budgets, time restrictions and output preferences follow the user's actual request. Observed facts, AI judgments, missing data and eligibility checks remain distinguishable. Delivery preserves the source verification stage, connection status and unverified endpoint connections; an eligible ticket does not certify a complete journey. Delivery normally includes the best and useful complete alternatives already found, without additional searches merely to fill a top-three list. Results describe saved sources and queries, not a guaranteed global optimum.
+## Limits
 
-Repository contributors should also read [AGENTS.md](AGENTS.md), [domain definitions](GLOSSARY.md) and [naming conventions](docs/naming.md). These maintained source instructions do not override the user's search requirements.
+- It does not search by itself; results are only as broad as the agent's searching.
+- Prices are not held. Book from the seller after re-checking.
+- Children and infants are not modelled yet (adults only).
+- Results describe what was searched, not a guaranteed global optimum.
+
+## Project
+
+- Versions are plain numbers, one per commit, each with a Git tag; see [Releases](https://github.com/flyblock/flight-search-harness/releases).
+- Contributors: read [AGENTS.md](AGENTS.md), the [glossary](GLOSSARY.md) and [naming conventions](docs/naming.md).
+- License: [Apache-2.0](LICENSE).

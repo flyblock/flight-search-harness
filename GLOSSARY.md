@@ -1,129 +1,103 @@
 # Flight Search Harness glossary
 
-This file defines meanings. Product policies, ranking objectives, search budgets, protocol layouts, and implementation choices belong to their own contracts.
+This file defines meanings. Field formats live in [docs/search-workflow.md](docs/search-workflow.md); naming rules in [docs/naming.md](docs/naming.md).
 
-## Distribution and roles
+## Distribution
 
 **Flight Search Harness**:
-The application that coordinates travel research and its durable results.
+The ledger runtime (`flight_search_harness/`) that saves research, compares candidates and computes feedback for an agent.
 
 **Plugin**:
-A portable distribution of the application and its agent entry points.
+The complete distribution: runtime, three Skills, docs, examples and manifests.
 
 **Skill**:
-Instructions that guide an agent in using a capability.
+Markdown instructions for one journey shape (one way, round trip, random loop) and its resolver script, which finds or downloads the matching Plugin.
 
-## Search records
+## Research records
 
-**Search Mission**:
-The durable context of research undertaken for one travel request.
+**Request**:
+The user's travel requirements in JSON, including the original words. A `revise` creates a new requirement revision; findings are kept.
 
 **Run**:
-The persisted execution record of a Search Mission.
+The persisted record of one search: Request revisions, queries, observations, combinations and assessments.
 
-**Outcome**:
-The result state reported for a Run. Completion is relative to the requested scope.
-
-**Store**:
-The durable record of Runs and their artifacts.
-
-## Observations and choices
+**Query**:
+What was actually searched: source, airports, dates or window, travellers, filters. A query may be a challenge, an airport discovery, or a follow-up of named leads.
 
 **Observation**:
-A structured record of what was encountered at a source.
+What was seen at a source at one time. A *quote* has movements and payable offers; a *signal* keeps a visible price or fact without enough detail to book.
 
 **Offer**:
-A concrete travel option and the price or terms disclosed for it.
+One payable price for specific movements from a seller, with its scope, verification stage and terms.
 
-**Evidence**:
-An Observation or Offer admitted to support a calculation or decision.
+**Movement**:
+One flight, train, bus or other leg with its places and offset-aware times.
 
-**Provider Capture**:
-A record of facts visibly collected from a Provider page at a particular time.
+**Combination**:
+Separately bought offers that the agent proposes as one journey.
 
-**Source Identity**:
-The Provider identity and exact observed page URL associated with a capture. Seller and carrier identities describe different roles.
+## Candidates and ranking
 
-**Value State**:
-Whether a value is known, unknown, or not applicable. An unknown amount is not a zero amount.
+**Candidate**:
+A complete journey for the Request, built from one offer or a combination.
 
-**Journey Alternative**:
-One user-selectable journey option satisfying the requested journey scope.
+**Component**:
+A priced piece that is not a complete journey (a single leg, a positioning trip, a bus between airports). Saved, combinable, never ranked as a journey.
 
-**Ticketing Structure**:
-The arrangement of tickets and their joint, separate, protected, or self-transfer relationships.
+**Lead**:
+A price that suggests something cheaper but is not yet a comparable complete candidate.
 
-**Seller Variant**:
-A Seller-specific payable option for a Ticketing Structure.
+**Current best**:
+The first-ranked eligible candidate. Earlier bests stay as runners-up.
 
-**Offer Snapshot**:
-An Observation of a Seller Variant at a particular time.
+**Challenge**:
+A query aimed at beating the current best, recorded with its baseline and settled by ordinary comparison.
 
-**Candidate Slate**:
-A ranked set of Journey Alternatives for a request. Its ranking objective and cost scope are explicit properties of that request and result.
+**Ranking cost**:
+The cost used for comparison: tickets, mandatory surface legs between flights, and access to outside gateways; door-to-door cost only when requested.
 
-## Endpoints and movements
+**Base currency**:
+The currency used for comparison. Other currencies need an attributed exchange rate.
+
+**Distance per currency**:
+Total flight distance divided by ranking cost; the default objective for random loops.
+
+**Quality gate**:
+A user minimum for a random loop, such as kilometres per unit of base currency.
+
+**Research feedback**:
+The hints returned after each command (`next_actions`): unfinished checks, leads to follow, budgets, untried structures.
+
+## Places
 
 **Anchor**:
-A real-world endpoint declared by the user, such as a city, address, station, or airport.
+An endpoint the user named: a city, region, address, station or airport.
 
 **Gateway**:
-A transport node used to begin or end the Core Itinerary. A Gateway can coincide with an Anchor or require a connection to it.
+An airport (or station) where the journey's flights begin or end. *Seed* gateways are the user's own; *outside* gateways are ones the agent discovered.
 
-**Self-access Gateway Pool**:
-A set of Gateways the user has accepted reaching or leaving independently.
+**Positioning**:
+Getting from the anchor to an outside gateway (and back), by any mode.
 
-**Endpoint Policy**:
-The requirement for connecting one side of the journey to its Anchor or accepting a Gateway as that endpoint.
+**Access** / **Egress**:
+Travel from the anchor to the first gateway / from the last gateway to the anchor.
 
-**Core Itinerary**:
-The mandatory journey between the first and final selected Gateways, including every movement and purchase needed to make that journey feasible.
+## Time and verification
 
-**Internal Surface Transfer**:
-A mandatory non-flight movement inside the Core Itinerary.
+**Offset timestamp**:
+A date and time with a UTC offset, identifying an instant. Flight times keep their airport-local offset.
 
-**Endpoint Access**:
-Movement from an Anchor to the first selected Gateway before the Core Itinerary.
+**Capture time**:
+When the source was actually looked at; distinct from when it was recorded.
 
-**Endpoint Egress**:
-Movement from the final selected Gateway to an Anchor after the Core Itinerary.
+**Stay nights**:
+Nights between destination arrival date and return departure date (local).
 
-## Money and cost scope
+**Verification stage**:
+How far a price was followed: listing, selected itinerary, fare review or checkout.
 
-**Base Currency**:
-The currency selected for monetary comparison within a Search Mission.
+**Self-transfer**:
+A connection between separately bought tickets, without carrier protection.
 
-**Currency-Unit Efficiency**:
-Travel distance divided by the applicable price expressed in the Base Currency.
-
-**Gateway-complete Cost**:
-The total mandatory cost of the Core Itinerary, excluding Endpoint Access and Endpoint Egress.
-
-**Endpoint Completion Cost**:
-The total mandatory cost of the Endpoint Access and Endpoint Egress required by the request.
-
-**Anchor-complete Cost**:
-The total mandatory cost of the journey connecting the requested Anchors.
-
-**Mandatory Air Ticket Total**:
-The total payable flight-ticket amount within the stated itinerary scope, including required baggage and mandatory airline fees. It does not represent excluded non-air costs.
-
-## Time
-
-**Local Date**:
-A calendar date interpreted in an explicit location timezone.
-
-**Offset Timestamp**:
-A date and time carrying a UTC offset that identifies an instant.
-
-**Capture Time**:
-The time at which a Provider page was actually observed.
-
-**Provider Quote Time**:
-The creation or update time explicitly disclosed by a Provider for its quote. An undisclosed quote time remains unknown.
-
-**Recorded Time**:
-The time at which an Observation was saved. It is distinct from Capture Time.
-
-**Destination Stay Nights**:
-The difference between the destination-arrival and return-departure Local Dates at the destination required by the request.
+**Required disclosures**:
+Facts the answer must state, such as an unverified connection or a price only seen on a listing.

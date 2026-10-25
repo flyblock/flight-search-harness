@@ -1,4 +1,4 @@
 interface:
   display_name: "Low-Cost Round-Trip Flight Search"
-  short_description: "Compare return journeys by your requested scope"
-  default_prompt: "Use $low-cost-round-trip-flight-search to compare return journeys that satisfy my endpoints, constraints, and cost objective."
+  short_description: "Cheapest return trip within your dates and stay length"
+  default_prompt: "Use $low-cost-round-trip-flight-search to compare return journeys for my trip, including open-jaw and separate tickets."

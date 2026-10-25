@@ -1,4 +1,4 @@
 interface:
   display_name: "Low-Cost One-Way Flight Search"
-  short_description: "Compare one-way journeys by your requested scope"
-  default_prompt: "Use $low-cost-one-way-travel-flight-search to compare one-way journeys that satisfy my endpoints, constraints, and cost objective."
+  short_description: "Cheapest one-way trip, incl. cross-border airports and bus/rail pieces"
+  default_prompt: "Use $low-cost-one-way-travel-flight-search to compare one-way journeys for my trip, including nearby and cross-border airports."
