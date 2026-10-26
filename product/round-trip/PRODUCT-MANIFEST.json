@@ -1,7 +1,7 @@
 {
   "schema_version": "1.0.0",
   "product_id": "round_trip",
-  "version": "3.12.2",
+  "version": "3.12.3",
   "journey_shape": "round_trip",
   "request_schema_base": "plugin_root",
   "request_schema_ref": "flight_search_harness/schemas/search-request.schema.json",

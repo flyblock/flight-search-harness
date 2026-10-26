@@ -42,6 +42,19 @@ def _variant_key(observation: dict, offer: dict, *, include_seller: bool = True)
     return json.dumps(identity, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
 
 
+def _same_price_key(observation: dict, offer: dict) -> str:
+    """Identify re-views of one seller's offer whose descriptive text was worded differently.
+
+    Same movements, seller, structured fare fields and price: a newer look replaces an older
+    one even if baggage or rule descriptions changed. No cheaper option can be hidden this way.
+    """
+    identity = json.loads(_variant_key(observation, offer))
+    for field in ("included_baggage", "restrictions", "ticket_context", "refundability", "change_policy"):
+        identity["fare"].pop(field, None)
+    identity["price"] = offer.get("price")
+    return json.dumps(identity, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+
+
 def _number(value: Any) -> Decimal | None:
     if value is None or isinstance(value, bool):
         return None
@@ -983,11 +996,11 @@ def evaluate_session(state: dict, *, evaluation_at: str, request_revision: int |
                 continue
             ref = {"observation_id": observation["observation_id"], "offer_id": offer["offer_id"]}
             records[(ref["observation_id"], ref["offer_id"])] = (observation, offer)
-            key = _variant_key(observation, offer)
             captured = _capture_time(observation)
             order = (captured.timestamp(), observation["observation_id"], offer["offer_id"]) if captured else None
-            if order is not None and (key not in latest or order > latest[key][0]):
-                latest[key] = (order, (ref["observation_id"], ref["offer_id"]))
+            for key in (_variant_key(observation, offer), _same_price_key(observation, offer)):
+                if order is not None and (key not in latest or order > latest[key][0]):
+                    latest[key] = (order, (ref["observation_id"], ref["offer_id"]))
             candidates[candidate_id([ref])] = [ref]
             admitted_count += 1
         if not admitted_count:
@@ -1002,9 +1015,10 @@ def evaluate_session(state: dict, *, evaluation_at: str, request_revision: int |
     superseded_refs = {}
     for key, (observation, offer) in records.items():
         captured = _capture_time(observation)
-        newest = latest.get(_variant_key(observation, offer))
-        if captured and newest and newest[0][0] > captured.timestamp():
-            superseded_refs[key] = newest[1]
+        for newest in (latest.get(_variant_key(observation, offer)), latest.get(_same_price_key(observation, offer))):
+            if captured and newest and newest[0][0] > captured.timestamp():
+                superseded_refs[key] = newest[1]
+                break
     explicit_ids = {c.get("candidate_id") or candidate_id(c.get("offer_refs", [])) for c in state.get("combinations", [])}
     entries, alternatives, components, superseded = [], [], [], []
     for identifier, refs in candidates.items():
