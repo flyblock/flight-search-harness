@@ -326,7 +326,7 @@
                 },
                 "additionalProperties": false
               },
-              "description": "Disjoint round-trip date alternatives inside one Search Mission."
+              "description": "Disjoint round-trip date alternatives inside one Request."
             }
           },
           "required": [

@@ -1,7 +1,7 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "flight-search-harness",
-  "version": "3.13.0",
+  "version": "3.14.0",
   "description": "Let any AI agent hunt for cheap flights: a ledger that saves every price, challenges the current best, looks past borders, searches from both ends, and ranks one-way, round-trip and random-loop journeys.",
   "license": "Apache-2.0",
   "keywords": [

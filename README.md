@@ -84,6 +84,6 @@ Everything stays on your machine. Runs are JSON files under the data directory t
 
 ## Project
 
-- Versions are plain numbers, one per commit, each with a Git tag; see [Releases](https://github.com/flyblock/flight-search-harness/releases).
+- Releases are tagged `v<version>`; see [Releases](https://github.com/flyblock/flight-search-harness/releases).
 - Contributors: read [AGENTS.md](AGENTS.md), the [glossary](GLOSSARY.md) and [naming conventions](docs/naming.md).
 - License: [Apache-2.0](LICENSE).

@@ -48,7 +48,7 @@ def fingerprint(value: Any) -> str:
 
 
 def write_atomic(path: Path, value: dict[str, Any]) -> None:
-    """Reuse the existing Store's atomic replace algorithm without its lifecycle."""
+    """Write JSON atomically, flushing it to disk before replacing the target."""
     path.parent.mkdir(parents=True, exist_ok=True)
     descriptor, temporary = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
     try:
@@ -79,7 +79,7 @@ class ResearchStore:
 
     @contextmanager
     def locked(self, run_id: str):
-        """OS-released advisory lock; no durable claim/Lease recovery protocol."""
+        """Serialize Run writes with an OS advisory lock."""
         directory = self.directory(run_id)
         if not directory.is_dir():
             raise ValueError(f"Run does not exist: {run_id}")
@@ -116,7 +116,8 @@ class ResearchStore:
     def load(self, run_id: str) -> dict[str, Any]:
         state = read_json(self.path(run_id))
         if not isinstance(state, dict) or state.get("session_version") != SESSION_VERSION:
-            raise ValueError("Legacy Run is read-only. Use import-legacy with an explicit Request to continue it in a new Run.")
+            version = state.get("session_version") if isinstance(state, dict) else None
+            raise ValueError(f"Unsupported Run format (session_version {version!r})")
         if state.get("run_id") != run_id:
             raise ValueError("Run identity does not match its directory")
         return state
@@ -150,7 +151,7 @@ class ResearchStore:
         with self.locked(run_id):
             state = self.load(run_id)
             if request["journey_shape"] != state["requests"][-1]["request"]["journey_shape"]:
-                raise ValueError("A different journey shape requires a new Run or explicit import")
+                raise ValueError("A different journey shape requires a new Run")
             if state["requests"][-1]["request"] != request:
                 state["requests"].append({"revision": len(state["requests"]) + 1, "request": request, "raw_request": raw_request, "recorded_at": now()})
                 self.save(state)
@@ -292,34 +293,17 @@ class ResearchStore:
                     query_errors.append("no_result requires a saved source observation; technical failure is unsupported or failed")
             saved, duplicates = [], []
             existing = {item["observation_id"]: item for item in state["observations"]}
-            captures = submission.get("captures", [])
-            captures = captures if isinstance(captures, list) else []
             for raw in observations:
-                context = None
-                bound = copy.deepcopy(raw)
-                if isinstance(raw, dict) and raw.get("capture_id"):
-                    matches = [c for c in captures if isinstance(c, dict) and c.get("capture_id") == raw["capture_id"]]
-                    if len(matches) == 1:
-                        context = copy.deepcopy(matches[0])
-                        # Bind only an explicit Capture ID; never guess by list position.
-                        bound.setdefault("source", context.get("source"))
-                        if not bound.get("observed_at") and not bound.get("captured_at"):
-                            bound["captured_at"] = context.get("captured_at")
-                        if "provider_quote_time" not in bound and "provider_quote_time" in context:
-                            bound["provider_quote_time"] = context["provider_quote_time"]
-                normalized = normalize_observation(bound, received_at=now())
-                normalized["raw"] = copy.deepcopy(raw)
-                if context is not None:
-                    normalized["source_context"] = context
+                normalized = normalize_observation(raw, received_at=now())
                 identifier = normalized["observation_id"]
                 old = existing.get(identifier)
                 if old is not None:
-                    if canonical(old["raw"]) == canonical(raw) and old.get("source_context") == context:
+                    if canonical(old["raw"]) == canonical(raw) and old.get("source_context") is None:
                         duplicates.append(identifier)
                         continue
                     # Preserve the new source record instead of overwriting an old identity.
                     normalized["reported_observation_id"] = identifier
-                    identifier = f"{identifier}-{fingerprint({'raw': raw, 'source_context': context})}"
+                    identifier = f"{identifier}-{fingerprint({'raw': raw, 'source_context': None})}"
                     normalized["observation_id"] = identifier
                     if identifier in existing:
                         duplicates.append(identifier)
@@ -459,38 +443,3 @@ class ResearchStore:
         if limit is not None:
             result["entries"] = result.get("entries", [])[:limit]
         return {"kind": "findings_view", "result": result}
-
-    def import_legacy(self, source_run: str | Path, request: dict[str, Any], run_id: str | None = None) -> dict[str, Any]:
-        """Explicitly copy source observations from one identified Run, never its conclusions."""
-        source = Path(source_run).resolve()
-        old = read_json(source / "product" / "session.json")
-        observations = []
-        submissions = []
-        if old.get("session_version") == SESSION_VERSION:
-            observations = [o["raw"] for o in old.get("observations", [])]
-        else:
-            # Prefer immutable raw submitted facts, including rejected submissions.
-            for path in sorted((source / "mission" / "receipts" / "raw").glob("*.json")):
-                receipt = read_json(path)
-                payload = receipt.get("payload") or {}
-                observed = (payload.get("product_payload") or {}).get("observations", [])
-                observations.extend(observed)
-                if observed:
-                    submissions.append({"observations": observed, "captures": (receipt.get("evidence_context") or {}).get("captures", [])})
-            if not observations:
-                for bundle in old.get("evidence_bundles", []):
-                    observations.extend(bundle.get("observations", []))
-        created = self.start(request, run_id)
-        target_id = created["run_id"]
-        if submissions:
-            imported = [self.record(target_id, submission) for submission in submissions]
-        else:
-            imported = self.record(target_id, {"observations": observations}) if observations else {"saved": []}
-        with self.locked(target_id):
-            state = self.load(target_id)
-            state["imported_from"] = {
-                "source_run": str(source), "imported_at": now(), "scope": "source_observations_only",
-                "source_record_refs": [str(p) for p in sorted((source / "mission" / "receipts" / "raw").glob("*.json"))],
-            }
-            self.save(state)
-        return {"kind": "legacy_imported", "run_id": target_id, "source_run": str(source), "recording": imported}

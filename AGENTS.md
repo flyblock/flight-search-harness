@@ -14,6 +14,6 @@
 ## Releases
 
 - Work lands on `main`; no other long-lived branches.
-- Every commit gets the next plain numeric version (feature: minor, fix or docs: patch) in all version fields together: `plugin.json`, `FLIGHT-SEARCH-HARNESS-MANIFEST.json`, the four `PRODUCT-MANIFEST.json`, `flight_search_harness/__init__.py`, and `HARNESS_VERSION` in the three Skill resolvers. Tag it `v<version>`.
+- Every commit gets the next plain numeric version (feature: minor, fix or docs: patch) in all version fields together: `plugin.json`, `FLIGHT-SEARCH-HARNESS-MANIFEST.json`, `flight_search_harness/__init__.py`, and `HARNESS_VERSION` in the three Skill resolvers. Tag it `v<version>`.
 - Push the tag with the commit: standalone Skills download the source archive of their exact tag, so an unpushed tag breaks them.
 - `python -B scripts/package_flight_search_harness.py validate` must pass before a release.

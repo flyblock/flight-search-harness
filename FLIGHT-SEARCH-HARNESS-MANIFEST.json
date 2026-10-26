@@ -1,7 +1,7 @@
 {
   "schema_version": "1.0.0",
   "package_id": "flight-search-harness",
-  "version": "3.13.0",
+  "version": "3.14.0",
   "installable": true,
   "runtime_data_root": "../Archive/Flight/01-runtime-data",
   "root_files": [
@@ -34,22 +34,26 @@
     "examples/query-challenge.json",
     "examples/record-airport-discovery.json"
   ],
-  "runtime_groups": [
-    {
-      "root": "flight_search_harness",
-      "manifest": "flight_search_harness/PRODUCT-MANIFEST.json"
+  "runtime_files": [
+    "flight_search_harness/__init__.py",
+    "flight_search_harness/__main__.py",
+    "flight_search_harness/research.py",
+    "flight_search_harness/exploration.py",
+    "flight_search_harness/findings.py",
+    "flight_search_harness/comparison.py",
+    "flight_search_harness/search_request.py",
+    "flight_search_harness/suite_layout.py",
+    "flight_search_harness/schemas/search-request.schema.json"
+  ],
+  "journeys": {
+    "round_trip": {
+      "request_schema_ref": "flight_search_harness/schemas/search-request.schema.json"
     },
-    {
-      "root": "product/random-loop",
-      "manifest": "product/random-loop/PRODUCT-MANIFEST.json"
+    "one_way": {
+      "request_schema_ref": "flight_search_harness/schemas/search-request.schema.json"
     },
-    {
-      "root": "product/one-way",
-      "manifest": "product/one-way/PRODUCT-MANIFEST.json"
-    },
-    {
-      "root": "product/round-trip",
-      "manifest": "product/round-trip/PRODUCT-MANIFEST.json"
+    "random_loop": {
+      "request_schema_ref": "flight_search_harness/schemas/search-request.schema.json"
     }
-  ]
+  }
 }

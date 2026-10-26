@@ -133,7 +133,7 @@ Answer from `deliver`, not from browser memory:
 ## Distribution
 
 ```text
-python -B scripts/package_flight_search_harness.py validate|archive|install
+python -B scripts/package_flight_search_harness.py validate
 ```
 
-Archive and install write to the external runtime data root's `releases` directory and never overwrite. Validation checks files and syntax, not travel correctness.
+Skill resolvers download the matching tagged GitHub source archive and cache the Plugin. The suite manifest lists `root_files` and `runtime_files` and maps each journey shape in `journeys` to its `request_schema_ref`. All file references are relative to the Plugin root. Validation checks files and syntax, not travel correctness.

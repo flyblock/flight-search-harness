@@ -1,4 +1,4 @@
-"""Manifest-driven discovery of Flight Search Harness runtime roots."""
+"""Manifest-driven discovery of the Flight Search Harness Plugin."""
 
 from __future__ import annotations
 
@@ -10,7 +10,6 @@ from typing import Any
 
 
 SUITE_MANIFEST_NAME = "FLIGHT-SEARCH-HARNESS-MANIFEST.json"
-RUNTIME_MANIFEST_NAME = "PRODUCT-MANIFEST.json"
 SUITE_PACKAGE_ID = "flight-search-harness"
 
 
@@ -67,7 +66,7 @@ def _resolve_relative_path(root: Path, value: Any, *, field: str) -> Path:
     return resolved
 
 
-def _runtime_roots(root: Path) -> dict[str, Path]:
+def _validate_suite(root: Path) -> None:
     manifest_path = root / SUITE_MANIFEST_NAME
     manifest = _load_json_object(manifest_path, label="suite manifest")
     if manifest.get("package_id") != SUITE_PACKAGE_ID:
@@ -75,50 +74,30 @@ def _runtime_roots(root: Path) -> dict[str, Path]:
             "suite manifest package_id must be "
             f"{SUITE_PACKAGE_ID!r}: {_display_path(manifest_path)}"
         )
-    groups = manifest.get("runtime_groups")
-    if not isinstance(groups, list) or not groups:
-        raise SuiteLayoutError("suite manifest runtime_groups must be a non-empty array")
-
-    runtime_roots: dict[str, Path] = {}
-    for index, group in enumerate(groups):
-        field_prefix = f"runtime_groups[{index}]"
-        if not isinstance(group, dict):
-            raise SuiteLayoutError(f"{field_prefix} must be an object")
-        runtime_root = _resolve_relative_path(
-            root, group.get("root"), field=f"{field_prefix}.root"
+    files = manifest.get("runtime_files")
+    if not isinstance(files, list) or not files:
+        raise SuiteLayoutError("suite manifest runtime_files must be a non-empty array")
+    for index, value in enumerate(files):
+        path = _resolve_relative_path(root, value, field=f"runtime_files[{index}]")
+        if not path.is_file():
+            raise SuiteLayoutError(f"runtime file is missing: {_display_path(path)}")
+    journeys = manifest.get("journeys")
+    if not isinstance(journeys, dict) or not journeys:
+        raise SuiteLayoutError("suite manifest journeys must be a non-empty object")
+    for shape, declaration in journeys.items():
+        if not shape or not isinstance(declaration, dict):
+            raise SuiteLayoutError(f"invalid journey declaration: {shape!r}")
+        schema = _resolve_relative_path(
+            root, declaration.get("request_schema_ref"),
+            field=f"journeys.{shape}.request_schema_ref",
         )
-        runtime_manifest_path = _resolve_relative_path(
-            root, group.get("manifest"), field=f"{field_prefix}.manifest"
-        )
-        try:
-            runtime_manifest_path.relative_to(runtime_root)
-        except ValueError as exc:
-            raise SuiteLayoutError(
-                f"{field_prefix}.manifest must be inside {field_prefix}.root"
-            ) from exc
-        if runtime_manifest_path.name != RUNTIME_MANIFEST_NAME:
-            raise SuiteLayoutError(
-                f"{field_prefix}.manifest must name {RUNTIME_MANIFEST_NAME}"
-            )
-        runtime_manifest = _load_json_object(
-            runtime_manifest_path,
-            label=f"runtime manifest for {field_prefix}",
-        )
-        runtime_id = runtime_manifest.get("product_id")
-        if not isinstance(runtime_id, str) or not runtime_id:
-            raise SuiteLayoutError(
-                f"runtime manifest product_id must be a non-empty string: "
-                f"{_display_path(runtime_manifest_path)}"
-            )
-        if runtime_id in runtime_roots:
-            raise SuiteLayoutError(f"duplicate runtime product_id: {runtime_id!r}")
-        runtime_roots[runtime_id] = runtime_root
-    return runtime_roots
+        if not schema.is_file():
+            raise SuiteLayoutError(f"Request Schema is missing: {_display_path(schema)}")
 
 
 @dataclass(frozen=True, slots=True)
 class SuiteLayout:
-    """Resolved root and runtime mapping for one Flight Search Harness Plugin."""
+    """Resolved root for one Flight Search Harness Plugin."""
 
     root: Path
 
@@ -137,31 +116,19 @@ class SuiteLayout:
                 raise SuiteLayoutError(
                     f"suite root is not a directory: {_display_path(candidate)}"
                 )
-            _runtime_roots(candidate)
+            _validate_suite(candidate)
             return cls(candidate)
 
         anchor_path = Path(anchor).resolve() if anchor is not None else Path(__file__).resolve()
         start = anchor_path if anchor_path.is_dir() else anchor_path.parent
         for candidate in (start, *start.parents):
             if (candidate / SUITE_MANIFEST_NAME).is_file():
-                _runtime_roots(candidate)
+                _validate_suite(candidate)
                 return cls(candidate)
         raise SuiteLayoutError(
             f"could not find {SUITE_MANIFEST_NAME} from anchor: "
             f"{_display_path(anchor_path)}"
         )
-
-    def runtime_root(self, runtime_id: str) -> Path:
-        """Return the root declared by the runtime's nested manifest identity."""
-
-        runtime_roots = _runtime_roots(self.root)
-        try:
-            return runtime_roots[runtime_id]
-        except KeyError as exc:
-            available = ", ".join(sorted(runtime_roots))
-            raise SuiteLayoutError(
-                f"unknown runtime_id {runtime_id!r}; available runtime IDs: {available}"
-            ) from exc
 
     def runtime_data_root(self) -> Path:
         """Resolve generated data outside the authored Plugin directory."""

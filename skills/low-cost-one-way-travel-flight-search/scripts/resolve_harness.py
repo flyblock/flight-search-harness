@@ -15,7 +15,7 @@ import zipfile
 from pathlib import Path, PurePosixPath, PureWindowsPath
 
 
-HARNESS_VERSION = "3.13.0"
+HARNESS_VERSION = "3.14.0"
 PRODUCT_ID = "one_way"
 
 
@@ -46,38 +46,20 @@ def _validate_plugin(root: Path) -> None:
             or suite.get("version") != HARNESS_VERSION
             or plugin.get("version") != HARNESS_VERSION):
         raise ValueError(f"Skill requires Flight Search Harness Plugin {HARNESS_VERSION}")
-    files = suite.get("root_files")
-    groups = suite.get("runtime_groups")
-    if not isinstance(files, list) or not files or not isinstance(groups, list) or not groups:
-        raise ValueError("Plugin manifest must list its files and runtime groups")
-    files = list(files) + ["scripts/resolve_skill_runtime.py", "scripts/run_flight_harness.py"]
-    found_product = False
-    for group in groups:
-        if not isinstance(group, dict):
-            raise ValueError("runtime group must be an object")
-        prefix = group.get("root")
-        group_root = _safe_path(root, prefix)
-        manifest_path = _safe_path(root, group.get("manifest"))
-        if manifest_path != group_root / "PRODUCT-MANIFEST.json":
-            raise ValueError("runtime manifest must belong to its declared root")
-        declaration = _read_object(manifest_path)
-        if declaration.get("version") != HARNESS_VERSION:
-            raise ValueError(f"runtime manifest version must be {HARNESS_VERSION}: {manifest_path}")
-        package_files = declaration.get("package_files")
-        if not isinstance(package_files, list) or not package_files:
-            raise ValueError(f"runtime manifest must list its files: {manifest_path}")
-        for item in package_files:
-            path = _safe_path(group_root, item)
-            if not path.is_file():
-                raise ValueError(f"installed Plugin is incomplete: {path}")
-        if declaration.get("product_id") == PRODUCT_ID:
-            if (declaration.get("journey_shape") != PRODUCT_ID
-                    or declaration.get("request_schema_base") != "plugin_root"):
-                raise ValueError(f"invalid journey declaration: {PRODUCT_ID}")
-            files.append(declaration.get("request_schema_ref"))
-            found_product = True
-    if not found_product:
+    files = []
+    for field in ("root_files", "runtime_files"):
+        declared = suite.get(field)
+        if not isinstance(declared, list) or not declared:
+            raise ValueError(f"Plugin manifest {field} must be a non-empty array")
+        files.extend(declared)
+    files.extend(["scripts/resolve_skill_runtime.py", "scripts/run_flight_harness.py"])
+    journeys = suite.get("journeys")
+    if not isinstance(journeys, dict) or PRODUCT_ID not in journeys:
         raise ValueError(f"missing matching journey declaration: {PRODUCT_ID}")
+    for shape, declaration in journeys.items():
+        if not shape or not isinstance(declaration, dict):
+            raise ValueError(f"invalid journey declaration: {shape!r}")
+        files.append(declaration.get("request_schema_ref"))
     for item in files:
         path = _safe_path(root, item)
         if not path.is_file():

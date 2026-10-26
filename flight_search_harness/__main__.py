@@ -166,7 +166,7 @@ def compact_response(value, state):
             compact["not_shown"] = {**hidden, "how": "deliver --view full"}
         value = {"kind": value["kind"], "result": compact}
     else:
-        compact = {k: v for k, v in value.items() if k in {"kind", "run_id", "request_revision", "research", "observation_count", "query_count", "candidate_id", "repeat_requires_reason", "saved", "duplicates", "query_errors", "query_warnings", "unlinked_observation_ids", "source_run", "recording"} and v not in (None, [], {})}
+        compact = {k: v for k, v in value.items() if k in {"kind", "run_id", "request_revision", "research", "observation_count", "query_count", "candidate_id", "repeat_requires_reason", "saved", "duplicates", "query_errors", "query_warnings", "unlinked_observation_ids"} and v not in (None, [], {})}
         if value.get("admissions"):
             compact["admissions"] = [{k: v for k, v in a.items() if v != []} for a in value["admissions"]]
         if value.get("query"):
@@ -177,11 +177,6 @@ def compact_response(value, state):
             compact["queries"] = [{"query_id": q["query_id"], "status": q["status"], **q["query"]} for q in value["queries"][-COMPACT_LIST:]]
             if len(value["queries"]) > COMPACT_LIST:
                 compact["queries_not_shown"] = len(value["queries"]) - COMPACT_LIST
-        if "recording" in value:
-            recordings = value["recording"] if isinstance(value["recording"], list) else [value["recording"]]
-            compact["recording"] = [{k: v for k, v in r.items() if k in {"saved", "duplicates", "admissions", "query_errors", "query_warnings"} and v} for r in recordings]
-            if not isinstance(value["recording"], list):
-                compact["recording"] = compact["recording"][0]
         value = compact
     if state["requests"][-1]["request"]["intent"]["ranking_basis"] == "mandatory_air_ticket_total":
         compact["cost_coverage"] = "tickets_internal_surface_and_outside_gateway_access"
@@ -216,11 +211,6 @@ def build_parser():
         if name == "deliver":
             command.add_argument("--view", choices=("ranked", "matrix", "full", "ticket-quotes", "presentation"))
             command.add_argument("--limit", type=int)
-    legacy = sub.add_parser("import-legacy", help="Import observations from one identified Run, preserving its originals")
-    legacy.add_argument("--source-run", required=True)
-    legacy.add_argument("--request", required=True)
-    legacy.add_argument("--run-id")
-    legacy.add_argument("--verbose", action="store_true", help="Return complete records")
     return parser
 
 
@@ -250,8 +240,6 @@ def main(argv=None):
             value = store.set_research(args.run_id, "active")
         elif command == "stop":
             value = store.set_research(args.run_id, "stopped", args.reason)
-        else:
-            value = store.import_legacy(args.source_run, read_json(args.request), args.run_id)
         detailed = getattr(args, "verbose", False) or "session" in value or "cells" in value.get("result", {})
         if not detailed:
             value = compact_response(value, store.load(value.get("run_id", args.run_id)))

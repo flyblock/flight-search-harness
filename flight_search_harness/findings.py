@@ -2,7 +2,7 @@
 
 Admission establishes usable source facts, not request eligibility, source
 coverage, transfer protection, or an independently verified booking. The caller
-persists this complete record in its existing Session; this Module owns no store.
+persists this complete record in the Run; this Module owns no store.
 """
 
 from __future__ import annotations
@@ -88,7 +88,7 @@ def _metadata_time(value: Any, field: str, issues: list[str]) -> str | None:
     return _utc(instant) if instant is not None else None
 
 
-def _capture_time(data: dict[str, Any], receipt_time: datetime,
+def _capture_time(data: dict[str, Any], recording_time: datetime,
                   issues: list[str]) -> tuple[str | None, str]:
     supplied = [(key, data[key]) for key in ("captured_at", "observed_at", "capturedAt")
                 if data.get(key) not in (None, "")]
@@ -102,7 +102,7 @@ def _capture_time(data: dict[str, Any], receipt_time: datetime,
     if any(instant != first for instant in instants[1:]):
         _issue(issues, "captured_at", "reported capture-time aliases identify different instants")
         return None, "unreliable"
-    if first > receipt_time:
+    if first > recording_time:
         _issue(issues, "captured_at", "reported time is later than recording time; capture time remains unreliable")
         return None, "unreliable"
     return _utc(first), "known"
@@ -149,11 +149,11 @@ def normalize_observation(raw: Any, *, received_at: str) -> dict[str, Any]:
         observation_id = _identifier(raw, "observation-")
     common: list[str] = []
     metadata: list[str] = []
-    receipt_issues: list[str] = []
-    receipt_time = _instant(received_at, "received_at", receipt_issues)
-    if receipt_time is None:
+    recording_issues: list[str] = []
+    recording_time = _instant(received_at, "received_at", recording_issues)
+    if recording_time is None:
         raise ValueError("received_at must be the runtime's actual timezone-aware recording time")
-    received_at = _utc(receipt_time)
+    received_at = _utc(recording_time)
     if not isinstance(raw, dict):
         _issue(common, "observation", "must be an object")
     source_raw = data.get("source", {})
@@ -175,7 +175,7 @@ def normalize_observation(raw: Any, *, received_at: str) -> dict[str, Any]:
     if seller is not None:
         _text(seller, "source.seller", common)
         source["seller"] = seller
-    captured_at, capture_time_status = _capture_time(data, receipt_time, metadata)
+    captured_at, capture_time_status = _capture_time(data, recording_time, metadata)
     capture_time = datetime.fromisoformat(captured_at) if captured_at is not None else None
     provider_quote_time = copy.deepcopy(data.get("provider_quote_time"))
     if data.get("provider_quote_time") is not None:
@@ -187,7 +187,7 @@ def normalize_observation(raw: Any, *, received_at: str) -> dict[str, Any]:
         else:
             timestamp = quote_time.get("value") if isinstance(quote_time, dict) else quote_time
             parsed_quote = _instant(timestamp, "provider_quote_time", metadata)
-            if parsed_quote is not None and parsed_quote > (capture_time or receipt_time):
+            if parsed_quote is not None and parsed_quote > (capture_time or recording_time):
                 _issue(metadata, "provider_quote_time", "is later than the known observation or recording time")
                 parsed_quote = None
             if parsed_quote is None:
@@ -294,7 +294,7 @@ def normalize_observation(raw: Any, *, received_at: str) -> dict[str, Any]:
             if offer_time is not None and capture_time is not None and offer_time != capture_time:
                 _issue(offer_metadata, field + ".observed_at", "conflicts with observation capture time")
                 offer_time = None
-            elif offer_time is not None and offer_time > receipt_time:
+            elif offer_time is not None and offer_time > recording_time:
                 _issue(offer_metadata, field + ".observed_at", "is later than recording time")
                 offer_time = None
             offer["observed_at"] = _utc(offer_time) if offer_time is not None else None

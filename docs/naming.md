@@ -25,7 +25,7 @@ Use [the glossary](../GLOSSARY.md) for domain meanings. This file defines spelli
 - Treat IDs as opaque; reuse an ID only for the same logical object.
 - Name quantities with explicit units and monetary values with an explicit currency context.
 - Use lowercase `snake_case.py` for Python files and lower `kebab-case` for ordinary documentation and JSON filenames.
-- Keep conventional entry-point names such as `AGENTS.md`, `GLOSSARY.md`, `SKILL.md`, and `PRODUCT-MANIFEST.json`.
+- Keep conventional entry-point names such as `AGENTS.md`, `GLOSSARY.md`, `SKILL.md`, and `FLIGHT-SEARCH-HARNESS-MANIFEST.json`.
 - Use descriptive directories with a clear owner. Keep generated Runs, caches, and historical material outside authored product guidance.
 - Use generic placeholders in examples instead of a real user's identifiers or paths.
 

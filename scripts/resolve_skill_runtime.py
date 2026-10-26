@@ -52,17 +52,10 @@ def resolve(
             or suite.get("version") != harness_version
             or plugin.get("version") != harness_version):
         raise RuntimeResolutionError("Skill requires the matching complete Flight Search Harness Plugin")
-    declaration = None
-    for group in suite.get("runtime_groups", []):
-        candidate = _read_object(_root_ref(root, group.get("manifest")))
-        if candidate.get("product_id") == product_id:
-            declaration = candidate
-            break
-    if (not declaration or declaration.get("journey_shape") != product_id
-            or declaration.get("version") != harness_version):
+    journeys = suite.get("journeys")
+    declaration = journeys.get(product_id) if isinstance(journeys, dict) else None
+    if not isinstance(declaration, dict):
         raise RuntimeResolutionError(f"missing matching journey declaration: {product_id}")
-    if declaration.get("request_schema_base") != "plugin_root":
-        raise RuntimeResolutionError("request_schema_ref must explicitly use plugin_root")
     required = {
         "launcher_ref": root / "scripts" / "run_flight_harness.py",
         "request_schema_ref": _root_ref(root, declaration.get("request_schema_ref")),
