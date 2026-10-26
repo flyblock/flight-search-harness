@@ -501,6 +501,12 @@ def _evaluate(refs: list[dict], identifier: str, records: dict, request: dict,
         departures = [m for m in movements if lower and upper and _time(m.get("departure")) and lower <= _time(m["departure"]) <= upper and _node(m.get("from_node")) in anchors]
         stay_arrival = arrivals[0] if arrivals else None
         stay_departure = departures[-1] if departures else None
+        if stay_arrival is None or stay_departure is None:
+            # Ground legs to the anchor are often not bookable yet; measure at the gateways
+            # instead of leaving the stay unknown, and say so.
+            stay_arrival, stay_departure = stay_arrival or destination_arrival, stay_departure or return_movement
+            disclosures.append(f"Stay measured at gateway {_node(stay_arrival.get('to_node'))}/{_node(stay_departure.get('from_node'))}: "
+                               "the ground transfer to the destination is not recorded, so the stay there may be shorter.")
     if stay_arrival and stay_departure:
         arrival = _time(_local_value(stay_arrival.get("arrival"), destination, nodes.get(_node(stay_arrival.get("to_node")))))
         departure = _time(_local_value(stay_departure.get("departure"), destination, nodes.get(_node(stay_departure.get("from_node")))))

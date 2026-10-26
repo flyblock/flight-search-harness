@@ -15,7 +15,7 @@ import zipfile
 from pathlib import Path, PurePosixPath, PureWindowsPath
 
 
-HARNESS_VERSION = "3.12.3"
+HARNESS_VERSION = "3.13.0"
 PRODUCT_ID = "round_trip"
 
 

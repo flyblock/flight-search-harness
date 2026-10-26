@@ -979,11 +979,7 @@
     },
     "baggage_policy": {
       "type": "object",
-      "required": [
-        "cabin_baggage",
-        "checked_bag_count",
-        "paid_baggage_allowed"
-      ],
+      "required": [],
       "properties": {
         "cabin_baggage": {
           "enum": [
@@ -992,16 +988,16 @@
             "cabin_bag",
             "personal_item_and_cabin_bag"
           ],
-          "description": "The minimum cabin-baggage entitlement required. none_required does not exclude fares that include baggage."
+          "description": "The minimum cabin-baggage entitlement required. none_required does not exclude fares that include baggage. Defaults to none_required."
         },
         "checked_bag_count": {
           "type": "integer",
           "minimum": 0,
-          "description": "The total number of checked bags required for the traveler party."
+          "description": "The total number of checked bags required for the traveler party. Defaults to 0."
         },
         "paid_baggage_allowed": {
           "type": "boolean",
-          "description": "Whether missing required baggage may be purchased when its observed mandatory cost is included in the total."
+          "description": "Whether missing required baggage may be purchased when its observed mandatory cost is included in the total. Defaults to true."
         }
       },
       "additionalProperties": false

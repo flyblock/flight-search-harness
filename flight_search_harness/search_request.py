@@ -288,7 +288,11 @@ def _validate_options(intent):
     if "baggage_policy" in intent:
         baggage = intent["baggage_policy"]
         fields = {"cabin_baggage", "checked_bag_count", "paid_baggage_allowed"}
-        _object(baggage, "intent.baggage_policy", fields, fields)
+        _object(baggage, "intent.baggage_policy", fields)
+        # "Needs one checked bag" should not force the agent to invent cabin rules.
+        baggage.setdefault("cabin_baggage", "none_required")
+        baggage.setdefault("checked_bag_count", 0)
+        baggage.setdefault("paid_baggage_allowed", True)
         _enum(baggage["cabin_baggage"], "intent.baggage_policy.cabin_baggage", {"none_required", "personal_item", "cabin_bag", "personal_item_and_cabin_bag"})
         _number(baggage["checked_bag_count"], "intent.baggage_policy.checked_bag_count", integer=True)
         _boolean(baggage["paid_baggage_allowed"], "intent.baggage_policy.paid_baggage_allowed")

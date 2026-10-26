@@ -33,7 +33,7 @@ Start from the Skill's request template. Required: `request_version: "7.0"`, `jo
 | `objective` | `price` (default), `stay_duration`, `travel_duration`, `distance_per_currency` (loop default). |
 | `budget` / `price_target` | `{amount, currency}` hard limit / preference. |
 | `fx_rates` | `[{from_currency, to_currency, rate, observed_at (offset timestamp, or the publication date of a reference rate), source_name and/or source_url}]`. Needed to compare foreign-currency prices. Never invent or recall a rate. |
-| `baggage_policy` | `{cabin_baggage, checked_bag_count, paid_baggage_allowed}` only if the user requires baggage. |
+| `baggage_policy` | Only if the user requires baggage, e.g. `{"checked_bag_count": 1}` for "needs a checked bag". Optional `cabin_baggage` (`none_required` default, `personal_item`, `cabin_bag`, `personal_item_and_cabin_bag`) and `paid_baggage_allowed` (default `true`: a bag bought separately counts with its observed price). |
 | `overnight_allowed` (true/false), `self_transfer_policy` (`allow`/`never`), `maximum_transfer_count` (integer), `allowed_modes` (array of `flight`, `rail`, `bus`, `coach`, `ferry`, `local_transit`, `walk`, `rideshare`, `car`) | Only what the user said. "Any transport mode" means omit `allowed_modes` or list all of them. |
 | `maximum_total_duration_minutes`, `min_legs`/`max_legs`, `quality_gate` (random loop) | Hard limits the code checks for you. |
 | `additional_requirements` | `[{requirement_id, text}]` only for what no field covers; judge later with `assess`. |
